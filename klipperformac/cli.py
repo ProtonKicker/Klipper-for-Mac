@@ -21,6 +21,21 @@ def cmd_setup(args):
     installer.setup()
 
 
+def _lan_urls(indent="  "):
+    """LAN URLs when LAN access is enabled and we have an address, else []."""
+    if not paths.lan_enabled():
+        return []
+    ip = detect.lan_ip()
+    if not ip:
+        return [indent + "LAN:       enabled, but this Mac has no network "
+                        "address right now"]
+    return [indent + "LAN UI:    http://{}:{}  (mainsail)   "
+                     "http://{}:{}  (fluidd)".format(ip, paths.WEB_PORT,
+                                                     ip, paths.FLUIDD_PORT),
+            indent + "LAN API:   http://{}:{}  (Orca on other devices)"
+            .format(ip, paths.MOONRAKER_PORT)]
+
+
 def cmd_up(args):
     paths.ensure_dirs()
     if not paths.VENV_PY.exists():
@@ -35,6 +50,8 @@ def cmd_up(args):
         print("  Mainsail:  " + paths.ui_url("mainsail"))
         print("  Fluidd:    " + paths.ui_url("fluidd"))
         print("  Moonraker: http://localhost:{}".format(paths.MOONRAKER_PORT))
+        for line in _lan_urls():
+            print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
         _wait_ready()
         if getattr(args, "open", False):
@@ -86,6 +103,8 @@ def cmd_status(args):
             continue
         print("  {:<12} {}".format(name, "up" if state.get(name) else "DOWN"))
     print("  url          {}".format(paths.web_url()))
+    for line in _lan_urls():
+        print(line)
     print("  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
         pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]))
     updates, errors = versions.check_updates()
@@ -94,6 +113,31 @@ def cmd_status(args):
     if updates:
         print("  updates available: " + ", ".join(
             "{} {}->{}".format(c, cur, new) for c, cur, new in updates))
+
+
+def cmd_lan(args):
+    if args.state is not None:
+        enabled = args.state == "on"
+        settings = paths.load_settings()
+        settings["lan"] = enabled
+        paths.save_settings(settings)
+        changed = configgen.apply_lan(enabled)
+        print("LAN access {}.".format("OPEN — other devices can reach the "
+                                      "printer" if enabled
+                                      else "closed (this Mac only)"))
+        if process.running() is not None:
+            if enabled or changed:
+                print("Apply now with: klipperformac restart")
+        elif not enabled:
+            print("Next start stays localhost-only.")
+    ip_urls = _lan_urls(indent="") if paths.lan_enabled() else []
+    if ip_urls:
+        print("Reachable from other devices on your network:")
+        for line in ip_urls:
+            print("  " + line)
+    elif not paths.lan_enabled():
+        print("Only this Mac can reach the stack (localhost). Turn on with: "
+              "klipperformac lan on")
 
 
 def cmd_logs(args):
@@ -447,6 +491,8 @@ def main(argv=None):
     sub.add_parser("down", help="stop everything")
     sub.add_parser("restart", help="stop then start")
     sub.add_parser("status", help="show state, pins, available updates")
+    p = sub.add_parser("lan", help="open/close the stack to your local network")
+    p.add_argument("state", nargs="?", choices=("on", "off"))
     p = sub.add_parser("logs", help="view logs")
     p.add_argument("service", choices=("klipper", "moonraker"), default="klipper",
                    nargs="?")
@@ -481,6 +527,7 @@ def main(argv=None):
     handlers = {
         "setup": cmd_setup, "up": cmd_up, "down": cmd_down, "restart": cmd_restart,
         "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
+        "lan": cmd_lan,
         "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,

@@ -39,10 +39,28 @@ selector → + (Add Printer)**:
 - **Name:** anything, e.g. "Klipper on this Mac"
 
 `localhost` is already in Moonraker's trusted clients, so no key or login is
-needed, and Moonraker binds to `127.0.0.1` only — by design v1 is reachable
-from this Mac alone (slicer and dashboards included). Uploads, start/pause/
-cancel and the progress tab then work exactly as they do against a Raspberry
-Pi host.
+needed. By default the stack only listens on this Mac; to slice from another
+computer, turn on LAN access first (see below) and use
+`http://<Mac's LAN IP>:7125` as the host. Uploads, start/pause/cancel and the
+progress tab then work exactly as they do against a Raspberry Pi host.
+
+## Access from other devices
+
+```sh
+klipperformac lan on     # or `lan off` to lock back down; status with bare `lan`
+klipperformac restart    # applies the new bind addresses
+```
+
+With LAN access on, the command prints the URLs to use from other devices —
+dashboards (`http://192.168.x.x:8080/8081`) and the Moonraker API
+(`:7125`, e.g. for Orca Slicer on another computer). The TUI shows the same
+addresses on its home screen; `lan off` returns everything to
+localhost-only.
+
+Tradeoff: Moonraker trusts private network ranges (192.168.0.0/16, 10.0.0.0/8,
+172.16.0.0/12) without passwords, so anyone on your local network can control
+the printer. Fine on home Wi-Fi — turn it off before joining a café or campus
+network.
 
 ## Commands
 
@@ -53,6 +71,7 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 | `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify everything compiles |
 | `up` / `down` / `restart` | start/stop the stack (with `caffeinate`, so sleep can't kill a print) |
 | `status` | service state, pinned versions, available updates |
+| `lan [on\|off]` | show/toggle access for other devices on your network |
 | `serial` | list USB serial devices; `--auto` / `--set PATH` writes `[mcu] serial:` into printer.cfg |
 | `data` | show the data folder; `--set PATH` moves everything there and fixes config paths |
 | `presets` | manage config presets (`--save/--use/--import`, auto-backup) |

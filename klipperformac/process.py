@@ -121,6 +121,45 @@ def _popen(cmd, **kw):
     return subprocess.Popen(cmd, **defaults)
 
 
+def _reap_orphans():
+    """Kill service processes that exist but are not tracked by a live state
+    file (crash, reboot, or stale state from a previous stack). Left alone
+    they squat the ports/serial and the fresh children die on bind."""
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,command="],
+                             capture_output=True).stdout.decode()
+    except Exception:
+        return
+    pids = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        cmd = parts[1]
+        if pid == os.getpid() or "/.klipperformac/" not in cmd:
+            continue
+        for name, marker in MARKERS.items():
+            if name == "caffeinate":
+                continue  # generic name; may belong to other tools
+            if marker in cmd:
+                pids.append(pid)
+                break
+    for pid in pids:
+        _signal(pid, signal.SIGTERM)
+    if pids:
+        deadline = time.time() + 3.0
+        live = set(pids)
+        while live and time.time() < deadline:
+            time.sleep(0.2)
+            live = {p for p in live if _live_cmds([p])}
+        for pid in live:
+            _signal(pid, signal.SIGKILL)
+
+
 def start():
     state = running()
     if state is not None:
@@ -128,6 +167,7 @@ def start():
             return False
         _clear()  # crashed/stale: self-heal, then start fresh
     paths.ensure_dirs()
+    _reap_orphans()
     invalidate_stale_build(paths.KLIPPER)
     ensure_runtime_shims(paths.VENV_PY)
 
@@ -151,15 +191,16 @@ def start():
     web_env = dict(os.environ)
     web_env["PYTHONPATH"] = repo_root + (
         os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
+    bind = "0.0.0.0" if paths.lan_enabled() else "127.0.0.1"
 
     wproc = _popen(
         [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
-         str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT)],
+         str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
         cwd=repo_root, env=web_env,
     )
     fproc = _popen(
         [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
-         str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT)],
+         str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
         cwd=repo_root, env=web_env,
     )
     cproc = _popen(["caffeinate", "-dis"])

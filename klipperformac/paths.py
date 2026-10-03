@@ -101,6 +101,10 @@ VENV_PY = APP_HOME / "venv" / "bin" / "python"
 LOCKFILE = APP_HOME / "lockfile.json"
 
 
+def lan_enabled():
+    return bool(load_settings().get("lan"))
+
+
 def ui_port(ui):
     return WEB_PORT if ui == "mainsail" else FLUIDD_PORT
 

@@ -27,6 +27,20 @@ def _describe(path):
     return ""
 
 
+def lan_ip():
+    """This Mac's primary LAN IPv4 (UDP connect picks the routed interface;
+    no packets are actually sent). None when offline."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
 def scan():
     """Returns [{'path':..., 'description':...}] candidate printer ports."""
     ports = []

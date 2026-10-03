@@ -16,7 +16,7 @@ import time
 import urllib.request
 import webbrowser
 
-from . import detect, paths, process, versions
+from . import configgen, detect, paths, process, versions
 from .cli import relocate_data
 from .installer import (checkout, create_venv, fetch_fluidd, fetch_mainsail,
                         install_requirements, test_chelper_build)
@@ -72,7 +72,8 @@ def catalog_templates():
 
 class App(object):
     def __init__(self):
-        self.message = ""
+        self._message = ""
+        self._msg_at = 0.0
         self.mode = "main"
         self.items = []
         self.sel = 0
@@ -80,6 +81,18 @@ class App(object):
         self.save_name = ""
         self.data_input = ""
         self.footnote = ""
+
+    # Transient: status-line messages fade out so they don't masquerade as
+    # current state (e.g. "restarting..." lingering after the restart).
+    @property
+    def message(self):
+        return self._message
+
+    @message.setter
+    def message(self, value):
+        if value != self._message:
+            self._msg_at = time.time()
+        self._message = value
 
     # ---- actions -------------------------------------------------------
     def do(self, action, arg=None):
@@ -101,6 +114,13 @@ class App(object):
                 pins["ui"] = "fluidd" if pins.get("ui") != "fluidd" else "mainsail"
                 versions.save_pins(pins)
                 self.message = "default UI: " + pins["ui"]
+            elif action == "toggle_lan":
+                settings = paths.load_settings()
+                settings["lan"] = not paths.lan_enabled()
+                paths.save_settings(settings)
+                configgen.apply_lan(settings["lan"])
+                self.message = ("LAN {} — [r] restart to apply".format(
+                    "on" if settings["lan"] else "off"))
             elif action == "serial":
                 ports = detect.scan()
                 if not ports:
@@ -194,15 +214,22 @@ class App(object):
     def draw(self, std):
         h, w = std.getmaxyx()
         std.erase()
+
+        def row(y, label, text, attr=0):
+            try:
+                std.addstr(y, 2, label, curses.A_BOLD)
+                std.addstr(y, 12, text[:w - 13], attr)
+            except curses.error:
+                pass
+
         std.addstr(0, 2, "Klipper for Mac", curses.A_BOLD)
         state = process.running()
         if state is None:
-            stack_line = "stack:   STOPPED   [s] start"
+            row(2, "stack", "STOPPED   [s] start")
         else:
             ups = [n for n, ok in state.items() if ok]
             flag = "RUNNING" if ups else "not responding [r]"
-            stack_line = "stack:   {}   {}".format(flag, ", ".join(ups))
-        std.addstr(2, 2, stack_line[:w - 3])
+            row(2, "stack", "{}   {}".format(flag, ", ".join(ups)))
         obj = moonraker_objects()
         if obj:
             ps = obj.get("print_stats", {})
@@ -210,36 +237,49 @@ class App(object):
             printer = ps.get("state", "?")
             if printer.lower() in ("error", "startup", "paused"):
                 printer += " - " + (msg[0] if msg else "")
-            std.addstr(3, 2, "printer: {}{}".format(
+            row(3, "printer", "{}{}".format(
                 printer, (" | file: " + ps["filename"]) if ps.get("filename")
-                else "")[:w - 3])
+                else ""))
             ex = obj.get("extruder") or {}
             hb = obj.get("heater_bed") or {}
             gmv = (obj.get("gcode_move") or {}).get("gcode_position")
-            std.addstr(4, 2, "hotend: {}   bed: {}".format(
+            row(4, "hotend", "{}      bed  {}".format(
                 _fmt_temp((ex.get("temperature", 0), ex.get("target", 0))),
                 _fmt_temp((hb.get("temperature", 0), hb.get("target", 0)))))
             if isinstance(gmv, list) and len(gmv) >= 3:
-                std.addstr(5, 2, "position: X {:.1f}  Y {:.1f}  Z {:.2f}".format(
-                    gmv[0], gmv[1], gmv[2]))
+                row(5, "position",
+                    "X {:.1f}   Y {:.1f}   Z {:.2f}".format(
+                        gmv[0], gmv[1], gmv[2]))
         else:
-            std.addstr(3, 2, "printer: (moonraker not answering)")
+            row(3, "printer", "(moonraker not answering)")
         pins = versions.load_pins()
-        std.addstr(6, 2, "versions: klipper {}  moonraker {}  ui: {}".format(
+        row(7, "versions", "klipper {}   moonraker {}   ui {}".format(
             pins.get("klipper_sha", "")[:7] or pins["klipper"],
-            pins["moonraker"], pins.get("ui", "fluidd"))[:w - 3])
-        std.addstr(7, 2, "data: {}".format(paths.DATA)[:w - 3])
-        y = 9
+            pins["moonraker"], pins.get("ui", "fluidd")))
+        row(8, "data", str(paths.DATA))
+        if paths.lan_enabled():
+            ip = detect.lan_ip()
+            lan_line = ("open  http://{}:{} & :{}  api :{}   [a] close"
+                        .format(ip, paths.WEB_PORT, paths.FLUIDD_PORT,
+                                paths.MOONRAKER_PORT) if ip else
+                        "open, but this Mac has no network address   [a] close")
+        else:
+            lan_line = "closed (this Mac only)   [a] open to local network"
+        row(9, "lan", lan_line)
+        y = 11
         if self.mode == "main":
-            col = lambda s: s.ljust(21)
+            col = lambda s: s.ljust(24)
             lines = [
                 col("[s] start") + col("[o] open dashboard") + "[w] switch UI",
                 col("[x] stop") + col("[r] restart") + "[q] quit",
+                "",
                 col("[d] serial device") + col("[p] presets") + "[f] data folder",
                 col("[l] klipper logs") + col("[m] moonraker logs") + "[u] updates",
+                col("[a] lan access") + ("open" if paths.lan_enabled() else "closed"),
             ]
             for line in lines:
-                _add_keys(std, y, line[:w - 3])
+                if line:
+                    _add_keys(std, y, line[:w - 3])
                 y += 1
         else:
             label = self.mode
@@ -278,6 +318,8 @@ class App(object):
                         pass
                 if self.footnote:
                     std.addstr(h - 3, 2, self.footnote[:w - 3])
+        if self._message and time.time() - self._msg_at > 8:
+            self._message = ""
         if self.message:
             try:
                 std.addstr(h - 1, 1, self.message[:w - 3])
@@ -289,7 +331,7 @@ class App(object):
         if self.mode == "main":
             table = {"s": "start", "x": "stop", "r": "restart", "o": "open",
                      "w": "toggle_ui", "d": "serial", "p": "presets",
-                     "f": "data",
+                     "f": "data", "a": "toggle_lan",
                      "l": ("logs", "klipper"), "m": ("logs", "moonraker"),
                      "u": "update"}
             c = chr(ch) if ch > 0 else ""

@@ -28,10 +28,11 @@ path: {gcodes_dir}
 
 MOONRAKER_CFG = """\
 # Klipper for Mac generated Moonraker config (macOS-tuned).
-# Loopback-only by default; moonraker/mainsail/fluidd are NOT on the LAN.
+# Loopback-only by default; use `klipperformac lan on` to reach the stack
+# from other devices on your network.
 
 [server]
-host: 127.0.0.1
+host: {host}
 port: {moonraker_port}
 klippy_uds_address: {uds_address}
 
@@ -55,6 +56,37 @@ trusted_clients:
     127.0.0.1
     ::1
 """
+
+# Written verbatim into [authorization].trusted_clients when LAN access is
+# on; these are the RFC1918 private ranges, so only a local network can talk
+# to Moonraker without an API key.
+LAN_CIDRS = ("192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12")
+
+
+def apply_lan(enabled):
+    """Sync the managed lines of an existing moonraker.conf with the LAN
+    setting: [server] host + our CIDR entries in trusted_clients. Returns
+    True when the file changed (Moonraker needs a restart)."""
+    if not paths.MOONRAKER_CONF.exists():
+        return False
+    text = paths.MOONRAKER_CONF.read_text()
+    want_host = "0.0.0.0" if enabled else "127.0.0.1"
+    updated = re.sub(r"(?m)^host: \S+.*$", "host: " + want_host,
+                     text, count=1)
+
+    def _repl(m):
+        items = [l for l in m.group(0).splitlines()[1:] if l.strip()]
+        keep = [l for l in items if l.strip() not in LAN_CIDRS]
+        if enabled:
+            keep += ["    " + c for c in LAN_CIDRS]
+        return "trusted_clients:\n" + "\n".join(keep) + "\n"
+
+    updated = re.sub(r"trusted_clients:\n(?:[ \t]+\S[^\n]*\n)*", _repl,
+                     updated, count=1)
+    if updated != text:
+        paths.MOONRAKER_CONF.write_text(updated)
+        return True
+    return False
 
 
 def starter_cfg_text():
@@ -127,11 +159,14 @@ def ensure_configs():
     if not paths.MOONRAKER_CONF.exists():
         paths.MOONRAKER_CONF.write_text(
             MOONRAKER_CFG.format(
+                host="0.0.0.0" if paths.lan_enabled() else "127.0.0.1",
                 moonraker_port=paths.MOONRAKER_PORT,
                 uds_address=str(paths.API_SOCKET),
                 web_port=paths.WEB_PORT,
                 fluidd_port=paths.FLUIDD_PORT,
             )
         )
+        if paths.lan_enabled():
+            apply_lan(True)
         created.append(paths.MOONRAKER_CONF)
     return created
