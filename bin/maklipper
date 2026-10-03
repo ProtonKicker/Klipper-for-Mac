@@ -1,0 +1,4 @@
+#!/bin/sh
+# maklipper launcher — works straight from a git checkout, no install needed.
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m maklipper "$@"
