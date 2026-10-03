@@ -5,8 +5,11 @@ Terminal-adaptive styling only: default colors, bold, standout — nothing
 that assumes a dark or light palette.
 """
 import curses
+import contextlib
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -14,6 +17,7 @@ import urllib.request
 import webbrowser
 
 from . import detect, paths, process, versions
+from .cli import relocate_data
 from .installer import (checkout, create_venv, fetch_fluidd, fetch_mainsail,
                         install_requirements, test_chelper_build)
 
@@ -32,6 +36,26 @@ def _fmt_temp(vals):
     if vals is None:
         return "-- / --"
     return "{:.0f} / {:.0f}".format(vals[0], vals[1])
+
+
+def _add_keys(std, y, text):
+    """Draw a menu line with the '[k]' shortcut tokens bolded."""
+    x = 2
+    i = 0
+    for m in re.finditer(r"\[[a-z]\]", text):
+        try:
+            if m.start() > i:
+                std.addstr(y, x, text[i:m.start()])
+                x += m.start() - i
+            std.addstr(y, x, m.group(0), curses.A_BOLD)
+            x += 3
+            i = m.end()
+        except curses.error:
+            return
+    try:
+        std.addstr(y, x, text[i:])
+    except curses.error:
+        pass
 
 
 def user_presets():
@@ -54,6 +78,7 @@ class App(object):
         self.sel = 0
         self.filter = ""
         self.save_name = ""
+        self.data_input = ""
         self.footnote = ""
 
     # ---- actions -------------------------------------------------------
@@ -103,6 +128,10 @@ class App(object):
                 self.save_name = ""
                 self.mode = "name"
                 self.footnote = "preset name, [enter] saves, [esc] cancels"
+            elif action == "data":
+                self.data_input = ""
+                self.mode = "data"
+                self.footnote = "[enter] move   [esc] cancel"
             elif action == "logs":
                 log = paths.KLIPPY_LOG if arg == "klipper" else paths.MOONRAKER_LOG
                 if log.exists():
@@ -144,7 +173,7 @@ class App(object):
                     fetch_fluidd(pins["fluidd"])
                     versions.save_pins(pins)
                     test_chelper_build()
-                    self.message = "updated; [s] to start"
+                    self.message = "updated; [s] start when ready"
             elif action in ("back", "quit"):
                 self.mode = "main"
                 self.filter = ""
@@ -168,7 +197,7 @@ class App(object):
         std.addstr(0, 2, "Klipper for Mac", curses.A_BOLD)
         state = process.running()
         if state is None:
-            stack_line = "stack:   STOPPED   [s]tart"
+            stack_line = "stack:   STOPPED   [s] start"
         else:
             ups = [n for n, ok in state.items() if ok]
             flag = "RUNNING" if ups else "not responding [r]"
@@ -199,18 +228,18 @@ class App(object):
         std.addstr(6, 2, "versions: klipper {}  moonraker {}  ui: {}".format(
             pins.get("klipper_sha", "")[:7] or pins["klipper"],
             pins["moonraker"], pins.get("ui", "fluidd"))[:w - 3])
-        y = 8
+        std.addstr(7, 2, "data: {}".format(paths.DATA)[:w - 3])
+        y = 9
         if self.mode == "main":
+            col = lambda s: s.ljust(21)
             lines = [
-                "[s]tart  [x]stop  [r]estart",
-                "[o]pen dashboard   [w]switch UI ({} / {})".format(
-                    "fluidd", "mainsail"),
-                "[d] serial device   [p] presets",
-                "[l] klipper logs   [m] moonraker logs   [u] updates",
-                "[q] quit",
+                col("[s] start") + col("[o] open dashboard") + "[w] switch UI",
+                col("[x] stop") + col("[r] restart") + "[q] quit",
+                col("[d] serial device") + col("[p] presets") + "[f] data folder",
+                col("[l] klipper logs") + col("[m] moonraker logs") + "[u] updates",
             ]
             for line in lines:
-                std.addstr(y, 2, line[:w - 3])
+                _add_keys(std, y, line[:w - 3])
                 y += 1
         else:
             label = self.mode
@@ -220,9 +249,17 @@ class App(object):
                 head += "  filter: {}".format(self.filter)
             if self.mode == "name":
                 head = "── save preset: {}_".format(self.save_name)
+            if self.mode == "data":
+                head = "── move data folder ──"
             std.addstr(y, 2, head[:w - 3], curses.A_BOLD)
             y += 1
-            if self.mode == "name":
+            if self.mode == "data":
+                std.addstr(y, 2, "current: {}".format(paths.DATA)[:w - 3])
+                std.addstr(y + 1, 2, "new: {}_".format(self.data_input)[:w - 3],
+                           curses.A_BOLD)
+                std.addstr(y + 2, 2, "type a path — [enter] moves everything, "
+                                     "[esc] cancels"[:w - 3])
+            elif self.mode == "name":
                 pass
             else:
                 height = h - y - 3
@@ -252,6 +289,7 @@ class App(object):
         if self.mode == "main":
             table = {"s": "start", "x": "stop", "r": "restart", "o": "open",
                      "w": "toggle_ui", "d": "serial", "p": "presets",
+                     "f": "data",
                      "l": ("logs", "klipper"), "m": ("logs", "moonraker"),
                      "u": "update"}
             c = chr(ch) if ch > 0 else ""
@@ -265,6 +303,8 @@ class App(object):
             return "quit" if c in ("q", "\x1b") else None
         if self.mode == "name":
             return self.key_name(ch)
+        if self.mode == "data":
+            return self.key_data(ch)
         c = chr(ch) if ch > 0 else ""
         if ch == curses.KEY_UP or c == "k":
             self.sel = max(0, self.sel - 1)
@@ -320,6 +360,33 @@ class App(object):
             self.save_name += chr(ch)
         return None
 
+    def key_data(self, ch):
+        if ch == 27:
+            self.do("back")
+            return None
+        if ch in (10, 13):
+            path = self.data_input.strip()
+            if not path:
+                self.message = "no path typed — cancelled"
+            else:
+                try:
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        result = relocate_data(path)
+                    extras = [l for l in buf.getvalue().splitlines() if l.strip()]
+                    self.message = result + (("  |  " + "; ".join(extras))
+                                             if extras else "")
+                except Exception as e:
+                    self.message = "error: " + str(e)[:70]
+            self.do("back")
+            return None
+        if ch in (8, 127):
+            self.data_input = self.data_input[:-1]
+            return None
+        if 32 <= ch < 127:
+            self.data_input += chr(ch)
+        return None
+
     def key_enter(self):
         vis = self.visible()
         if not vis or self.sel >= len(vis):
@@ -329,7 +396,7 @@ class App(object):
             if not paths.PRINTER_CFG.exists():
                 self.message = "no printer.cfg (run: klipperformac setup)"
             elif detect.write_serial(paths.PRINTER_CFG, chosen):
-                self.message = "serial set — [r]estart to apply"
+                self.message = "serial set — [r] restart to apply"
             else:
                 self.message = "no [mcu] section in printer.cfg"
             self.do("back")
@@ -344,7 +411,7 @@ class App(object):
         if paths.PRINTER_CFG.exists():
             shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
         shutil.copy2(src, paths.PRINTER_CFG)
-        self.message = "preset '{}' applied — [r]estart to load".format(name)
+        self.message = "preset '{}' applied — [r] restart to load".format(name)
         self.do("back")
 
 

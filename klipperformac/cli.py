@@ -2,12 +2,14 @@
 serial | update | open | doctor."""
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
 import webbrowser
+from pathlib import Path
 
-from . import detect, installer, paths, process, versions
+from . import configgen, detect, installer, paths, process, versions
 
 
 def _die(msg):
@@ -23,6 +25,8 @@ def cmd_up(args):
     paths.ensure_dirs()
     if not paths.VENV_PY.exists():
         _die("Not set up yet. Run: klipperformac setup")
+    if configgen.sync_data_paths():
+        print("Updated config paths for the current data folder.")
     if process.running() is not None:
         print("Already running.")
     else:
@@ -127,6 +131,54 @@ def cmd_serial(args):
         print("Wrote serial to " + str(paths.PRINTER_CFG))
     else:
         _die("Could not find [mcu] serial: line in " + str(paths.PRINTER_CFG))
+
+
+def relocate_data(new):
+    """Move the data folder, record it in settings, fix config paths."""
+    new = Path(new).expanduser()
+    if new.exists():
+        new = new.resolve()
+    old = paths.DATA
+    resolved_old = old.resolve() if old.exists() else old
+    if new == resolved_old:
+        return "Data folder already set to: {}".format(new)
+    if new == Path.home() or new.parent == new:
+        return "Refusing to use {} as the data folder.".format(new)
+    was_running = process.running() is not None
+    if was_running:
+        process.stop()
+    new.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    if old.exists():
+        for p in sorted(old.iterdir()):
+            dest = new / p.name
+            if dest.exists():
+                print("[!] " + str(dest) + " already exists — left "
+                      + str(p) + " in place")
+                continue
+            shutil.move(str(p), str(dest))
+            moved += 1
+    paths.set_data(new)
+    paths.ensure_dirs()
+    settings = paths.load_settings()
+    settings["data"] = str(new)
+    paths.save_settings(settings)
+    configgen.sync_data_paths()
+    if was_running:
+        process.start()
+    return "Data folder: {} (moved {} item(s), stack {})".format(
+        new, moved, "restarted" if was_running else "stopped")
+
+
+def cmd_data(args):
+    if not args.set:
+        print("Data folder: " + str(paths.DATA))
+        if paths.DATA.exists():
+            entries = sorted(p.name for p in paths.DATA.iterdir()
+                             if not p.name.startswith("."))
+            print("  contents: " + (", ".join(entries) if entries else "(empty)"))
+        return
+    print(relocate_data(args.set))
 
 
 def cmd_update(args):
@@ -403,6 +455,8 @@ def main(argv=None):
     p = sub.add_parser("serial", help="list USB printer ports / set [mcu] serial")
     p.add_argument("--set", metavar="PATH")
     p.add_argument("--auto", action="store_true")
+    p = sub.add_parser("data", help="show or move the user data folder")
+    p.add_argument("--set", metavar="PATH")
     p = sub.add_parser("update", help="check (or apply) upstream component updates")
     p.add_argument("--apply", action="store_true")
     p.add_argument("--pin", action="append", metavar="COMP=TAG")
@@ -427,6 +481,7 @@ def main(argv=None):
     handlers = {
         "setup": cmd_setup, "up": cmd_up, "down": cmd_down, "restart": cmd_restart,
         "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
+        "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
         "selftest": cmd_selftest, "tui": cmd_tui,

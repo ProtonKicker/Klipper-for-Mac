@@ -1,4 +1,4 @@
-"""Generates the initial user-editable configs under KlipperData/config."""
+"""Generates the initial user-editable configs under the data folder."""
 import re
 
 from . import paths
@@ -69,6 +69,46 @@ def starter_cfg_text():
         gcodes_dir=str(paths.DATA / "gcodes"))
     return HEADER.format(example=STARTER_EXAMPLE,
                          date=time.strftime("%Y-%m-%d")) + text + extras
+
+
+def sync_virtual_sdcard():
+    """Keep [virtual_sdcard] path pointing into the current data folder."""
+    if not paths.PRINTER_CFG.exists():
+        return False
+    text = paths.PRINTER_CFG.read_text()
+    if "[virtual_sdcard]" not in text:
+        return False
+    desired = str(paths.DATA / "gcodes")
+    updated = re.sub(
+        r"(\[virtual_sdcard\]\s*\n\s*path:\s*)[^\n]*",
+        lambda m: m.group(1) + desired,
+        text, count=1)
+    if updated != text:
+        paths.PRINTER_CFG.write_text(updated)
+        return True
+    return False
+
+
+def sync_moonraker_conf():
+    """Keep moonraker.conf's klippy socket path in the current data folder."""
+    if not paths.MOONRAKER_CONF.exists():
+        return False
+    text = paths.MOONRAKER_CONF.read_text()
+    desired = str(paths.API_SOCKET)
+    updated, n = re.subn(
+        r"(klippy_uds_address:\s*)[^\n]*",
+        lambda m: m.group(1) + desired,
+        text)
+    if n and updated != text:
+        paths.MOONRAKER_CONF.write_text(updated)
+        return True
+    return False
+
+
+def sync_data_paths():
+    changed = sync_virtual_sdcard()
+    changed = sync_moonraker_conf() or changed
+    return changed
 
 
 def ensure_configs():

@@ -37,6 +37,7 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 | `up` / `down` / `restart` | start/stop the stack (with `caffeinate`, so sleep can't kill a print) |
 | `status` | service state, pinned versions, available updates |
 | `serial` | list USB serial devices; `--auto` / `--set PATH` writes `[mcu] serial:` into printer.cfg |
+| `data` | show the data folder; `--set PATH` moves everything there and fixes config paths |
 | `presets` | manage config presets (`--save/--use/--import`, auto-backup) |
 | `ui [fluidd\|mainsail]` | switch the default dashboard and open it |
 | `gcode …` / `gcode --status` | send G-code / query printer state from the terminal |
@@ -46,7 +47,8 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 
 ## Where things live
 
-- `~/KlipperData/` — **your files**: configs, presets, g-codes, logs, web UIs.
+- `~/Documents/Klipper for Mac/` — **your files**: configs, presets, g-codes,
+  logs, web UIs (`klipperformac data --set PATH` to move it).
   Delete `~/.klipperformac/` (app internals: checkouts, venv) to factory-reset —
   your data survives. Everything binds to localhost only.
 

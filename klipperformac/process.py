@@ -30,15 +30,25 @@ MARKERS = {
 _STOP_ORDER = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
 
 
+_boot_cache = [0.0, None]  # [monotonic, value]; sysctl is slow per keystroke
+
+
 def _boot_time():
+    now = time.monotonic()
+    if now - _boot_cache[0] < 5.0:
+        return _boot_cache[1]
     try:
         out = subprocess.run(
             ["sysctl", "-n", "kern.boottime"], capture_output=True,
             check=True).stdout.decode()
     except Exception:
-        return None
-    m = re.search(r"sec = (\d+)", out)
-    return m.group(1) if m else None
+        bt = None
+    else:
+        m = re.search(r"sec = (\d+)", out)
+        bt = m.group(1) if m else None
+    _boot_cache[0] = now
+    _boot_cache[1] = bt
+    return bt
 
 
 def _load():
@@ -72,17 +82,23 @@ def _save(procs):
         json.dump(data, f, indent=2)
 
 
-def alive(name, pid):
-    if not pid:
-        return False
+def _live_cmds(pids):
+    """pid -> command in one `ps` call; zombie entries are dropped."""
+    pids = [str(p) for p in pids if p]
+    if not pids:
+        return {}
     try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    out = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "command="], capture_output=True
-    ).stdout.decode()
-    return MARKERS[name] in out
+        out = subprocess.run(
+            ["ps", "-p", ",".join(pids), "-o", "pid=,state=,command="],
+            capture_output=True).stdout.decode()
+    except Exception:
+        out = ""
+    result = {}
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3 and "Z" not in parts[1]:
+            result[parts[0]] = parts[2]
+    return result
 
 
 def running():
@@ -90,7 +106,11 @@ def running():
     state = _load()
     if state is None:
         return None
-    return {name: alive(name, state.get(name)) for name in SERVICES}
+    pids = {name: state.get(name) for name in SERVICES}
+    live = _live_cmds(pids.values())
+    return {name: bool(pids.get(name)) and
+            MARKERS[name] in live.get(str(pids[name]), "")
+            for name in SERVICES}
 
 
 def _popen(cmd, **kw):
@@ -152,18 +172,34 @@ def stop(timeout=6.0):
     if state is None:
         return False
     pids = [(n, state.get(n)) for n in _STOP_ORDER if state.get(n)]
+
+    def _alive_pids():
+        allp = [p for _, p in pids]
+        live = _live_cmds(allp)
+        return [p for _, p in pids if str(p) in live]
+
     for _, pid in pids:
         _signal(pid, signal.SIGTERM)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if not any(_pid_exists(p) for _, p in pids):
+        if not _alive_pids():
             break
         time.sleep(0.2)
-    stragglers = [(n, p) for n, p in pids if _pid_exists(p)]
+    stragglers = [(n, p) for n, p in pids if str(p) in _alive_pids()]
     for _, p in stragglers:
         _signal(p, signal.SIGKILL)
-    time.sleep(0.3)
-    still = [n for n, p in stragglers if _pid_exists(p)]
+    # Reap children we spawned so zombies don't look alive.
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        for _, p in stragglers:
+            try:
+                os.waitpid(p, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+        if not _alive_pids():
+            break
+        time.sleep(0.2)
+    still = [n for n, p in stragglers if str(p) in _alive_pids()]
     if still:
         for n in _STOP_ORDER:
             if n in still:
@@ -172,14 +208,6 @@ def stop(timeout=6.0):
         return False
     _clear()
     return True
-
-
-def _pid_exists(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def _signal(pid, sig):
