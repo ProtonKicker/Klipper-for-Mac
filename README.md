@@ -1,4 +1,6 @@
-# MaKlipper — Klipper for Mac
+# Klipper for Mac
+
+*project codename: MaKlipper — the app is Klipper for Mac*
 
 Run [Klipper](https://www.klipper3d.org) on an Intel or Apple Silicon Mac like
 it were the Raspberry Pi: your printer board plugs into USB, the Mac becomes
@@ -8,7 +10,7 @@ the host. No Linux box, no SD card, no hard fork.
 downloaded pristine from upstream GitHub at setup time, at pinned refs
 recorded in a lockfile. The only macOS-specific piece is two tiny
 compatibility headers injected at compile time via `CPATH` — upstream
-sources are never edited, and `maklipper doctor` verifies every checkout is
+sources are never edited, and `klipperformac doctor` verifies every checkout is
 `git status` clean.
 
 ## Quick start
@@ -17,10 +19,10 @@ sources are never edited, and `maklipper doctor` verifies every checkout is
 curl -fsSL https://raw.githubusercontent.com/YOURHANDLE/MaKlipper/main/scripts/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"   # once, if prompted
 
-maklipper setup     # fetches upstream components + verifies they build on your Mac
-maklipper serial    # plug in the printer board first; lists USB ports
-maklipper serial --auto    # write the found port into printer.cfg
-maklipper up        # starts klipper + moonraker + mainsail, keeps the Mac awake
+klipperformac setup     # fetches upstream components + verifies they build on your Mac
+klipperformac serial    # plug in the printer board first; lists USB ports
+klipperformac serial --auto    # write the found port into printer.cfg
+klipperformac up        # starts klipper + moonraker + mainsail, keeps the Mac awake
 ```
 
 Open **http://localhost:8080** for Mainsail (or **:8081** for Fluidd) — the full
@@ -30,7 +32,7 @@ Or without the installer:
 
 ```sh
 git clone https://github.com/YOURHANDLE/MaKlipper && cd MaKlipper
-./bin/maklipper setup && ./bin/maklipper up
+./bin/klipperformac setup && ./bin/klipperformac up
 ```
 
 ## Commands
@@ -78,7 +80,7 @@ are bit-for-bit unchanged — `git status` in the checkout proves it.
 Timing: Klipper's host needs responses within a few hundred milliseconds.
 macOS delivers sub-millisecond timer precision while awake, better than a
 stressed Raspberry Pi. The one real rule: **the Mac must stay awake during
-printing** — `maklipper up` runs `caffeinate` for you. Closing the lid or
+printing** — `klipperformac up` runs `caffeinate` for you. Closing the lid or
 draining the battery can still interrupt a print; keep it on AC power.
 
 ## Limitations
@@ -88,7 +90,7 @@ draining the battery can still interrupt a print; keep it on AC power.
   conveniently — bugs in Klipper itself still go upstream.
 - Shaper / input-shaping calibration (`SHAPER_CALIBRATE`) needs Python 3.14
   (macOS' multiprocessing default otherwise breaks it); use
-  `MAKLIPPER_PYTHON=/path/to/python3.14 maklipper setup` when possible.
+  `MAKLIPPER_PYTHON=/path/to/python3.14 klipperformac setup` when possible.
 - `CAN bus`, host GPIO, KlipperScreen, and webcam integration are Linux-only
   or not wired up yet on v1.
 - Notarized `.app` packaging is the planned v2; v1 is the CLI + Mainsail.

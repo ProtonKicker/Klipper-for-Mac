@@ -22,7 +22,7 @@ def cmd_setup(args):
 def cmd_up(args):
     paths.ensure_dirs()
     if not paths.VENV_PY.exists():
-        _die("Not set up yet. Run: maklipper setup")
+        _die("Not set up yet. Run: klipperformac setup")
     if process.running() is not None:
         print("Already running.")
     else:
@@ -31,7 +31,7 @@ def cmd_up(args):
         print("  Mainsail:  " + paths.ui_url("mainsail"))
         print("  Fluidd:    " + paths.ui_url("fluidd"))
         print("  Moonraker: http://localhost:{}".format(paths.MOONRAKER_PORT))
-        print("  Logs: maklipper logs   Stop: maklipper down")
+        print("  Logs: klipperformac logs   Stop: klipperformac down")
         _wait_ready()
         if getattr(args, "open", False):
             webbrowser.open(paths.web_url())
@@ -53,7 +53,7 @@ def _wait_ready(timeout=20):
             return
         except Exception:
             time.sleep(0.7)
-    print("[!] Moonraker did not answer within {}s — check: maklipper logs"
+    print("[!] Moonraker did not answer within {}s — check: klipperformac logs"
           .format(timeout))
 
 
@@ -118,11 +118,11 @@ def cmd_serial(args):
             print("\n--auto: {} candidates found; pass --set explicitly".format(
                 len(ports)))
     if not target:
-        print("\nTo use one: maklipper serial --set /dev/cu.usbserial-XXXX "
+        print("\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
               "(or --auto for the first above)")
         return
     if not paths.PRINTER_CFG.exists():
-        _die("No printer.cfg yet. Run: maklipper setup")
+        _die("No printer.cfg yet. Run: klipperformac setup")
     if detect.write_serial(paths.PRINTER_CFG, target):
         print("Wrote serial to " + str(paths.PRINTER_CFG))
     else:
@@ -158,14 +158,14 @@ def cmd_update(args):
     if not updates:
         print("All components at newest pinned upstream tags.")
         return
-    print("Updates available (apply with: maklipper update --apply):")
+    print("Updates available (apply with: klipperformac update --apply):")
     for comp, cur, new in updates:
         print("  {:<10} {} -> {}".format(comp, cur, new))
 
 
 def _reprovision(pins):
     if process.running() is not None:
-        _die("Stack is running. Do: maklipper down  (updates need a stopped stack)")
+        _die("Stack is running. Do: klipperformac down  (updates need a stopped stack)")
     print("Re-fetching from upstream...")
     for comp in ("klipper", "moonraker"):
         force = pins[comp] in ("master", "main")
@@ -178,7 +178,7 @@ def _reprovision(pins):
     installer.fetch_fluidd(pins["fluidd"])
     versions.save_pins(pins)
     installer.test_chelper_build()
-    print("Updated. Restart with: maklipper down && maklipper up")
+    print("Updated. Restart with: klipperformac down && klipperformac up")
 
 
 def cmd_open(args):
@@ -191,7 +191,7 @@ def cmd_ui(args):
         if args.name not in ("mainsail", "fluidd"):
             _die("UI is 'mainsail' or 'fluidd'")
         if not (paths.WEB / args.name / "index.html").exists():
-            print("[!] {} not downloaded yet — run: maklipper setup".format(
+            print("[!] {} not downloaded yet — run: klipperformac setup".format(
                 args.name))
         pins["ui"] = args.name
         versions.save_pins(pins)
@@ -224,7 +224,7 @@ def cmd_presets(args):
         print("Preset '{}' applied (previous config kept as printer.cfg.bak)."
               .format(args.use))
         if process.running() is not None:
-            print("Restart to load it: maklipper restart")
+            print("Restart to load it: klipperformac restart")
         return
     if args.import_:
         src = os.path.expanduser(args.import_)
@@ -237,7 +237,7 @@ def cmd_presets(args):
         return
     presets = sorted(paths.PRESETS.glob("*.cfg"))
     if not presets:
-        print("No presets yet. Save one with: maklipper presets --save NAME")
+        print("No presets yet. Save one with: klipperformac presets --save NAME")
         print("(Upstream example configs are also presets: import one with")
         print(" maklipper presets --import ~/.maklipper/klipper/config/<model>.cfg)")
         return
@@ -314,7 +314,7 @@ def cmd_gcode(args):
             r.read()
     except Exception as e:
         _die("Moonraker not reachable or script rejected: " + str(e))
-    print("sent: " + script + "  (output appears in: maklipper logs)")
+    print("sent: " + script + "  (output appears in: klipperformac logs)")
 
 
 def cmd_selftest(args):
@@ -323,6 +323,11 @@ def cmd_selftest(args):
     env["PYTHONPATH"] = repo_root
     subprocess.call([str(paths.VENV_PY), "-m", "maklipper.tests.selftest"],
                     env=env)
+
+
+def cmd_tui(args):
+    from . import tui
+    tui.main()
 
 
 def cmd_doctor(args):
@@ -352,7 +357,7 @@ def cmd_doctor(args):
         else:
             print("[ok] upstream checkouts pristine")
     else:
-        print("[!] Not set up (run maklipper setup)")
+        print("[!] Not set up (run klipperformac setup)")
         ok = False
     try:
         batt = subprocess.run(["pmset", "-g", "batt"],
@@ -371,9 +376,15 @@ def cmd_doctor(args):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        from . import tui
+        tui.main()
+        return
     ap = argparse.ArgumentParser(
-        prog="maklipper",
-        description="Klipper on macOS: pristine upstream, one command.",
+        prog="klipperformac",
+        description="Klipper on macOS: pristine upstream, one command. "
+                    "Run with no arguments for the interactive dashboard.",
     )
     sub = ap.add_subparsers(dest="cmd")
     sub.required = True
@@ -410,6 +421,7 @@ def main(argv=None):
     p.add_argument("--status", action="store_true")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
+    sub.add_parser("tui", help="interactive dashboard (default with no args)")
 
     args = ap.parse_args(argv)
     handlers = {
@@ -417,6 +429,6 @@ def main(argv=None):
         "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
-        "selftest": cmd_selftest,
+        "selftest": cmd_selftest, "tui": cmd_tui,
     }
     handlers[args.cmd](args)

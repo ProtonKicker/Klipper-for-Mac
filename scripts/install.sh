@@ -7,7 +7,7 @@ REPO="${MAKLIPPER_REPO:-}"
 SRC_DIR="${MAKLIPPER_SRC:-$HOME/.maklipper/src/MaKlipper}"
 BIN_DIR="${MAKLIPPER_BIN_DIR:-$HOME/.local/bin}"
 
-say() { printf 'maklipper-install: %s\n' "$1"; }
+say() { printf 'klipperformac-install: %s\n' "$1"; }
 
 # Repo source: explicit env, or the repo this script was run from (git
 # checkout), or the configured origin — refuse to guess placeholders.
@@ -53,4 +53,4 @@ case ":$PATH:" in
      say "  export PATH=\$HOME/.local/bin:\$PATH" ;;
 esac
 
-say "next step: maklipper setup"
+say "next step: klipperformac setup"

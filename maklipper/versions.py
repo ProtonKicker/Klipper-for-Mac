@@ -20,7 +20,7 @@ DEFAULT_PINS = {
     "moonraker": "v0.11.0",
     "mainsail": "v2.19.0",
     "fluidd": "v1.37.6",
-    "ui": "mainsail",
+    "ui": "fluidd",
 }
 
 API = "https://api.github.com/repos/{}/tags?per_page=100"
