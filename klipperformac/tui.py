@@ -215,14 +215,20 @@ class App(object):
         h, w = std.getmaxyx()
         std.erase()
 
-        def row(y, label, text, attr=0):
-            try:
-                std.addstr(y, 2, label, curses.A_BOLD)
-                std.addstr(y, 12, text[:w - 13], attr)
-            except curses.error:
-                pass
+        def safe(y, x, text, attr=0):
+            # Off-screen writes raise curses.error, which would escape
+            # curses.wrapper and kill the app (looks like a terminal restart).
+            if 0 <= y < h and 0 <= x < w:
+                try:
+                    std.addstr(y, x, text[:max(0, w - x - 1)], attr)
+                except curses.error:
+                    pass
 
-        std.addstr(0, 2, "Klipper for Mac", curses.A_BOLD)
+        def row(y, label, text, attr=0):
+            safe(y, 2, label, curses.A_BOLD)
+            safe(y, 12, text, attr)
+
+        safe(0, 2, "Klipper for Mac", curses.A_BOLD)
         state = process.running()
         if state is None:
             row(2, "stack", "STOPPED   [s] start")
@@ -257,16 +263,22 @@ class App(object):
             pins.get("klipper_sha", "")[:7] or pins["klipper"],
             pins["moonraker"], pins.get("ui", "fluidd")))
         row(8, "data", str(paths.DATA))
+        ui = pins.get("ui", "fluidd")
+        api_host = "localhost"
         if paths.lan_enabled():
             ip = detect.lan_ip()
-            lan_line = ("open  http://{}:{} & :{}  api :{}   [a] close"
-                        .format(ip, paths.WEB_PORT, paths.FLUIDD_PORT,
-                                paths.MOONRAKER_PORT) if ip else
-                        "open, but this Mac has no network address   [a] close")
+            if ip:
+                lan_line = ("open  {} http://{}:{}   [a] close"
+                            .format(ui, ip, paths.ui_port(ui)))
+                api_host = ip
+            else:
+                lan_line = ("open, but this Mac has no network address"
+                            "   [a] close")
         else:
             lan_line = "closed (this Mac only)   [a] open to local network"
-        row(9, "lan", lan_line)
-        y = 11
+        row(10, "lan", lan_line)
+        row(11, "api", "http://{}:{}".format(api_host, paths.MOONRAKER_PORT))
+        y = 13
         if self.mode == "main":
             col = lambda s: s.ljust(24)
             lines = [
@@ -291,40 +303,35 @@ class App(object):
                 head = "── save preset: {}_".format(self.save_name)
             if self.mode == "data":
                 head = "── move data folder ──"
-            std.addstr(y, 2, head[:w - 3], curses.A_BOLD)
+            safe(y, 2, head, curses.A_BOLD)
             y += 1
             if self.mode == "data":
-                std.addstr(y, 2, "current: {}".format(paths.DATA)[:w - 3])
-                std.addstr(y + 1, 2, "new: {}_".format(self.data_input)[:w - 3],
-                           curses.A_BOLD)
-                std.addstr(y + 2, 2, "type a path — [enter] moves everything, "
-                                     "[esc] cancels"[:w - 3])
+                safe(y, 2, "current: {}".format(paths.DATA))
+                safe(y + 1, 2, "new: {}_".format(self.data_input),
+                     curses.A_BOLD)
+                safe(y + 2, 2, "type a path — [enter] moves everything, "
+                               "[esc] cancels")
             elif self.mode == "name":
                 pass
             else:
                 height = h - y - 3
-                if self.sel >= len(vis):
-                    self.sel = max(0, len(vis) - 1)
-                start = max(0, min(self.sel - height // 2, len(vis) - height))
-                for i, item in enumerate(vis[start:start + height]):
-                    attr = curses.A_REVERSE if start + i == self.sel else 0
-                    text = os.path.basename(item)
-                    if self.mode == "serial":
-                        text += "   " + detect._describe(item)
-                    try:
-                        std.addstr(y + i, 2, (" > " if attr else "   ")
-                                   + text[:w - 7], attr)
-                    except curses.error:
-                        pass
-                if self.footnote:
-                    std.addstr(h - 3, 2, self.footnote[:w - 3])
+                if height > 0:
+                    if self.sel >= len(vis):
+                        self.sel = max(0, len(vis) - 1)
+                    start = max(0,
+                                min(self.sel - height // 2, len(vis) - height))
+                    for i, item in enumerate(vis[start:start + height]):
+                        attr = curses.A_REVERSE if start + i == self.sel else 0
+                        text = os.path.basename(item)
+                        if self.mode == "serial":
+                            text += "   " + detect._describe(item)
+                        safe(y + i, 2, (" > " if attr else "   ") + text, attr)
+                    if self.footnote:
+                        safe(h - 3, 2, self.footnote)
         if self._message and time.time() - self._msg_at > 8:
             self._message = ""
         if self.message:
-            try:
-                std.addstr(h - 1, 1, self.message[:w - 3])
-            except curses.error:
-                pass
+            safe(h - 1, 1, self.message)
 
     # ---- input ---------------------------------------------------------
     def key(self, ch):
