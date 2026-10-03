@@ -1,6 +1,5 @@
 #!/bin/sh
 # klipperformac launcher — works straight from a git checkout or via symlink.
-# (bin/maklipper remains as a legacy alias to the same app.)
 SELF="$0"
 while [ -L "$SELF" ]; do
     L=$(readlink "$SELF")
@@ -11,5 +10,5 @@ while [ -L "$SELF" ]; do
 done
 DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")/.." && pwd)
 cd "$DIR" || exit 1
-PY="${MAKLIPPER_PYTHON:-python3}"
-PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m maklipper "$@"
+PY="${KLIPPERFORMAC_PYTHON:-python3}"
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m klipperformac "$@"

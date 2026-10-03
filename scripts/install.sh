@@ -1,11 +1,11 @@
 #!/bin/sh
-# curl-friendly one-liner installer for maklipper (CLI only, no GUI).
+# curl-friendly one-liner installer for Klipper for Mac (CLI + TUI, no GUI bundle yet).
 #   curl -fsSL https://raw.githubusercontent.com/<owner>/MaKlipper/main/scripts/install.sh | sh
 set -e
 
-REPO="${MAKLIPPER_REPO:-}"
-SRC_DIR="${MAKLIPPER_SRC:-$HOME/.maklipper/src/MaKlipper}"
-BIN_DIR="${MAKLIPPER_BIN_DIR:-$HOME/.local/bin}"
+REPO="${KLIPPERFORMAC_REPO:-}"
+SRC_DIR="${KLIPPERFORMAC_SRC:-$HOME/.klipperformac/src/MaKlipper}"
+BIN_DIR="${KLIPPERFORMAC_BIN_DIR:-$HOME/.local/bin}"
 
 say() { printf 'klipperformac-install: %s\n' "$1"; }
 
@@ -20,7 +20,7 @@ if [ -z "$REPO" ]; then
   done
 fi
 if [ -z "$REPO" ] || echo "$REPO" | grep -q "YOURHANDLE\|<owner>"; then
-  say "ERROR: set MAKLIPPER_REPO=https://github.com/<owner>/MaKlipper (placeholder repo URL)."
+  say "ERROR: set KLIPPERFORMAC_REPO=https://github.com/<owner>/MaKlipper (placeholder repo URL)."
   exit 1
 fi
 
@@ -44,8 +44,8 @@ fi
 
 # Install the launcher.
 mkdir -p "$BIN_DIR"
-ln -sf "$SRC_DIR/bin/maklipper" "$BIN_DIR/maklipper"
-say "installed maklipper -> $BIN_DIR/maklipper"
+ln -sf "$SRC_DIR/bin/klipperformac" "$BIN_DIR/klipperformac"
+say "installed klipperformac -> $BIN_DIR/klipperformac"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

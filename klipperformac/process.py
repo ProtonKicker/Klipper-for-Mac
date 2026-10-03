@@ -23,8 +23,8 @@ SERVICES = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
 MARKERS = {
     "klipper": "klippy.py",
     "moonraker": "moonraker",
-    "web_mainsail": "maklipper.proxy {} ".format(paths.WEB_PORT),
-    "web_fluidd": "maklipper.proxy {} ".format(paths.FLUIDD_PORT),
+    "web_mainsail": "klipperformac.proxy {} ".format(paths.WEB_PORT),
+    "web_fluidd": "klipperformac.proxy {} ".format(paths.FLUIDD_PORT),
     "caffeinate": "caffeinate",
 }
 _STOP_ORDER = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
@@ -131,12 +131,12 @@ def start():
         os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
 
     wproc = _popen(
-        [py, "-m", "maklipper.proxy", str(paths.WEB_PORT),
+        [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
          str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT)],
         cwd=repo_root, env=web_env,
     )
     fproc = _popen(
-        [py, "-m", "maklipper.proxy", str(paths.FLUIDD_PORT),
+        [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
          str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT)],
         cwd=repo_root, env=web_env,
     )

@@ -1,4 +1,4 @@
-"""maklipper command-line interface: setup | up | down | status | logs |
+"""klipperformac command-line interface: setup | up | down | status | logs |
 serial | update | open | doctor."""
 import argparse
 import os
@@ -239,7 +239,7 @@ def cmd_presets(args):
     if not presets:
         print("No presets yet. Save one with: klipperformac presets --save NAME")
         print("(Upstream example configs are also presets: import one with")
-        print(" maklipper presets --import ~/.maklipper/klipper/config/<model>.cfg)")
+        print(" klipperformac presets --import ~/.klipperformac/klipper/config/<model>.cfg)")
         return
     current = paths.PRINTER_CFG.read_text() if paths.PRINTER_CFG.exists() else ""
     for p in presets:
@@ -254,7 +254,7 @@ def _klippy_console(cmd, timeout=6):
     goes through Moonraker instead."""
     import select
     import os as _os
-    pty_path = os.environ.get("MAKLIPPER_CONSOLE", "/tmp/printer")
+    pty_path = os.environ.get("KLIPPERFORMAC_CONSOLE", "/tmp/printer")
     if not _os.path.exists(pty_path):
         _die("No Klipper console at {} (is the stack up?)".format(pty_path))
     fd = _os.open(pty_path, _os.O_RDWR | _os.O_NONBLOCK)
@@ -321,7 +321,7 @@ def cmd_selftest(args):
     env = dict(os.environ)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = repo_root
-    subprocess.call([str(paths.VENV_PY), "-m", "maklipper.tests.selftest"],
+    subprocess.call([str(paths.VENV_PY), "-m", "klipperformac.tests.selftest"],
                     env=env)
 
 

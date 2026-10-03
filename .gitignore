@@ -1,1 +1,3 @@
 /.qoder
+__pycache__/
+*.pyc

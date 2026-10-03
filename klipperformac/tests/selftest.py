@@ -1,7 +1,7 @@
 """Live connection test: the exact endpoints Mainsail hits.
 
-Run with the maklipper venv python (has tornado):
-  ~/.maklipper/venv/bin/python -m maklipper.tests.selftest
+Run with the klipperformac venv python (has tornado):
+  ~/.klipperformac/venv/bin/python -m klipperformac.tests.selftest
 """
 import asyncio
 import json

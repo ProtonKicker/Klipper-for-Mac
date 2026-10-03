@@ -9,11 +9,11 @@ from . import paths
 STARTER_EXAMPLE = "generic-rambo.cfg"
 
 HEADER = """\
-# MaKlipper starter config, derived from upstream {example} on {date}.
+# Klipper for Mac starter config, derived from upstream {example} on {date}.
 # Replace this whole file with the printer.cfg for your machine if you have
 # one (see https://github.com/Klipper3d/klipper/tree/master/config).
-# Tip: `maklipper serial` lists connected USB printer boards.
-#      `maklipper presets` saves/swaps whole configs.
+# Tip: `klipperformac serial` lists connected USB printer boards.
+#      `klipperformac presets` saves/swaps whole configs.
 
 """
 
@@ -27,7 +27,7 @@ path: {gcodes_dir}
 """
 
 MOONRAKER_CFG = """\
-# MaKlipper generated Moonraker config (macOS-tuned).
+# Klipper for Mac generated Moonraker config (macOS-tuned).
 # Loopback-only by default; moonraker/mainsail/fluidd are NOT on the LAN.
 
 [server]
@@ -41,7 +41,7 @@ klippy_uds_address: {uds_address}
 file_system_observer: none
 
 [machine]
-# systemd/DBus service control does not exist on macOS; MaKlipper's CLI
+# systemd/DBus service control does not exist on macOS; Klipper for Mac's CLI
 # manages the processes instead.
 provider: none
 
@@ -81,7 +81,7 @@ def ensure_configs():
         if text is None:
             raise SystemExit(
                 "No starter example found in the Klipper checkout. Run "
-                "'maklipper setup' first, then 'maklipper setup' again.")
+                "'klipperformac setup' first, then 'klipperformac setup' again.")
         paths.PRINTER_CFG.write_text(text)
         created.append(paths.PRINTER_CFG)
     if not paths.MOONRAKER_CONF.exists():

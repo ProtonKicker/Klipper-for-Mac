@@ -1,10 +1,10 @@
-/* MaKlipper compat shim: macOS <sys/prctl.h>.
+/* Klipper for Mac compat shim: macOS <sys/prctl.h>.
  * Klipper's only call is prctl(PR_SET_NAME, name) used to label threads;
  * macOS offers pthread_setname_np for the current thread. Unknown options
  * fail loudly (-1/ENOSYS) rather than pretending success.
  */
-#ifndef _MAKLIPPER_COMPAT_SYS_PRCTL_H
-#define _MAKLIPPER_COMPAT_SYS_PRCTL_H
+#ifndef _KLIPPERFORMAC_COMPAT_SYS_PRCTL_H
+#define _KLIPPERFORMAC_COMPAT_SYS_PRCTL_H
 
 #include <errno.h>
 #include <pthread.h>

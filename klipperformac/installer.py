@@ -1,7 +1,7 @@
 """Fetches pinned upstream components, builds the venv, and proves the shim
 compile works.
 
-Pristine-upstream attestation: checkouts live under ~/.maklipper, marker
+Pristine-upstream attestation: checkouts live under ~/.klipperformac, marker
 files live outside them (refs.d/), build artifacts are added to
 .git/info/exclude, and setup/doctor verify `git status --porcelain` is
 empty for every checkout.
@@ -48,12 +48,12 @@ def check_prereqs(strict=True):
             "No Python >= {} found. Try: brew install python@3.12".format(
                 ".".join(map(str, MIN_PY))))
     if problems and strict:
-        raise SystemExit("MaKlipper setup requires:\n  - " + "\n  - ".join(problems))
+        raise SystemExit("Klipper for Mac setup requires:\n  - " + "\n  - ".join(problems))
     return problems
 
 
 def find_python():
-    env = os.environ.get("MAKLIPPER_PYTHON")
+    env = os.environ.get("KLIPPERFORMAC_PYTHON")
     candidates = ([env] if env else []) + [
         c for c in PY_CANDIDATES if shutil.which(c)]
     for c in candidates:
@@ -145,12 +145,14 @@ REQ_CANDIDATES = {
 
 
 def install_requirements():
-    pip = str(paths.APP_HOME / "venv" / "bin" / "pip")
+    # NB: `-m pip`, not venv/bin/pip: the console script's shebang breaks if
+    # the venv is ever relocated, the interpreter symlink does not.
     for comp, cands in REQ_CANDIDATES.items():
         for rel in cands:
             req = DESTS[comp] / rel
             if req.exists():
-                _run([pip, "install", "--quiet", "--upgrade", "-r", str(req)],
+                _run([str(paths.VENV_PY), "-m", "pip", "install",
+                      "--quiet", "--upgrade", "-r", str(req)],
                      check=True)
                 break
         else:
@@ -167,7 +169,7 @@ def test_libsodium():
 
 
 def _download(url, dest_path, timeout=60, max_bytes=200 * 1024 * 1024):
-    req = urllib.request.Request(url, headers={"User-Agent": "maklipper"})
+    req = urllib.request.Request(url, headers={"User-Agent": "klipperformac"})
     with urllib.request.urlopen(req, timeout=timeout) as r, \
             open(dest_path, "wb") as f:
         read = 0
@@ -216,7 +218,7 @@ def fetch_webui(component, tag, dest):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root, stage)
             _patch_ui_config(component, stage)
-            (stage / ".maklipper-ref").write_text(tag + "\n")
+            (stage / ".klipperformac-ref").write_text(tag + "\n")
             old = None
             if dest.exists():
                 old = dest.parent / (dest.name + ".old")
@@ -232,7 +234,7 @@ def fetch_webui(component, tag, dest):
 
 
 def _patch_ui_config(component, dest):
-    """Point the UIs at their own proxied origin: maklipper.proxy relays
+    """Point the UIs at their own proxied origin: klipperformac.proxy relays
     REST + websocket to Moonraker on the same port, so defaults work."""
     cfg = dest / "config.json"
     try:
@@ -268,7 +270,7 @@ def test_chelper_build():
     if res.returncode != 0:
         detail = res.stderr.decode()[-1500:]
         raise RuntimeError(
-            "c_helper.so build FAILED with upstream Klipper + MaKlipper "
+            "c_helper.so build FAILED with upstream Klipper + Klipper for Mac "
             "compat shims.\n" + detail)
 
 
@@ -277,7 +279,7 @@ def setup(verbose=True):
     save_pins(pins)
     problems = check_prereqs()
     if problems:
-        raise SystemExit("MaKlipper setup requires:\n  - " + "\n  - ".join(problems))
+        raise SystemExit("Klipper for Mac setup requires:\n  - " + "\n  - ".join(problems))
     if verbose:
         print("Fetching upstream components (pristine checkouts, pinned refs)...")
     for comp in ("klipper", "moonraker"):
@@ -307,6 +309,6 @@ def setup(verbose=True):
         print("  upstream checkouts verified pristine (git status clean)")
     if verbose:
         print("\nAll components fetched from upstream and verified to build on "
-              "this Mac.\nNext: connect your printer board, run `maklipper "
-              "serial`, then `maklipper up`.")
+              "this Mac.\nNext: connect your printer board, run `klipperformac "
+              "serial`, then `klipperformac up`.")
     return pins

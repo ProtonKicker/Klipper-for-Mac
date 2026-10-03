@@ -46,7 +46,7 @@ def save_pins(pins):
 
 def _get_json(url):
     req = urllib.request.Request(
-        url, headers={"User-Agent": "maklipper", "Accept": "application/vnd.github+json"}
+        url, headers={"User-Agent": "klipperformac", "Accept": "application/vnd.github+json"}
     )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())

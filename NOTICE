@@ -14,7 +14,7 @@ Runtime dependencies installed by the user or package managers (e.g.
 libsodium — ISC license — via Homebrew; CPython — PSF license) are not
 bundled by MaKlipper.
 
-The two compatibility headers under maklipper/compat/include/ are original
+The two compatibility headers under klipperformac/compat/include/ are original
 small files (about 20-40 lines each) authored for this project. Their struct
 layouts and constant values mirror the published Linux kernel UAPI
 definitions (uapi/linux/can.h, uapi/linux/prctl.h), which are factual
