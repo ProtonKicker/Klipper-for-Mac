@@ -8,6 +8,7 @@ REPOS = {
     "klipper": "Klipper3d/klipper",
     "moonraker": "Arksine/moonraker",
     "mainsail": "meteyou/mainsail",
+    "fluidd": "fluidd-core/fluidd",
 }
 
 # Pinned upstream refs. These are download-time pins, not forks: each ref is
@@ -18,6 +19,8 @@ DEFAULT_PINS = {
     "klipper": "master",
     "moonraker": "v0.11.0",
     "mainsail": "v2.19.0",
+    "fluidd": "v1.37.6",
+    "ui": "mainsail",
 }
 
 API = "https://api.github.com/repos/{}/tags?per_page=100"
@@ -78,22 +81,25 @@ def remote_master_sha():
 
 
 def check_updates():
-    """Returns [(component, pinned, latest)] for components with an update."""
-    out = []
+    """Returns ([(component, pinned, latest)], [error strings])."""
+    out, errors = [], []
     pins = load_pins()
     local_sha = pins.get("klipper_sha")
-    if pins["klipper"] == "master" and local_sha:
+    if pins["klipper"] in ("master", "main") and local_sha:
         try:
             remote = remote_master_sha()
-        except Exception:
+        except Exception as e:
             remote = None
+            errors.append("klipper update check failed: {}".format(
+                str(e)[:80]))
         if remote and remote != local_sha:
             out.append(("klipper", local_sha[:7], remote[:7] + " (master)"))
-    for comp in ("moonraker", "mainsail"):
+    for comp in ("moonraker", "mainsail", "fluidd"):
         try:
             latest = latest_tag(comp)
-        except Exception:
+        except Exception as e:
             latest = None
+            errors.append("{} update check failed: {}".format(comp, str(e)[:60]))
         if latest and _sort_key(latest) > _sort_key(pins[comp]):
             out.append((comp, pins[comp], latest))
-    return out
+    return out, errors

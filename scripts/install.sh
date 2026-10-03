@@ -1,31 +1,44 @@
 #!/bin/sh
 # curl-friendly one-liner installer for maklipper (CLI only, no GUI).
-#   curl -fsSL https://raw.githubusercontent.com/<you>/MaKlipper/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/<owner>/MaKlipper/main/scripts/install.sh | sh
 set -e
 
+REPO="${MAKLIPPER_REPO:-}"
 SRC_DIR="${MAKLIPPER_SRC:-$HOME/.maklipper/src/MaKlipper}"
 BIN_DIR="${MAKLIPPER_BIN_DIR:-$HOME/.local/bin}"
-REPO="${MAKLIPPER_REPO:-https://github.com/YOURHANDLE/MaKlipper}"
 
 say() { printf 'maklipper-install: %s\n' "$1"; }
 
-# Precheck: Xcode command line tools provide git/gcc.
-if ! command -v git >/dev/null 2>&1; then
-  say "git not found. Run: xcode-select --install"
+# Repo source: explicit env, or the repo this script was run from (git
+# checkout), or the configured origin — refuse to guess placeholders.
+if [ -z "$REPO" ]; then
+  for cand in "$PWD" "$PWD/../.."; do
+    if [ -d "$cand/.git" ]; then
+      REPO=$(git -C "$cand" remote get-url origin 2>/dev/null || true)
+      [ -n "$REPO" ] && break
+    fi
+  done
+fi
+if [ -z "$REPO" ] || echo "$REPO" | grep -q "YOURHANDLE\|<owner>"; then
+  say "ERROR: set MAKLIPPER_REPO=https://github.com/<owner>/MaKlipper (placeholder repo URL)."
   exit 1
 fi
-if ! cc --version >/dev/null 2>&1; then
-  say "compiler not found. Run: xcode-select --install"
-  exit 1
-fi
+
+# Prechecks.
+command -v git  >/dev/null 2>&1 || { say "git not found. Run: xcode-select --install"; exit 1; }
+command -v cc   >/dev/null 2>&1 || { say "compiler not found. Run: xcode-select --install"; exit 1; }
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null \
+  || { say "python3 >= 3.8 required for the CLI itself"; exit 1; }
 
 # Fetch or update the app sources.
 mkdir -p "$(dirname "$SRC_DIR")"
 if [ -d "$SRC_DIR/.git" ]; then
   say "updating existing checkout"
-  git -C "$SRC_DIR" pull --ff-only --quiet
+  if ! git -C "$SRC_DIR" pull --ff-only --quiet; then
+    say "WARNING: checkout at $SRC_DIR is dirty/diverged; leaving as-is."
+  fi
 else
-  say "cloning MaKlipper"
+  say "cloning $REPO"
   git clone --quiet "$REPO" "$SRC_DIR"
 fi
 

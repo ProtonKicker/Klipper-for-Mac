@@ -1,9 +1,14 @@
 /* MaKlipper compat shim: subset of Linux <linux/can.h> for macOS.
  * Klipper's chelper only uses struct can_frame framing; CAN sockets are
  * handled in Python (python-can) and are not available on macOS.
+ * Field values and layouts mirror the Linux kernel UAPI (uapi/linux/can.h);
+ * deliberately omitted: union can_frame, struct can_filter, CAN_RAW flags
+ * and CANFD options, so future needs fail with a clear gap, not a partial
+ * ABI match.
  */
 #ifndef _MAKLIPPER_COMPAT_LINUX_CAN_H
 #define _MAKLIPPER_COMPAT_LINUX_CAN_H
+#define _LINUX_CAN_H
 
 #include <stdint.h>
 
