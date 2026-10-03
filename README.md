@@ -27,6 +27,23 @@ Just type `klipperformac` alone for the interactive control panel.
 Requirements: Xcode Command Line Tools (`xcode-select --install`),
 Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 
+## Slicing in Orca Slicer
+
+Orca can slice on the Mac and send jobs straight to the printer, with live
+progress in the slicer panel. In Orca (≥ 2.3), under **Prepare → device
+selector → + (Add Printer)**:
+
+- **Printer type / connection:** `Moonraker (Klipper)`
+- **Host:** `http://localhost:7125` — the Moonraker API port, *not* the
+  dashboard ports (:8080 Mainsail / :8081 Fluidd)
+- **Name:** anything, e.g. "Klipper on this Mac"
+
+`localhost` is already in Moonraker's trusted clients, so no key or login is
+needed, and Moonraker binds to `127.0.0.1` only — by design v1 is reachable
+from this Mac alone (slicer and dashboards included). Uploads, start/pause/
+cancel and the progress tab then work exactly as they do against a Raspberry
+Pi host.
+
 ## Commands
 
 Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents.
@@ -60,9 +77,13 @@ your printer's real config (`klipperformac presets` can import one).
 Klipper's host is nearly portable C + Python already; on macOS only two system
 headers it expects (`<linux/can.h>`, `<sys/prctl.h>`) are missing. MaKlipper
 ships two ~20-line stubs and sets `CPATH` so the compiler finds them first.
-Timing is comfortable: Klipper allows hundreds of milliseconds of host latency,
-and macOS delivers sub-millisecond timer precision. The one rule: **the Mac
-must stay awake while printing** — `up` runs `caffeinate` for you; keep it on AC.
+At run time the venv it creates carries a tiny generated `sitecustomize.py`
+(Linux-only clock constants Moonraker touches) and an `ip` shim on Moonraker's
+PATH, so Mainsail's boot sequence completes and network stats work — without
+editing a single upstream file. Timing is comfortable: Klipper allows hundreds
+of milliseconds of host latency, and macOS delivers sub-millisecond timer
+precision. The one rule: **the Mac must stay awake while printing** — `up`
+runs `caffeinate` for you; keep it on AC.
 
 ## Limitations
 

@@ -17,7 +17,8 @@ import subprocess
 import time
 
 from . import paths
-from .compat import build_env, invalidate_stale_build
+from .compat import (build_env, ensure_runtime_shims, invalidate_stale_build,
+                     shim_env)
 
 SERVICES = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
 MARKERS = {
@@ -128,6 +129,7 @@ def start():
         _clear()  # crashed/stale: self-heal, then start fresh
     paths.ensure_dirs()
     invalidate_stale_build(paths.KLIPPER)
+    ensure_runtime_shims(paths.VENV_PY)
 
     py = str(paths.VENV_PY)
     klipper_klippy = paths.KLIPPER / "klippy"
@@ -143,7 +145,7 @@ def start():
         [py, "-m", "moonraker",
          "-d", str(paths.DATA), "-c", str(paths.MOONRAKER_CONF),
          "-l", str(paths.MOONRAKER_LOG)],
-        cwd=str(paths.MOONRAKER),
+        cwd=str(paths.MOONRAKER), env=shim_env(),
     )
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     web_env = dict(os.environ)

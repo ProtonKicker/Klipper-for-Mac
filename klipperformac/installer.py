@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 from . import configgen, paths
-from .compat import build_env, invalidate_stale_build
+from .compat import build_env, ensure_runtime_shims, invalidate_stale_build
 from .versions import REPOS, load_pins, save_pins
 
 MIN_PY = (3, 10)
@@ -130,12 +130,12 @@ def verify_pristine(component=None):
 
 
 def create_venv():
-    if paths.VENV_PY.exists():
-        return
-    py = find_python()
-    if py is None:
-        raise SystemExit("No suitable Python found (see setup error above)")
-    _run([py, "-m", "venv", str(paths.APP_HOME / "venv")], check=True)
+    if not paths.VENV_PY.exists():
+        py = find_python()
+        if py is None:
+            raise SystemExit("No suitable Python found (see setup error above)")
+        _run([py, "-m", "venv", str(paths.APP_HOME / "venv")], check=True)
+    ensure_runtime_shims(paths.VENV_PY)
 
 
 REQ_CANDIDATES = {
