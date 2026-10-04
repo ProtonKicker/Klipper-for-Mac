@@ -95,7 +95,7 @@ your printer's real config (`klipperformac presets` can import one).
 ## How it works
 
 Klipper's host is nearly portable C + Python already; on macOS only two system
-headers it expects (`<linux/can.h>`, `<sys/prctl.h>`) are missing. MaKlipper
+headers it expects (`<linux/can.h>`, `<sys/prctl.h>`) are missing. Klipper for Mac
 ships two ~20-line stubs and sets `CPATH` so the compiler finds them first.
 At run time the venv it creates carries a tiny generated `sitecustomize.py`
 (Linux-only clock constants Moonraker touches) and an `ip` shim on Moonraker's
@@ -115,6 +115,6 @@ runs `caffeinate` for you; keep it on AC.
 
 ## License
 
-MaKlipper: MIT. Upstream components remain unmodified under their own licenses
+Klipper for Mac: MIT. Upstream components remain unmodified under their own licenses
 (Klipper/Moonraker/Mainsail/Fluidd: GPLv3 — see [NOTICE](NOTICE)).
 Not affiliated with the Klipper project.
