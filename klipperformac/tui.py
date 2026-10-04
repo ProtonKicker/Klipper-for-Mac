@@ -42,7 +42,7 @@ def _add_keys(std, y, text):
     """Draw a menu line with the '[k]' shortcut tokens bolded."""
     x = 2
     i = 0
-    for m in re.finditer(r"\[[a-z]\]", text):
+    for m in re.finditer(r"\[[a-zA-Z]\]", text):
         try:
             if m.start() > i:
                 std.addstr(y, x, text[i:m.start()])
@@ -102,6 +102,10 @@ class App(object):
                                 else "already running")
             elif action == "stop":
                 self.message = "stopped" if process.stop() else "was not running"
+            elif action == "kill_all":
+                killed = process.kill_all()
+                self.message = ("killed {} process(es)".format(len(killed))
+                                if killed else "nothing to kill")
             elif action == "restart":
                 process.stop()
                 process.start()
@@ -283,7 +287,7 @@ class App(object):
             col = lambda s: s.ljust(24)
             lines = [
                 col("[s] start") + col("[o] open dashboard") + "[w] switch UI",
-                col("[x] stop") + col("[r] restart") + "[q] quit",
+                col("[x] stop") + col("[r] restart") + col("[q] quit cli") + "[k] kill all & exit",
                 "",
                 col("[d] serial device") + col("[p] presets") + "[f] data folder",
                 col("[l] klipper logs") + col("[m] moonraker logs") + "[u] updates",
@@ -336,12 +340,16 @@ class App(object):
     # ---- input ---------------------------------------------------------
     def key(self, ch):
         if self.mode == "main":
-            table = {"s": "start", "x": "stop", "r": "restart", "o": "open",
+            table = {"s": "start", "x": "stop",
+                     "r": "restart", "o": "open",
                      "w": "toggle_ui", "d": "serial", "p": "presets",
                      "f": "data", "a": "toggle_lan",
                      "l": ("logs", "klipper"), "m": ("logs", "moonraker"),
                      "u": "update"}
             c = chr(ch) if ch > 0 else ""
+            if c == "k":
+                self.do("kill_all")
+                return "quit"
             if c in table:
                 act = table[c]
                 if isinstance(act, tuple):
@@ -493,4 +501,6 @@ def main():
     if not (os.isatty(0) and os.isatty(1)):
         raise SystemExit("Interactive dashboard needs a terminal; "
                          "use klipperformac <command> (see -h).")
+    if paths.VENV_PY.exists():
+        process.start()  # no-op if the stack is already up
     curses.wrapper(run)

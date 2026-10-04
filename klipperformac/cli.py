@@ -1,5 +1,5 @@
-"""klipperformac command-line interface: setup | up | down | status | logs |
-serial | update | open | doctor."""
+"""klipperformac command-line interface: setup | up | down | killall | status |
+logs | serial | update | open | doctor."""
 import argparse
 import os
 import shutil
@@ -83,6 +83,19 @@ def cmd_down(args):
         print("Stopped.")
     else:
         print("Was not running.")
+
+
+def cmd_killall(args):
+    """Force-kill the whole stack plus any stray service processes that a
+    plain `down` would leave behind (untracked proxies, orphan klipper/
+    moonraker/caffeinate)."""
+    killed = process.kill_all()
+    if not killed:
+        print("Nothing to kill.")
+        return
+    print("Killed {} process(es):".format(len(killed)))
+    for name, pid in killed:
+        print("  {:<12} pid {}".format(name, pid))
 
 
 def cmd_restart(args):
@@ -489,6 +502,8 @@ def main(argv=None):
     p = sub.add_parser("up", help="start klipper + moonraker + mainsail")
     p.add_argument("--open", action="store_true", help="open browser")
     sub.add_parser("down", help="stop everything")
+    sub.add_parser("killall", help="force kill everything, incl. stray "
+                                   "leftovers a plain down would miss")
     sub.add_parser("restart", help="stop then start")
     sub.add_parser("status", help="show state, pins, available updates")
     p = sub.add_parser("lan", help="open/close the stack to your local network")
@@ -525,7 +540,8 @@ def main(argv=None):
 
     args = ap.parse_args(argv)
     handlers = {
-        "setup": cmd_setup, "up": cmd_up, "down": cmd_down, "restart": cmd_restart,
+        "setup": cmd_setup, "up": cmd_up, "down": cmd_down,
+        "killall": cmd_killall, "restart": cmd_restart,
         "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
         "lan": cmd_lan,
         "data": cmd_data,

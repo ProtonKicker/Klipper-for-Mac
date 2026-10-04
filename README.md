@@ -70,6 +70,7 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 |---|---|
 | `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify everything compiles |
 | `up` / `down` / `restart` | start/stop the stack (with `caffeinate`, so sleep can't kill a print) |
+| `killall` | force-kill the whole stack plus stray leftovers (e.g. a Fluidd/Mainsail server still running after the CLI was closed) |
 | `status` | service state, pinned versions, available updates |
 | `lan [on\|off]` | show/toggle access for other devices on your network |
 | `serial` | list USB serial devices; `--auto` / `--set PATH` writes `[mcu] serial:` into printer.cfg |

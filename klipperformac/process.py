@@ -121,15 +121,13 @@ def _popen(cmd, **kw):
     return subprocess.Popen(cmd, **defaults)
 
 
-def _reap_orphans():
-    """Kill service processes that exist but are not tracked by a live state
-    file (crash, reboot, or stale state from a previous stack). Left alone
-    they squat the ports/serial and the fresh children die on bind."""
+def _scan_service_pids(with_caffeinate=False):
+    """Pids of running klipperformac service processes, tracked or not."""
     try:
         out = subprocess.run(["ps", "-eo", "pid=,command="],
                              capture_output=True).stdout.decode()
     except Exception:
-        return
+        return []
     pids = []
     for line in out.splitlines():
         parts = line.strip().split(None, 1)
@@ -140,7 +138,12 @@ def _reap_orphans():
         except ValueError:
             continue
         cmd = parts[1]
-        if pid == os.getpid() or "/.klipperformac/" not in cmd:
+        if pid == os.getpid():
+            continue
+        if with_caffeinate and cmd.strip() == "caffeinate -dis":
+            pids.append(pid)  # exact match: ours, started with -dis
+            continue
+        if "/.klipperformac/" not in cmd:
             continue
         for name, marker in MARKERS.items():
             if name == "caffeinate":
@@ -148,6 +151,14 @@ def _reap_orphans():
             if marker in cmd:
                 pids.append(pid)
                 break
+    return pids
+
+
+def _reap_orphans():
+    """Kill service processes that exist but are not tracked by a live state
+    file (crash, reboot, or stale state from a previous stack). Left alone
+    they squat the ports/serial and the fresh children die on bind."""
+    pids = _scan_service_pids()
     for pid in pids:
         _signal(pid, signal.SIGTERM)
     if pids:
@@ -251,6 +262,36 @@ def stop(timeout=6.0):
         return False
     _clear()
     return True
+
+
+def kill_all():
+    """Force-stop everything: tracked services plus any strays (untracked
+    proxies/klipper/moonraker, our caffeinate) that `stop` would leave behind.
+    Returns the list of killed (name, pid)."""
+    targets = {}
+    state = _load()
+    if state:
+        for name in SERVICES:
+            pid = state.get(name)
+            if pid:
+                targets[pid] = name
+    for pid in _scan_service_pids(with_caffeinate=True):
+        targets.setdefault(pid, "stray")
+    for pid in targets:
+        _signal(pid, signal.SIGKILL)
+    deadline = time.time() + 3.0
+    live = dict(targets)
+    while live and time.time() < deadline:
+        time.sleep(0.2)
+        still = _live_cmds(live.keys())
+        for pid in [p for p in live if str(p) not in still]:
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+            del live[pid]
+    _clear()
+    return sorted((name, pid) for pid, name in targets.items())
 
 
 def _signal(pid, sig):
