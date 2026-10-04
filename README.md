@@ -1,10 +1,8 @@
 # Klipper for Mac
 
-*project codename: MaKlipper*
-
 Run [Klipper](https://www.klipper3d.org) on any Mac — Intel or Apple Silicon —
 like it were the Raspberry Pi. Plug your printer board into USB, and the Mac
-becomes the host. No Linux box, no SD card, no fork: Klipper, Moonraker, Mainsail
+becomes the host. No Linux VM, no SD card, no fork: Klipper, Moonraker, Mainsail
 and Fluidd are downloaded **pristine from upstream** at pinned versions. macOS
 support comes entirely from two small compatibility headers injected at compile
 time; upstream files are never edited (`klipperformac doctor` proves it with
