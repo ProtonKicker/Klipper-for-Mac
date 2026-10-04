@@ -13,7 +13,7 @@ time; upstream files are never edited (`klipperformac doctor` proves it with
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/YOURHANDLE/MaKlipper/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"   # once, if prompted
 
 klipperformac setup          # fetch upstream components, build, verify

@@ -12,11 +12,11 @@ REPOS = {
 }
 
 # Pinned upstream refs. These are download-time pins, not forks: each ref is
-# fetched pristine from GitHub. Klipper tracks "master" (the community norm,
-# and the tree verified to build on macOS); the resolved commit SHA is
-# recorded in the lockfile so updates are explicit.
+# fetched pristine from GitHub. Every component is pinned to an exact tag or
+# commit so a fresh install on any Mac resolves byte-identical sources to the
+# tree verified to build on macOS. `update --apply` is how pins move forward.
 DEFAULT_PINS = {
-    "klipper": "master",
+    "klipper": "461c4e3722c3a897fba1c6b3f0780a5315043842",
     "moonraker": "v0.11.0",
     "mainsail": "v2.19.0",
     "fluidd": "v1.37.6",

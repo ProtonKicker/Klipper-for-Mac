@@ -8,6 +8,7 @@ empty for every checkout.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -107,8 +108,17 @@ def checkout(component, ref, force=False):
     if dest.exists():
         shutil.rmtree(dest)
     url = URLS[component]
-    _run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref, url, str(dest)],
-         check=True)
+    if re.fullmatch(r"[0-9a-f]{40}", ref):
+        # git clone --branch rejects raw SHAs; shallow-fetch the exact commit.
+        _run(["git", "init", "--quiet", str(dest)], check=True)
+        _run(["git", "-C", str(dest), "remote", "add", "origin", url], check=True)
+        _run(["git", "-C", str(dest), "fetch", "--quiet", "--depth", "1",
+              "origin", ref], check=True)
+        _run(["git", "-C", str(dest), "checkout", "--quiet", "--detach",
+              "FETCH_HEAD"], check=True)
+    else:
+        _run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref,
+              url, str(dest)], check=True)
     _exclude_build_artifacts(dest)
     marker.write_text(ref + "\n")
     return _head_sha(dest)
