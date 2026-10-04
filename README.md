@@ -8,6 +8,8 @@ support comes entirely from two small compatibility headers injected at compile
 time; upstream files are never edited (`klipperformac doctor` proves it with
 `git status`).
 
+![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/cli%20-%20oct%203%202026.png)
+
 ## Quick start
 
 ```sh
