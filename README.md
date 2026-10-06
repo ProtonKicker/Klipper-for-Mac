@@ -81,6 +81,7 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 | `logs [klipper\|moonraker] [-f]` | tail logs |
 | `update` | check upstream; `--apply` re-fetches pinned tags and rebuilds (never automatic) |
 | `doctor` / `selftest` | environment checks / end-to-end link checks |
+| `uninstall` | remove the app; asks in the terminal whether the data folder should be deleted too (`--data` / `--keep-data` to pre-answer) |
 
 ## Where things live
 
@@ -88,6 +89,20 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
   logs, web UIs (`klipperformac data --set PATH` to move it).
   Delete `~/.klipperformac/` (app internals: checkouts, venv) to factory-reset —
   your data survives. Everything binds to localhost only.
+
+## Uninstall
+
+```sh
+klipperformac uninstall
+```
+
+One line removes everything the installer added: stops the stack, deletes the
+`klipperformac` launcher symlink, and removes `~/.klipperformac/` (sources,
+venv, upstream checkouts, web UIs). It then asks in the terminal whether your
+data folder — the default `~/Documents/Klipper for Mac/` or wherever you moved
+it with `klipperformac data --set` — should be deleted too. Answering `n`
+(the default) keeps it. For unattended use, `--data` deletes the data folder
+without asking and `--keep-data` never does.
 
 `printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it with
 your printer's real config (`klipperformac presets` can import one).

@@ -1,5 +1,5 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
-logs | serial | update | open | doctor."""
+logs | serial | update | open | doctor | uninstall."""
 import argparse
 import os
 import shutil
@@ -484,6 +484,62 @@ def cmd_doctor(args):
     sys.exit(0 if ok else 1)
 
 
+def cmd_uninstall(args):
+    """Remove the app (launcher symlink + app home). Asks before touching the
+    user data folder unless --data/--keep-data says otherwise."""
+    killed = process.kill_all()
+    if killed:
+        print("Stopped {} process(es).".format(len(killed)))
+
+    src_root = paths.APP_HOME / "src"
+    links = [Path.home() / ".local" / "bin" / "klipperformac"]
+    found = shutil.which("klipperformac")
+    if found:
+        links.append(Path(found))
+    seen = set()
+    for link in links:
+        if link in seen:
+            continue
+        seen.add(link)
+        try:
+            if link.is_symlink() and str(link.resolve()).startswith(str(src_root)):
+                link.unlink()
+                print("Removed launcher: " + str(link))
+        except OSError:
+            pass
+
+    removed = []
+    for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
+        if home.exists():
+            shutil.rmtree(home, ignore_errors=True)
+            print("Removed app folder: " + str(home))
+            removed.append(home)
+    if not removed:
+        print("No app installation found at " + str(paths.APP_HOME))
+
+    data = paths.DATA
+    if args.keep_data:
+        remove_data = False
+    elif args.data:
+        remove_data = True
+    elif sys.stdin.isatty():
+        remove_data = input(
+            "\nDelete the data folder too? {} [y/N] ".format(data)
+        ).strip().lower() in ("y", "yes")
+    else:
+        remove_data = False
+    if remove_data:
+        if data in (Path.home(), Path("/")) or not data.exists():
+            print("[!] Refusing to delete: " + str(data))
+        else:
+            shutil.rmtree(data)
+            print("Removed data folder: " + str(data))
+    else:
+        print("Kept data folder: {} (delete it yourself if you want)".format(data))
+    print("Uninstalled. Reload your shell or open a new terminal to clear the "
+          "command from PATH cache: hash -r")
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
@@ -537,6 +593,12 @@ def main(argv=None):
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
     sub.add_parser("tui", help="interactive dashboard (default with no args)")
+    p = sub.add_parser("uninstall", help="remove the app; asks before deleting "
+                                         "the data folder")
+    p.add_argument("--data", action="store_true",
+                   help="also delete the data folder without asking")
+    p.add_argument("--keep-data", action="store_true",
+                   help="never delete the data folder")
 
     args = ap.parse_args(argv)
     handlers = {
@@ -547,6 +609,6 @@ def main(argv=None):
         "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
-        "selftest": cmd_selftest, "tui": cmd_tui,
+        "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
     }
     handlers[args.cmd](args)
