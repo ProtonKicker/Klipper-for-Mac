@@ -27,6 +27,19 @@ Just type `klipperformac` alone for the interactive control panel.
 Requirements: Xcode Command Line Tools (`xcode-select --install`),
 Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 
+## GUI app
+
+A native SwiftUI app now sits on top of the same CLI (it shells out to
+`klipperformac`, so both share the same data folder and running stack).
+Build it with:
+
+```sh
+KlipperMac/build-app.sh        # → KlipperMac/dist/KlipperMac.app
+open KlipperMac/dist/KlipperMac.app
+```
+
+The GUI is not yet included in the installer one-liner — install the CLI first.
+
 ## Slicing in Orca Slicer
 
 Orca can slice on the Mac and send jobs straight to the printer, with live
@@ -126,7 +139,8 @@ runs `caffeinate` for you; keep it on AC.
   bugs still go upstream.
 - `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
 - No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
-- Notarized one-click `.app` is planned v2; v1 is CLI + TUI + web dashboard.
+- `.app` GUI is available but built locally and ad-hoc signed (notarized
+  one-click `.app` still planned); CLI + TUI + web dashboard remain the reference path.
 
 ## License
 
