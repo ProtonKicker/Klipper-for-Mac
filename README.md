@@ -29,16 +29,14 @@ Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 
 ## GUI app
 
-A native SwiftUI app now sits on top of the same CLI (it shells out to
-`klipperformac`, so both share the same data folder and running stack).
-Build it with:
+A native SwiftUI app wraps the same CLI — same data folder, same running stack.
+Build and open it with:
 
 ```sh
-KlipperMac/build-app.sh        # → KlipperMac/dist/KlipperMac.app
-open KlipperMac/dist/KlipperMac.app
+KlipperMac/build-app.sh && open KlipperMac/dist/KlipperMac.app
 ```
 
-The GUI is not yet included in the installer one-liner — install the CLI first.
+Install the CLI first; the GUI isn't in the installer one-liner yet.
 
 ## Slicing in Orca Slicer
 
@@ -139,8 +137,7 @@ runs `caffeinate` for you; keep it on AC.
   bugs still go upstream.
 - `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
 - No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
-- `.app` GUI is available but built locally and ad-hoc signed (notarized
-  one-click `.app` still planned); CLI + TUI + web dashboard remain the reference path.
+- `.app` GUI is built locally and ad-hoc signed; notarized one-click `.app` still planned.
 
 ## License
 
