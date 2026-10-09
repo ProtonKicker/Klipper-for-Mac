@@ -5,3 +5,4 @@ __pycache__/
 KlipperMac/.build/
 KlipperMac/dist/
 .build/
+.DS_Store
