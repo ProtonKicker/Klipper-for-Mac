@@ -21,7 +21,10 @@ klipperformac serial --auto  # plug in the printer board first
 klipperformac up             # start everything, keep the Mac awake
 ```
 
-Open **http://localhost:8081** for the Fluidd dashboard (Mainsail is on :8080).
+The **Printer tab of the KlipperMac app is the native dashboard** — no browser
+needed, and by default no web UI server is started. Want Fluidd or Mainsail
+anyway? `klipperformac ui fluidd` (or `mainsail`) starts just that one on
+:8081 (:8080 for Mainsail) after a restart.
 Just type `klipperformac` alone for the interactive control panel.
 
 Requirements: Xcode Command Line Tools (`xcode-select --install`),
@@ -29,7 +32,10 @@ Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 
 ## GUI app
 
-A native SwiftUI app wraps the same CLI — same data folder, same running stack.
+A native SwiftUI app wraps the same CLI — same data folder, same running
+stack — and its **Printer tab is a full native dashboard**: live temperatures,
+movement controls, macros, console, file manager and config editor, all
+talking to Moonraker directly over one WebSocket. No browser tab required.
 Build and open it with:
 
 ```sh
@@ -62,11 +68,11 @@ klipperformac lan on     # or `lan off` to lock back down; status with bare `lan
 klipperformac restart    # applies the new bind addresses
 ```
 
-With LAN access on, the command prints the URLs to use from other devices —
-dashboards (`http://192.168.x.x:8080/8081`) and the Moonraker API
-(`:7125`, e.g. for Orca Slicer on another computer). The TUI shows the same
-addresses on its home screen; `lan off` returns everything to
-localhost-only.
+With LAN access on and a web UI selected, the command prints the URLs to use
+from other devices — dashboard (`http://192.168.x.x:8080/8081`) and the
+Moonraker API (`:7125`, e.g. for Orca Slicer on another computer). In native
+mode only the API URL applies. The TUI shows the same addresses on its home
+screen; `lan off` returns everything to localhost-only.
 
 Tradeoff: Moonraker trusts private network ranges (192.168.0.0/16, 10.0.0.0/8,
 172.16.0.0/12) without passwords, so anyone on your local network can control
@@ -87,7 +93,7 @@ Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents
 | `serial` | list USB serial devices; `--auto` / `--set PATH` writes `[mcu] serial:` into printer.cfg |
 | `data` | show the data folder; `--set PATH` moves everything there and fixes config paths |
 | `presets` | manage config presets (`--save/--use/--import`, auto-backup) |
-| `ui [fluidd\|mainsail]` | switch the default dashboard and open it |
+| `ui [native\|fluidd\|mainsail]` | choose the dashboard (native = no web server) and open it |
 | `gcode …` / `gcode --status` | send G-code / query printer state from the terminal |
 | `logs [klipper\|moonraker] [-f]` | tail logs |
 | `update` | check upstream; `--apply` re-fetches pinned tags and rebuilds (never automatic) |

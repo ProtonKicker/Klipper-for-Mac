@@ -15,7 +15,7 @@ struct DashboardView: View {
             lanSection
         }
         .formStyle(.grouped)
-        .navigationTitle("Dashboard")
+        .navigationTitle("Klipper")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -96,8 +96,10 @@ struct DashboardView: View {
             if model.snapshot.tracked { serviceGrid }
 
             if model.snapshot.anyUp {
-                CopyableURL(label: model.env.uiName == "mainsail" ? "Mainsail" : "Fluidd",
-                            url: model.env.webURL)
+                if !model.env.isNativeUI {
+                    CopyableURL(label: model.env.uiName.capitalized,
+                                url: model.env.uiURL(model.env.uiName))
+                }
                 CopyableURL(label: "Moonraker API", url: model.env.moonrakerURL)
             }
         }
@@ -170,11 +172,11 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - web UI
+    // MARK: - dashboard UI choice
 
     private var webUISection: some View {
-        Section("Web UI") {
-            Picker("Default interface", selection: Binding(
+        Section {
+            Picker("Dashboard", selection: Binding(
                 get: { model.env.uiName },
                 set: { name in
                     if name != model.env.uiName {
@@ -182,27 +184,36 @@ struct DashboardView: View {
                     }
                 }
             )) {
+                Text("Native").tag("native")
                 Text("Fluidd").tag("fluidd")
                 Text("Mainsail").tag("mainsail")
             }
             .pickerStyle(.segmented)
 
-            HStack(spacing: 8) {
-                if model.env.uiName == "mainsail" {
-                    Button("Mainsail") {
-                        model.openURL(model.env.uiURL("mainsail"))
-                    }
-                } else {
-                    Button("Fluidd") {
-                        model.openURL(model.env.uiURL("fluidd"))
-                    }
-                }
-                Text("open in browser")
+            if model.env.isNativeUI {
+                Label("No web server is started — the Printer tab is the "
+                      + "native dashboard.", systemImage: "app.dashed")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Spacer()
+            } else {
+                HStack(spacing: 8) {
+                    Button(model.env.uiName.capitalized) {
+                        model.openURL(model.env.uiURL(model.env.uiName))
+                    }
+                    Text("open in browser")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                CopyableURL(label: "Local", url: model.env.uiURL(model.env.uiName))
             }
-            CopyableURL(label: "Local", url: model.env.webURL)
+            if model.snapshot.anyUp {
+                Text("Restart the stack to apply a changed selection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Dashboard interface")
         }
     }
 
@@ -216,8 +227,10 @@ struct DashboardView: View {
             ))
             if model.env.lanEnabled {
                 if let ip = Net.lanIP() {
-                    CopyableURL(label: "LAN UI",
-                                url: "http://\(ip):\(model.env.uiPort(model.env.uiName))")
+                    if !model.env.isNativeUI {
+                        CopyableURL(label: "LAN UI",
+                                    url: "http://\(ip):\(model.env.uiPort(model.env.uiName))")
+                    }
                     CopyableURL(label: "LAN API",
                                 url: "http://\(ip):\(model.env.moonrakerPort)")
                     Text("Restart the stack to apply.")

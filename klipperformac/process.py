@@ -204,20 +204,22 @@ def start():
         os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
     bind = "0.0.0.0" if paths.lan_enabled() else "127.0.0.1"
 
-    wproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
-         str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
-    )
-    fproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
-         str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
-    )
+    ui = paths.current_ui()
     cproc = _popen(["caffeinate", "-dis"])
-
-    _save({"klipper": kproc, "moonraker": mproc, "web_mainsail": wproc,
-           "web_fluidd": fproc, "caffeinate": cproc})
+    procs = {"klipper": kproc, "moonraker": mproc, "caffeinate": cproc}
+    if ui == "mainsail":
+        procs["web_mainsail"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
+             str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env,
+        )
+    elif ui == "fluidd":
+        procs["web_fluidd"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
+             str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env,
+        )
+    _save(procs)
     return True
 
 

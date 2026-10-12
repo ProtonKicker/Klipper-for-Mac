@@ -60,7 +60,8 @@ final class KEnvironment {
             c.installed = fm.fileExists(atPath: appHome.appendingPathComponent("venv/bin/python").path)
             c.printerConfigured = fm.fileExists(atPath: c.data.appendingPathComponent("config/printer.cfg").path)
             c.lanEnabled = c.settings["lan"] as? Bool ?? false
-            c.uiName = c.pins["ui"] == "mainsail" ? "mainsail" : "fluidd"
+            let ui = c.pins["ui"] ?? "native"
+            c.uiName = ["native", "fluidd", "mainsail"].contains(ui) ? ui : "native"
             c.cliURL = KEnvironment.resolveCLI()
             cache = c
         }
@@ -82,7 +83,7 @@ final class KEnvironment {
             "moonraker": "v0.11.0",
             "mainsail": "v2.19.0",
             "fluidd": "v1.37.6",
-            "ui": "fluidd",
+            "ui": "native",
         ]
         if let data = try? Data(contentsOf: appHome.appendingPathComponent("lockfile.json")),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -181,6 +182,8 @@ final class KEnvironment {
 
     func uiPort(_ name: String) -> Int { name == "mainsail" ? webPort : fluiddPort }
     func uiURL(_ name: String) -> String { "http://localhost:\(uiPort(name))" }
-    var webURL: String { uiURL(uiName) }
+    var isNativeUI: Bool { uiName == "native" }
+    /// Origin header for the native WebSocket client; trusted by IP anyway.
+    var webURL: String { isNativeUI ? "http://localhost:\(moonrakerPort)" : uiURL(uiName) }
     var moonrakerURL: String { "http://localhost:\(moonrakerPort)" }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("defaultTab") private var defaultTab = Pane.printer.rawValue
     @State private var logService = "klipper"
     @State private var follow = false
 
@@ -11,12 +12,28 @@ struct SettingsView: View {
     var body: some View {
         Form {
             aboutSection
+            startupSection
             dataSection
             updatesSection
             logsSection
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
+    }
+
+    // MARK: - startup
+
+    private var startupSection: some View {
+        Section("Startup") {
+            Picker("Default tab", selection: $defaultTab) {
+                Text("Printer").tag(Pane.printer.rawValue)
+                Text("Klipper").tag(Pane.dashboard.rawValue)
+            }
+            .pickerStyle(.segmented)
+            Text("The app opens on this tab. Applies on next launch.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - about

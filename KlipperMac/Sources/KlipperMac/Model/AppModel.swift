@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -11,6 +12,27 @@ final class AppModel: ObservableObject {
     @Published var messageIsError = false
     @Published var busy = false
 
+    // live dashboard (WebSocket-driven)
+    @Published var live = LivePrinterState()
+    @Published var wsConnected = false
+    @Published var console: [ConsoleLine] = []
+    @Published var macros: [String] = []
+    @Published var gcodeFiles: [GcodeFile] = []
+    @Published var uploading = false
+
+    // config editor (Moonraker file manager — works while Klipper is down)
+    @Published var configFiles: [String] = []
+    @Published var configName = ""
+    @Published var configText = ""
+    @Published var configDirty = false
+
+    // history + system (Moonraker REST — work while Klipper is down)
+    @Published var historyTotals = HistoryTotals()
+    @Published var historyJobs: [HistoryJob] = []
+    @Published var systemInfo = SystemInfo()
+    @Published var moonrakerVersion = ""
+    @Published var klipperVersion = ""
+
     // streaming sheet (setup / update --apply)
     @Published var showSheet = false
     @Published var sheetTitle = ""
@@ -20,16 +42,142 @@ final class AppModel: ObservableObject {
     @Published var updateLines: [String] = []
 
     let env = KEnvironment.shared
+    let socket = MoonrakerSocket()
     private var timer: Timer?
     private var clearTask: Task<Void, Never>?
     private var refreshInFlight = false
+    private var lastAnyUp = false
+    private var socketConsumer: Task<Void, Never>?
 
     func bootstrap() async {
         await refresh()
+        if socketConsumer == nil {
+            socketConsumer = Task { [weak self] in
+                guard let self else { return }
+                for await event in self.socket.events() {
+                    self.apply(event)
+                }
+            }
+        }
         if timer == nil {
             timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
                 Task { @MainActor in await self.refresh() }
             }
+        }
+    }
+
+    private func apply(_ event: SocketEvent) {
+        switch event {
+        case .connection(let ready):
+            wsConnected = ready
+            if ready {
+                Task {
+                    await backfillConsole()
+                    await refreshFiles()
+                    await loadConfigList()
+                    await refreshHistory()
+                    await refreshSystem()
+                }
+            }
+        case .klippy(let ks):
+            live.klippy = ks
+            if ks == .ready { Task { await refreshFiles() } }
+        case .status(let state):
+            live = state
+            macros = state.macros
+        case .gcodeResponse(let text):
+            appendConsole(ConsoleLine(text: text,
+                                      kind: text.hasPrefix("!! ") ? .error : .response))
+        case .closed:
+            wsConnected = false
+        }
+    }
+
+    private func appendConsole(_ line: ConsoleLine) {
+        console.append(line)
+        if console.count > 500 { console.removeFirst(console.count - 500) }
+    }
+
+    func backfillConsole() async {
+        let lines = await Moonraker.gcodeStore(port: env.moonrakerPort, count: 100)
+        if !lines.isEmpty { console = lines }
+    }
+
+    func refreshFiles() async {
+        gcodeFiles = await Moonraker.listGcodes(port: env.moonrakerPort)
+    }
+
+    func refreshHistory() async {
+        historyTotals = await Moonraker.historyTotals(port: env.moonrakerPort) ?? historyTotals
+        historyJobs = await Moonraker.historyList(port: env.moonrakerPort)
+    }
+
+    func refreshSystem() async {
+        systemInfo = await Moonraker.systemInfo(port: env.moonrakerPort) ?? systemInfo
+        if let info = await Moonraker.getJSON("/machine/update/status?refresh=false",
+                                              port: env.moonrakerPort),
+           let comps = (info["result"] as? [String: Any])?["version_info"] as? [String: Any] {
+            moonrakerVersion = ((comps["moonraker"] as? [String: Any])?["version"] as? String) ?? ""
+            klipperVersion = ((comps["klipper"] as? [String: Any])?["version"] as? String) ?? ""
+        }
+    }
+
+    // MARK: - config editor & upload
+
+    func loadConfigList() async {
+        let names = await Moonraker.configFileNames(port: env.moonrakerPort)
+        guard !names.isEmpty else { return }
+        configFiles = names
+        if configName.isEmpty || !names.contains(configName) {
+            await loadConfig(names.contains("printer.cfg") ? "printer.cfg" : names[0])
+        }
+    }
+
+    func loadConfig(_ name: String) async {
+        guard let text = await Moonraker.configFileContent(name, port: env.moonrakerPort)
+        else { say("Could not read \(name)", error: true); return }
+        configName = name
+        configText = text
+        configDirty = false
+    }
+
+    func saveConfig() async {
+        guard !configName.isEmpty else { return }
+        let data = configText.data(using: .utf8) ?? Data()
+        if await Moonraker.uploadFile(contents: data, filename: configName,
+                                      root: "config", port: env.moonrakerPort) {
+            say("Saved \(configName)")
+            configDirty = false
+        } else {
+            say("Could not save \(configName)", error: true)
+        }
+    }
+
+    func restartKlipper() async {
+        if await Moonraker.restartKlipper(port: env.moonrakerPort) {
+            say("Klipper restarting…")
+        } else {
+            say("Restart request failed", error: true)
+        }
+    }
+
+    func uploadGcode() {
+        let panel = NSOpenPanel()
+        if let gcode = UTType(filenameExtension: "gcode") {
+            panel.allowedContentTypes = [gcode]
+        }
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a g-code file to upload to the printer queue"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        uploading = true
+        let name = url.lastPathComponent
+        Task {
+            let ok = await Moonraker.uploadFile(contents: data, filename: name,
+                                                root: "gcodes", port: env.moonrakerPort)
+            uploading = false
+            say(ok ? "Uploaded \(name)" : "Upload of \(name) failed", error: !ok)
+            if ok { await refreshFiles() }
         }
     }
 
@@ -49,6 +197,18 @@ final class AppModel: ObservableObject {
             serialPorts = serials
         }
         presetNames = presets
+        // Drive the WebSocket from stack lifecycle: never reconnect against a dead port.
+        if snap.anyUp != lastAnyUp {
+            lastAnyUp = snap.anyUp
+            if snap.anyUp {
+                socket.start(port: env.moonrakerPort, origin: env.webURL)
+            } else {
+                socket.stop()
+                wsConnected = false
+                live = LivePrinterState()
+                macros = []
+            }
+        }
     }
 
     private func say(_ text: String, error: Bool = false) {
@@ -123,6 +283,67 @@ final class AppModel: ObservableObject {
     func cancelPrint() async {
         if await Moonraker.post("/printer/print/cancel", port: env.moonrakerPort) { say("print cancelled") }
         await refresh()
+    }
+
+    // MARK: - dashboard actions (gcode via REST, state returns over WebSocket)
+
+    func runGcode(_ script: String) {
+        let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        appendConsole(ConsoleLine(text: "> " + trimmed, kind: .sent))
+        Task {
+            if !(await Moonraker.runScript(trimmed, port: env.moonrakerPort)) {
+                appendConsole(ConsoleLine(text: "!! command rejected", kind: .error))
+            }
+        }
+    }
+
+    func emergencyStop() {
+        Task {
+            if await Moonraker.emergencyStop(port: env.moonrakerPort) { say("emergency stop sent") }
+            else { say("emergency stop failed", error: true) }
+            await refresh()
+        }
+    }
+
+    func startPrint(_ file: GcodeFile) {
+        Task {
+            if await Moonraker.startPrint(filename: file.filename, port: env.moonrakerPort) {
+                say("started \(file.filename)")
+            } else {
+                say("could not start \(file.filename)", error: true)
+            }
+        }
+    }
+
+    func preheat(extruder: Double?, bed: Double?) {
+        var cmds: [String] = []
+        if let e = extruder { cmds.append("M104 S\(Int(e))") }
+        if let b = bed { cmds.append("M140 S\(Int(b))") }
+        runGcode(cmds.joined(separator: "\n"))
+    }
+
+    func coolDown() { runGcode("TURN_OFF_HEATERS\nM106 S0") }
+
+    func home(_ axes: String) {
+        // axes: "" = all, or any of x y z
+        runGcode(axes.isEmpty ? "G28" : "G28 " + axes)
+    }
+
+    func jog(x: Double = 0, y: Double = 0) {
+        runGcode("G91\nG1 X\(x) Y\(y) F3000\nG90")
+    }
+
+    func zMove(_ amount: Double) {
+        runGcode("G91\nG1 Z\(amount) F600\nG90")
+    }
+
+    func extrude(length: Double, speed: Double) {
+        runGcode("M83\nG1 E\(length) F\(speed * 60)")
+    }
+
+    func setSpeedFactor(_ percent: Double) {
+        runGcode("M220 S\(Int(percent))")
     }
 
     func checkUpdates() async {

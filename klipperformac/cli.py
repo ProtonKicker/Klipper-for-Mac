@@ -29,11 +29,14 @@ def _lan_urls(indent="  "):
     if not ip:
         return [indent + "LAN:       enabled, but this Mac has no network "
                         "address right now"]
-    return [indent + "LAN UI:    http://{}:{}  (mainsail)   "
-                     "http://{}:{}  (fluidd)".format(ip, paths.WEB_PORT,
-                                                     ip, paths.FLUIDD_PORT),
-            indent + "LAN API:   http://{}:{}  (Orca on other devices)"
-            .format(ip, paths.MOONRAKER_PORT)]
+    lines = []
+    ui = paths.current_ui()
+    if ui in ("mainsail", "fluidd"):
+        lines.append(indent + "LAN UI:    http://{}:{}  ({})"
+                     .format(ip, paths.ui_port(ui), ui))
+    lines.append(indent + "LAN API:   http://{}:{}  (Orca on other devices)"
+                 .format(ip, paths.MOONRAKER_PORT))
+    return lines
 
 
 def cmd_up(args):
@@ -47,15 +50,19 @@ def cmd_up(args):
     else:
         process.start()
         print("Klipper stack starting:")
-        print("  Mainsail:  " + paths.ui_url("mainsail"))
-        print("  Fluidd:    " + paths.ui_url("fluidd"))
+        ui = paths.current_ui()
+        if ui in ("mainsail", "fluidd"):
+            print("  {}:  {}".format(ui.capitalize().ljust(9), paths.ui_url(ui)))
+        else:
+            print("  Dashboard: native (KlipperMac app — no web UI started)")
         print("  Moonraker: http://localhost:{}".format(paths.MOONRAKER_PORT))
         for line in _lan_urls():
             print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
         _wait_ready()
-        if getattr(args, "open", False):
-            webbrowser.open(paths.web_url())
+        url = paths.web_url()
+        if getattr(args, "open", False) and url:
+            webbrowser.open(url)
 
 
 def _wait_ready(timeout=20):
@@ -111,11 +118,18 @@ def cmd_status(args):
     pins = versions.load_pins()
     up = {n: st for n, st in state.items() if st}
     print("running" if up else "stopping...")
+    ui = paths.current_ui()
     for name in process.SERVICES:
         if name in ("caffeinate",):
             continue
+        if name == "web_mainsail" and ui != "mainsail":
+            continue
+        if name == "web_fluidd" and ui != "fluidd":
+            continue
         print("  {:<12} {}".format(name, "up" if state.get(name) else "DOWN"))
-    print("  url          {}".format(paths.web_url()))
+    url = paths.web_url()
+    print("  url          {}".format(
+        url if url else "native (KlipperMac app)"))
     for line in _lan_urls():
         print(line)
     print("  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
@@ -291,24 +305,35 @@ def _reprovision(pins):
 
 
 def cmd_open(args):
-    webbrowser.open(paths.web_url())
+    url = paths.web_url()
+    if url:
+        webbrowser.open(url)
+    else:
+        print("Native dashboard selected — use the Printer tab in KlipperMac.app, "
+              "or switch with: klipperformac ui fluidd|mainsail")
 
 
 def cmd_ui(args):
     pins = versions.load_pins()
     if args.name:
-        if args.name not in ("mainsail", "fluidd"):
-            _die("UI is 'mainsail' or 'fluidd'")
-        if not (paths.WEB / args.name / "index.html").exists():
+        if args.name not in ("native", "mainsail", "fluidd"):
+            _die("UI is 'native', 'mainsail' or 'fluidd'")
+        if args.name != "native" and not (
+                paths.WEB / args.name / "index.html").exists():
             print("[!] {} not downloaded yet — run: klipperformac setup".format(
                 args.name))
         pins["ui"] = args.name
         versions.save_pins(pins)
         print("Default UI: " + args.name)
+        if process.running():
+            print("  Restart the stack to apply: klipperformac restart")
     url = paths.web_url()
-    print(url)
-    if not args.no_open:
-        webbrowser.open(url)
+    if url:
+        print(url)
+        if not args.no_open:
+            webbrowser.open(url)
+    else:
+        print("Native dashboard: no web server (Printer tab in KlipperMac.app)")
 
 
 def cmd_presets(args):
@@ -478,7 +503,13 @@ def cmd_doctor(args):
               "prevented; prints may die if the lid closes or battery empties.")
     state = process.running()
     if state:
-        down = [n for n, st in state.items() if not st and n != "caffeinate"]
+        ui = paths.current_ui()
+        skip = {"caffeinate"}
+        if ui != "mainsail":
+            skip.add("web_mainsail")
+        if ui != "fluidd":
+            skip.add("web_fluidd")
+        down = [n for n, st in state.items() if not st and n not in skip]
         if down:
             print("[!] services not running: " + ", ".join(down))
     sys.exit(0 if ok else 1)
@@ -578,8 +609,8 @@ def main(argv=None):
     p.add_argument("--apply", action="store_true")
     p.add_argument("--pin", action="append", metavar="COMP=TAG")
     sub.add_parser("open", help="open Mainsail in browser")
-    p = sub.add_parser("ui", help="open or switch web UI (mainsail|fluidd)")
-    p.add_argument("name", nargs="?", choices=("mainsail", "fluidd"))
+    p = sub.add_parser("ui", help="open or switch dashboard (native|mainsail|fluidd)")
+    p.add_argument("name", nargs="?", choices=("native", "mainsail", "fluidd"))
     p.add_argument("--no-open", action="store_true")
     p = sub.add_parser("presets",
                        help="list / save / use / import printer.cfg presets")

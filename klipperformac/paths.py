@@ -105,23 +105,33 @@ def lan_enabled():
     return bool(load_settings().get("lan"))
 
 
-def ui_port(ui):
-    return WEB_PORT if ui == "mainsail" else FLUIDD_PORT
-
-
-def ui_url(ui):
-    return "http://localhost:{}".format(ui_port(ui))
-
-
-def web_url():
-    ui = "fluidd"
+def current_ui():
+    """Selected dashboard: "native" (no web server), "fluidd", or "mainsail"."""
+    ui = "native"
     try:
         import json
         if LOCKFILE.exists():
-            ui = json.loads(LOCKFILE.read_text()).get("ui") or "fluidd"
+            ui = json.loads(LOCKFILE.read_text()).get("ui") or "native"
     except Exception:
         pass
-    return ui_url(ui)
+    return ui
+
+
+def ui_port(ui):
+    if ui == "mainsail":
+        return WEB_PORT
+    if ui == "fluidd":
+        return FLUIDD_PORT
+    return None
+
+
+def ui_url(ui):
+    port = ui_port(ui)
+    return None if port is None else "http://localhost:{}".format(port)
+
+
+def web_url():
+    return ui_url(current_ui())
 
 
 def ensure_dirs():

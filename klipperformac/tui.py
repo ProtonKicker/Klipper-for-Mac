@@ -111,13 +111,21 @@ class App(object):
                 process.start()
                 self.message = "restarting..."
             elif action == "open":
-                webbrowser.open(paths.web_url())
-                self.message = "opened " + paths.web_url()
+                url = paths.web_url()
+                if url:
+                    webbrowser.open(url)
+                    self.message = "opened " + url
+                else:
+                    self.message = ("native dashboard — [w] switches to a web UI")
             elif action == "toggle_ui":
                 pins = versions.load_pins()
-                pins["ui"] = "fluidd" if pins.get("ui") != "fluidd" else "mainsail"
+                order = ("native", "fluidd", "mainsail")
+                cur = pins.get("ui", "native")
+                pins["ui"] = order[(order.index(cur) + 1) % len(order)
+                                   if cur in order else 0]
                 versions.save_pins(pins)
-                self.message = "default UI: " + pins["ui"]
+                self.message = "default UI: {} (restart to apply)".format(
+                    pins["ui"])
             elif action == "toggle_lan":
                 settings = paths.load_settings()
                 settings["lan"] = not paths.lan_enabled()
@@ -265,15 +273,17 @@ class App(object):
         pins = versions.load_pins()
         row(7, "versions", "klipper {}   moonraker {}   ui {}".format(
             pins.get("klipper_sha", "")[:7] or pins["klipper"],
-            pins["moonraker"], pins.get("ui", "fluidd")))
+            pins["moonraker"], pins.get("ui", "native")))
         row(8, "data", str(paths.DATA))
-        ui = pins.get("ui", "fluidd")
+        ui = pins.get("ui", "native")
         api_host = "localhost"
         if paths.lan_enabled():
             ip = detect.lan_ip()
             if ip:
-                lan_line = ("open  {} http://{}:{}   [a] close"
-                            .format(ui, ip, paths.ui_port(ui)))
+                ui_part = ("open  http://{}:{} ({})   ".format(
+                    ip, paths.ui_port(ui), ui) if ui in ("mainsail", "fluidd")
+                    else "open (native: API only)   ")
+                lan_line = ui_part + "[a] close"
                 api_host = ip
             else:
                 lan_line = ("open, but this Mac has no network address"

@@ -89,7 +89,13 @@ enum StackReader {
                 cmds[String(parts[0])] = String(parts[2])
             }
         }
-        snap.services = order.map { name in
+        snap.services = order.filter { name in
+            switch name {
+            case "web_mainsail": return env.uiName == "mainsail"
+            case "web_fluidd": return env.uiName == "fluidd"
+            default: return true
+            }
+        }.map { name in
             let pid = pids[name].map(String.init)
             let cmd = pid.flatMap { cmds[$0] } ?? ""
             return ServiceState(name: name, up: pid != nil && cmd.contains(markers[name] ?? ""))

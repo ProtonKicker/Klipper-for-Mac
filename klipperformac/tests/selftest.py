@@ -1,7 +1,10 @@
-"""Live connection test: the exact endpoints Mainsail hits.
+"""Live connection test: the exact endpoints the dashboards hit.
 
 Run with the klipperformac venv python (has tornado):
   ~/.klipperformac/venv/bin/python -m klipperformac.tests.selftest
+
+In native mode (no web UI selected) the proxy/static checks are skipped;
+the direct Moonraker REST/WebSocket checks always run.
 """
 import asyncio
 import json
@@ -11,14 +14,17 @@ import urllib.request
 from .. import paths
 
 WS_URL = "ws://localhost:{}/websocket".format(paths.MOONRAKER_PORT)
-ORIGIN = paths.web_url()
 
 
-def check_static():
-    with urllib.request.urlopen(paths.web_url() + "/", timeout=8) as r:
+def _origin():
+    return paths.web_url() or "http://localhost:{}".format(paths.MOONRAKER_PORT)
+
+
+def check_static(base_url):
+    with urllib.request.urlopen(base_url + "/", timeout=8) as r:
         body = r.read().decode(errors="replace")
     if "<html" not in body.lower():
-        raise AssertionError("mainsail index is not HTML")
+        raise AssertionError("web UI index is not HTML")
     return r.status, len(body)
 
 
@@ -38,7 +44,7 @@ check_rest_via = check_rest
 async def check_ws(url=None):
     from tornado.httpclient import HTTPRequest
     from tornado.websocket import websocket_connect
-    req = HTTPRequest(url or WS_URL, headers={"Origin": ORIGIN})
+    req = HTTPRequest(url or WS_URL, headers={"Origin": _origin()})
     conn = await websocket_connect(req)
     try:
         for method, ident in (("printer.info", 1), ("server.info", 2)):
@@ -54,32 +60,30 @@ async def check_ws(url=None):
 
 def main():
     results = []
-    try:
-        status, n = check_static()
-        results.append(("mainsail static {} ({} bytes)".format(status, n), True))
-    except Exception as e:
-        results.append(("mainsail static: " + str(e)[:100], False))
-    try:
-        status = check_rest()
-        results.append(("moonraker REST {} klippy_connected".format(status), True))
-    except Exception as e:
-        results.append(("moonraker REST: " + str(e)[:100], False))
-    try:
-        asyncio.new_event_loop().run_until_complete(check_ws())
-        results.append(("websocket JSON-RPC (printer.info, server.info)", True))
-    except Exception as e:
-        results.append(("websocket JSON-RPC: " + str(e)[:120], False))
-    try:
-        status = check_rest_via(paths.WEB_PORT)
-        results.append(("mainsail proxy REST {} (browser path)".format(status), True))
-    except Exception as e:
-        results.append(("mainsail proxy REST: " + str(e)[:100], False))
-    try:
-        asyncio.new_event_loop().run_until_complete(
-            check_ws("ws://localhost:{}/websocket".format(paths.WEB_PORT)))
-        results.append(("mainsail proxy websocket (browser path)", True))
-    except Exception as e:
-        results.append(("mainsail proxy websocket: " + str(e)[:120], False))
+    ui = paths.current_ui()
+    base = paths.web_url()
+
+    def run(desc, fn):
+        try:
+            fn()
+            results.append((desc, True))
+        except Exception as e:
+            results.append((desc + ": " + str(e)[:120], False))
+
+    if base:
+        run("{} static".format(ui), lambda: check_static(base))
+    run("moonraker REST klippy_connected", check_rest)
+    run("websocket JSON-RPC (printer.info, server.info)",
+        lambda: asyncio.new_event_loop().run_until_complete(check_ws()))
+    if base:
+        port = paths.ui_port(ui)
+        run("{} proxy REST (browser path)".format(ui),
+            lambda: check_rest_via(port))
+        run("{} proxy websocket (browser path)".format(ui),
+            lambda: asyncio.new_event_loop().run_until_complete(
+                check_ws("ws://localhost:{}/websocket".format(port))))
+    else:
+        results.append(("native dashboard: proxy checks skipped", True))
     ok = all(r[1] for r in results)
     for desc, good in results:
         print("  {} {}".format("[ok]" if good else "[FAIL]", desc))
