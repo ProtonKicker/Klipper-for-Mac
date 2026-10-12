@@ -1,15 +1,23 @@
 import AppKit
 import Foundation
 
+/// Toast state lives on its own so a message appearing or auto-clearing never
+/// invalidates the forms (every @Published write on AppModel re-renders all
+/// views observing it).
+final class Notifier: ObservableObject {
+    @Published var message: String?
+    @Published var isError = false
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = StackSnapshot()
     @Published var printer: PrinterStatus?
     @Published var serialPorts: [SerialPort] = []
     @Published var presetNames: [String] = []
-    @Published var message: String?
-    @Published var messageIsError = false
     @Published var busy = false
+
+    let notifier = Notifier()
 
     // streaming sheet (setup / update --apply)
     @Published var showSheet = false
@@ -23,14 +31,42 @@ final class AppModel: ObservableObject {
     private var timer: Timer?
     private var clearTask: Task<Void, Never>?
     private var refreshInFlight = false
+    private var observingActive = false
+    private var ticks = 0
 
     func bootstrap() async {
         await refresh()
-        if timer == nil {
-            timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                Task { @MainActor in await self.refresh() }
+        startPolling()
+        if !observingActive {
+            observingActive = true
+            let center = NotificationCenter.default
+            center.addObserver(forName: NSApplication.didResignActiveNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in self.stopPolling() }
+            }
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in
+                    self.startPolling()
+                    await self.refresh()
+                }
             }
         }
+    }
+
+    private func startPolling() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.refresh() }
+        }
+    }
+
+    private func stopPolling() {
+        timer?.invalidate()
+        timer = nil
     }
 
     func refresh() async {
@@ -38,27 +74,35 @@ final class AppModel: ObservableObject {
         refreshInFlight = true
         defer { refreshInFlight = false }
         let env = self.env
+        // Presets are only listed in Settings and the scan can block on iCloud;
+        // check them every ~10s instead of every tick.
+        ticks += 1
+        let scanPresets = presetNames.isEmpty || ticks % 5 == 1
         // All filesystem/process work off the main thread — never block UI.
         let (snap, serials, presets) = await Task.detached(priority: .utility) {
-            (StackReader.readSync(env: env), SerialScanner.scan(), env.presetNames())
+            (StackReader.readSync(env: env),
+             SerialScanner.scan(),
+             scanPresets ? env.presetNames() : nil)
         }.value
         let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort) : nil
         if !busy { // don't churn while a command owns the screen
-            snapshot = snap
-            self.printer = printer
-            serialPorts = serials
+            // Assign only on change: every @Published write re-renders the whole
+            // view tree, and most 2s polls change nothing.
+            if snap != snapshot { snapshot = snap }
+            if printer != self.printer { self.printer = printer }
+            if serials != serialPorts { serialPorts = serials }
         }
-        presetNames = presets
+        if let presets, presets != presetNames { presetNames = presets }
     }
 
     private func say(_ text: String, error: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        message = trimmed.isEmpty ? nil : String(trimmed.prefix(400))
-        messageIsError = error
+        notifier.message = trimmed.isEmpty ? nil : String(trimmed.prefix(400))
+        notifier.isError = error
         clearTask?.cancel()
         clearTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 9_000_000_000)
-            if !Task.isCancelled { self?.message = nil }
+            if !Task.isCancelled { self?.notifier.message = nil }
         }
     }
 

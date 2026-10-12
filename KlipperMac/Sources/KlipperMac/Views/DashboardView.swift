@@ -2,15 +2,13 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var selectedSerial = ""
-    @State private var selectedPreset = ""
     @State private var showKillConfirm = false
 
     var body: some View {
         Form {
             setupSection
             stackSection
-            prestartSection
+            printerSection
             webUISection
             lanSection
         }
@@ -119,52 +117,59 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - optional pre-start choices (serial + preset)
+    // MARK: - live printer status
 
-    @ViewBuilder private var prestartSection: some View {
-        if model.env.installed && !model.snapshot.anyUp {
-            Section("Before you start (optional)") {
-                Picker("Serial device", selection: $selectedSerial) {
-                    Text("Default — keep current printer.cfg").tag("")
-                    if model.serialPorts.isEmpty {
-                        Text("No USB serial devices found").disabled(true).tag(" ")
-                    }
-                    ForEach(model.serialPorts) { port in
-                        Text("\(port.path)   \(port.label)").tag(port.path)
+    @ViewBuilder private var printerSection: some View {
+        if let p = model.printer {
+            Section("Printer") {
+                LabeledContent("Klipper",
+                               value: p.connected ? "connected (\(p.klippyState))"
+                                                  : "not connected (\(p.klippyState))")
+                if let st = p.printState {
+                    LabeledContent("State", value: st.capitalized)
+                }
+                if let file = p.filename, !file.isEmpty {
+                    LabeledContent("File", value: file)
+                    if let prog = p.progress {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ProgressView(value: min(max(prog, 0), 1))
+                            Text("\(Int((prog * 100).rounded()))%")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-                .onChange(of: selectedSerial) { value in
-                    if !value.isEmpty {
-                        let path = value
-                        selectedSerial = ""
-                        Task { await model.setSerial(path) }
-                    }
+                if let h = p.hotend {
+                    LabeledContent("Hotend",
+                                   value: String(format: "%.0f / %.0f °C", h.temp, h.target))
                 }
-
-                Picker("Preset config", selection: $selectedPreset) {
-                    Text("Default — use current printer.cfg").tag("")
-                    ForEach(model.presetNames, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
+                if let b = p.bed {
+                    LabeledContent("Bed",
+                                   value: String(format: "%.0f / %.0f °C", b.temp, b.target))
                 }
-                .disabled(model.presetNames.isEmpty)
-                .onChange(of: selectedPreset) { value in
-                    if !value.isEmpty {
-                        let name = value
-                        selectedPreset = ""
-                        Task { await model.usePreset(name) }
-                    }
+                if let pos = p.position {
+                    LabeledContent("Position",
+                                   value: String(format: "X %.1f   Y %.1f   Z %.2f",
+                                                 pos.x, pos.y, pos.z))
                 }
-
-                Text("Pick a USB board and a saved printer.cfg if you like — otherwise the stack starts with your current config.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if !model.env.printerConfigured {
-                    Label("No printer.cfg yet — add one to \(model.env.config.path), or apply a preset above.",
-                          systemImage: "info.circle")
+                if let m = p.message, !m.isEmpty {
+                    Text(m)
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if p.printState == "printing" || p.printState == "paused" {
+                    HStack {
+                        if p.printState == "printing" {
+                            Button("Pause") { Task { await model.pausePrint() } }
+                        }
+                        if p.printState == "paused" {
+                            Button("Resume") { Task { await model.resumePrint() } }
+                        }
+                        Button("Cancel print", role: .destructive) {
+                            Task { await model.cancelPrint() }
+                        }
+                    }
                 }
             }
         }

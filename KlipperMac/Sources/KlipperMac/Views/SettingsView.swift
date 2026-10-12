@@ -5,6 +5,9 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var logService = "klipper"
     @State private var follow = false
+    @State private var logsOpen = false
+    @State private var selectedSerial = ""
+    @State private var selectedPreset = ""
 
     private var env: KEnvironment { model.env }
 
@@ -12,6 +15,7 @@ struct SettingsView: View {
         Form {
             aboutSection
             dataSection
+            printerConfigSection
             updatesSection
             logsSection
         }
@@ -42,7 +46,7 @@ struct SettingsView: View {
                 }
                 Button("Copy install command") {
                     model.copyToPasteboard("curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh")
-                    model.message = "Install command copied"
+                    model.notifier.message = "Install command copied"
                 }
             }
         }
@@ -97,6 +101,57 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - printer config (serial board + preset)
+
+    @ViewBuilder private var printerConfigSection: some View {
+        if env.installed {
+            Section("Printer config") {
+                Picker("Serial device", selection: $selectedSerial) {
+                    Text("Default — keep current printer.cfg").tag("")
+                    if model.serialPorts.isEmpty {
+                        Text("No USB serial devices found").disabled(true).tag(" ")
+                    }
+                    ForEach(model.serialPorts) { port in
+                        Text("\(port.path)   \(port.label)").tag(port.path)
+                    }
+                }
+                .onChange(of: selectedSerial) { value in
+                    if !value.isEmpty {
+                        let path = value
+                        selectedSerial = ""
+                        Task { await model.setSerial(path) }
+                    }
+                }
+
+                Picker("Preset config", selection: $selectedPreset) {
+                    Text("Default — use current printer.cfg").tag("")
+                    ForEach(model.presetNames, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .disabled(model.presetNames.isEmpty)
+                .onChange(of: selectedPreset) { value in
+                    if !value.isEmpty {
+                        let name = value
+                        selectedPreset = ""
+                        Task { await model.usePreset(name) }
+                    }
+                }
+
+                Text("Both write to printer.cfg — restart the stack to apply.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !env.printerConfigured {
+                    Label("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.",
+                          systemImage: "info.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     // MARK: - updates
 
     private var updatesSection: some View {
@@ -127,22 +182,26 @@ struct SettingsView: View {
 
     private var logsSection: some View {
         Section("Logs") {
-            Picker("Service", selection: $logService) {
-                Text("Klipper (klippy.log)").tag("klipper")
-                Text("Moonraker (moonraker.log)").tag("moonraker")
-            }
-            .pickerStyle(.segmented)
+            // Collapsed by default: the log viewer is the one heavy view in this
+            // pane, and building it is most of the cost of opening Settings.
+            DisclosureGroup("Log viewer", isExpanded: $logsOpen) {
+                Picker("Service", selection: $logService) {
+                    Text("Klipper (klippy.log)").tag("klipper")
+                    Text("Moonraker (moonraker.log)").tag("moonraker")
+                }
+                .pickerStyle(.segmented)
 
-            LogView(url: logURL, follow: follow)
+                LogView(url: logURL, follow: follow)
 
-            HStack {
-                Toggle("Follow new lines", isOn: $follow)
-                    .toggleStyle(.switch)
-                Spacer()
-                Button("Reveal in Finder") { model.reveal(logURL) }
-                Button("Copy path") {
-                    model.copyToPasteboard(logURL.path)
-                    model.message = "Log path copied"
+                HStack {
+                    Toggle("Follow new lines", isOn: $follow)
+                        .toggleStyle(.switch)
+                    Spacer()
+                    Button("Reveal in Finder") { model.reveal(logURL) }
+                    Button("Copy path") {
+                        model.copyToPasteboard(logURL.path)
+                        model.notifier.message = "Log path copied"
+                    }
                 }
             }
         }

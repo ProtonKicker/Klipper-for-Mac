@@ -19,21 +19,21 @@ struct StatusBadge: View {
 }
 
 struct MessageBanner: View {
-    @EnvironmentObject private var model: AppModel
+    @ObservedObject var notifier: Notifier
 
     var body: some View {
-        if let m = model.message {
+        if let m = notifier.message {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 5) {
-                    Image(systemName: model.messageIsError
+                    Image(systemName: notifier.isError
                           ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(model.messageIsError ? Color.orange : Color.green)
-                    Text(model.messageIsError ? "Problem" : "Done")
+                        .foregroundStyle(notifier.isError ? Color.orange : Color.green)
+                    Text(notifier.isError ? "Problem" : "Done")
                         .font(.caption.bold())
                     Spacer()
                     Button {
-                        model.message = nil
+                        notifier.message = nil
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.caption)

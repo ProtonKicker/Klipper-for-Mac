@@ -45,7 +45,7 @@ struct LogView: View {
             if let h = try? FileHandle(forReadingFrom: url) {
                 defer { try? h.close() }
                 let size = (try? h.seekToEnd()) ?? 0
-                let window: UInt64 = 131_072
+                let window: UInt64 = 65_536
                 let start = size > window ? size - window : 0
                 try? h.seek(toOffset: start)
                 let data = (try? h.readToEnd()) ?? Data()
@@ -54,7 +54,9 @@ struct LogView: View {
                     s = String(s[s.index(after: nl)...])
                 }
                 let lines = s.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-                tail = lines.suffix(400).joined(separator: "\n")
+                // Layout cost of one selectable Text grows fast with line count and
+                // the pane shows ~12 lines; 200 is plenty of scrollback.
+                tail = lines.suffix(200).joined(separator: "\n")
             }
             DispatchQueue.main.async {
                 reading = false

@@ -33,7 +33,7 @@ A native SwiftUI app wraps the same CLI — same data folder, same running stack
 Build and open it with:
 
 ```sh
-KlipperMac/build-app.sh && open KlipperMac/dist/KlipperMac.app
+KlipperMac/build-app.sh && open "KlipperMac/dist/Klipper for Mac.app"
 ```
 
 Install the CLI first; the GUI isn't in the installer one-liner yet.

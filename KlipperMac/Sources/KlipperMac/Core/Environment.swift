@@ -33,18 +33,22 @@ final class KEnvironment {
         var printerConfigured = false
         var lanEnabled = false
         var uiName = "fluidd"
-        var cliURL: URL?
 
         init(data: URL = URL(fileURLWithPath: "/nonexistent")) { self.data = data }
     }
 
     private var cache = Cache()
     private let cacheLock = NSLock()
-    private let ttl: TimeInterval = 0.5
+    private let ttl: TimeInterval = 2.0
+
+    // The CLI location never moves during a session, and finding it means
+    // stat-ing every PATH entry — so it gets its own much longer memo.
+    private var cliCache: (at: Date, value: URL?) = (.distantPast, nil)
 
     func invalidateCaches() {
         cacheLock.lock()
         cache.at = .distantPast
+        cliCache.at = .distantPast
         cacheLock.unlock()
     }
 
@@ -61,7 +65,6 @@ final class KEnvironment {
             c.printerConfigured = fm.fileExists(atPath: c.data.appendingPathComponent("config/printer.cfg").path)
             c.lanEnabled = c.settings["lan"] as? Bool ?? false
             c.uiName = c.pins["ui"] == "mainsail" ? "mainsail" : "fluidd"
-            c.cliURL = KEnvironment.resolveCLI()
             cache = c
         }
         return cache
@@ -119,8 +122,15 @@ final class KEnvironment {
 
     // MARK: - public (cache-backed)
 
-    var cliURL: URL? { cached().cliURL }
-    var isCLIInstalled: Bool { cached().cliURL != nil }
+    var cliURL: URL? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if Date().timeIntervalSince(cliCache.at) >= 300 {
+            cliCache = (Date(), KEnvironment.resolveCLI())
+        }
+        return cliCache.value
+    }
+    var isCLIInstalled: Bool { cliURL != nil }
 
     var settings: [String: Any] { cached().settings }
     var lanEnabled: Bool { cached().lanEnabled }

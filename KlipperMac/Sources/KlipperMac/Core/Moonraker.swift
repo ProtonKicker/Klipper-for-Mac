@@ -1,15 +1,26 @@
 import Foundation
 
-struct PrinterStatus {
+struct Temp: Equatable {
+    var temp: Double
+    var target: Double
+}
+
+struct Position: Equatable {
+    var x: Double
+    var y: Double
+    var z: Double
+}
+
+struct PrinterStatus: Equatable {
     var connected = false
     var klippyState = "?"
     var printState: String?
     var filename: String?
     var progress: Double?
     var message: String?
-    var hotend: (temp: Double, target: Double)?
-    var bed: (temp: Double, target: Double)?
-    var position: (x: Double, y: Double, z: Double)?
+    var hotend: Temp?
+    var bed: Temp?
+    var position: Position?
 }
 
 enum Moonraker {
@@ -37,17 +48,19 @@ enum Moonraker {
     }
 
     static func status(port: Int) async -> PrinterStatus? {
-        guard let info = await getJSON("/server/info", port: port),
-              let r = info["result"] as? [String: Any]
-        else { return nil }
+        // Both endpoints are independent — fetch together so a status poll costs
+        // one round trip instead of two sequential ones.
+        async let infoTask = getJSON("/server/info", port: port)
+        async let queryTask = getJSON("/printer/objects/query?print_stats&extruder&heater_bed&gcode_move",
+                                      port: port, timeout: 1)
+        guard let info = await infoTask, let r = info["result"] as? [String: Any] else { return nil }
 
         var ps = PrinterStatus(
             connected: r["klippy_connected"] as? Bool ?? false,
             klippyState: r["klippy_state"] as? String ?? "?"
         )
 
-        if let q = await getJSON("/printer/objects/query?print_stats&extruder&heater_bed&gcode_move",
-                                 port: port),
+        if let q = await queryTask,
            let st = (q["result"] as? [String: Any])?["status"] as? [String: Any] {
             let stats = st["print_stats"] as? [String: Any]
             ps.printState = stats?["state"] as? String
@@ -55,9 +68,10 @@ enum Moonraker {
             ps.message = stats?["message"] as? String
             if let pr = stats?["progress"] as? Double { ps.progress = pr }
 
-            func temps(_ key: String) -> (Double, Double)? {
+            func temps(_ key: String) -> Temp? {
                 guard let o = st[key] as? [String: Any] else { return nil }
-                return (o["temperature"] as? Double ?? 0, o["target"] as? Double ?? 0)
+                return Temp(temp: o["temperature"] as? Double ?? 0,
+                            target: o["target"] as? Double ?? 0)
             }
             ps.hotend = temps("extruder")
             ps.bed = temps("heater_bed")
@@ -67,7 +81,7 @@ enum Moonraker {
                 func d(_ i: Int) -> Double {
                     (pos[i] as? Double) ?? Double(pos[i] as? Int ?? 0)
                 }
-                ps.position = (d(0), d(1), d(2))
+                ps.position = Position(x: d(0), y: d(1), z: d(2))
             }
         }
         return ps

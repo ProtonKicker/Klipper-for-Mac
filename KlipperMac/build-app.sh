@@ -2,11 +2,11 @@
 # Build KlipperMac.app — works with Command Line Tools only (no Xcode needed).
 # Compiles every Swift source with swiftc, produces a universal (arm64 +
 # x86_64) binary, assembles the .app bundle, ad-hoc signs it.
-# Output: dist/KlipperMac.app
+# Output: dist/Klipper for Mac.app
 set -e
 cd "$(dirname "$0")"
 
-APP="dist/KlipperMac.app"
+APP="dist/Klipper for Mac.app"
 SDK=$(xcrun --sdk macosx --show-sdk-path)
 SRCS=$(find Sources -name '*.swift' | sort)
 FLAGS="-parse-as-library -O -sdk $SDK"

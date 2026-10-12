@@ -1,11 +1,11 @@
 import Foundation
 
-struct ServiceState {
+struct ServiceState: Equatable {
     let name: String
     let up: Bool
 }
 
-struct StackSnapshot {
+struct StackSnapshot: Equatable {
     enum Overall { case stopped, running, notResponding }
 
     /// state.json exists and belongs to this boot (stack was started at some point)
@@ -43,14 +43,13 @@ enum StackReader {
         bootLock.lock()
         defer { bootLock.unlock() }
         if Date().timeIntervalSince(bootCache.at) < 5 { return bootCache.value }
-        let out = runTool("/usr/sbin/sysctl", ["-n", "kern.boottime"]) ?? ""
-        // sysctl prints "{ sec = 1759734000, usec = 0 } ..." — take the digits
-        // right after "sec = " (matches process.py regex "sec = (\d+)").
-        var value: String?
-        if let range = out.range(of: "sec = ") {
-            let digits = out[range.upperBound...].prefix(while: { $0.isNumber })
-            if !digits.isEmpty { value = String(digits) }
+        // kern.boottime directly — no /usr/sbin/sysctl subprocess per poll.
+        var tv = timeval(tv_sec: 0, tv_usec: 0)
+        var size = MemoryLayout<timeval>.stride
+        let rc = withUnsafeMutablePointer(to: &tv) {
+            sysctlbyname("kern.boottime", $0, &size, nil, 0)
         }
+        let value = rc == 0 ? String(tv.tv_sec) : nil
         bootCache = (Date(), value)
         return value
     }
