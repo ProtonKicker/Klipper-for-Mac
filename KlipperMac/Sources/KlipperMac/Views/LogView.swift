@@ -5,6 +5,7 @@ struct LogView: View {
     var follow: Bool
     @State private var text = ""
     @State private var reading = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -30,8 +31,17 @@ struct LogView: View {
             .onChange(of: text) { _ in
                 if follow { proxy.scrollTo("end", anchor: .bottom) }
             }
-            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-                if follow { reload() }
+            // A published 1s timer stays attached for as long as the view exists, so
+            // it kept tailing the log every second even with the viewer collapsed and
+            // while the app was in the background. This runs only while following,
+            // and only while the app is frontmost.
+            .task(id: follow && scenePhase == .active) {
+                guard follow, scenePhase == .active else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if Task.isCancelled { break }
+                    reload()
+                }
             }
         }
     }

@@ -106,6 +106,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Toasts raised from the views. Going through `say` rather than assigning
+    /// `notifier.message` directly is what makes them auto-clear.
+    func note(_ text: String, error: Bool = false) {
+        say(text, error: error)
+    }
+
     // MARK: - CLI-backed actions
 
     @discardableResult

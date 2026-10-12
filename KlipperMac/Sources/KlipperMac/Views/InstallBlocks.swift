@@ -1,36 +1,25 @@
 import AppKit
 import SwiftUI
 
-struct SettingsView: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var logService = "klipper"
-    @State private var follow = false
-    @State private var logsOpen = false
-    @State private var selectedSerial = ""
-    @State private var selectedPreset = ""
+// Install, versions and diagnostics.
 
+struct AboutBlock: View {
+    @ObservedObject var model: AppModel
     private var env: KEnvironment { model.env }
 
     var body: some View {
-        Form {
-            aboutSection
-            dataSection
-            printerConfigSection
-            updatesSection
-            logsSection
-        }
-        .formStyle(.grouped)
-        .navigationTitle("Settings")
-    }
-
-    // MARK: - about
-
-    private var aboutSection: some View {
         Section("About") {
             LabeledContent("App version", value: appVersion)
-            LabeledContent("Klipper CLI",
-                           value: env.cliURL?.path ?? "not found")
-                .foregroundStyle(env.isCLIInstalled ? Color.primary : Color.orange)
+            LabeledContent {
+                Text(env.cliURL?.path ?? "not found")
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: env.isCLIInstalled ? "checkmark.circle.fill"
+                                                         : "exclamationmark.triangle.fill")
+                        .foregroundStyle(env.isCLIInstalled ? Tint.ok : Tint.attention)
+                    Text("Klipper CLI")
+                }
+            }
             if env.installed {
                 let pins = env.pins
                 LabeledContent("Klipper", value: pinText(pins, "klipper"))
@@ -38,15 +27,17 @@ struct SettingsView: View {
                 LabeledContent("Mainsail", value: pinText(pins, "mainsail"))
                 LabeledContent("Fluidd", value: pinText(pins, "fluidd"))
             }
-            HStack {
+            HStack(spacing: 8) {
                 Button {
                     model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
                 } label: {
-                    Label("Project on GitHub", systemImage: "link")
+                    ButtonLabel(title: "GitHub", symbol: "link")
                 }
+                .fixedSize()
+                .help("Open the project page on GitHub")
                 Button("Copy install command") {
                     model.copyToPasteboard("curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh")
-                    model.notifier.message = "Install command copied"
+                    model.note("Install command copied")
                 }
             }
         }
@@ -66,15 +57,20 @@ struct SettingsView: View {
         }
         return isSHA ? String(pin.prefix(7)) + " (commit)" : pin
     }
+}
 
-    // MARK: - data folder
+struct DataBlock: View {
+    @ObservedObject var model: AppModel
+    private var env: KEnvironment { model.env }
 
-    private var dataSection: some View {
+    var body: some View {
         Section("Data folder") {
             Text(env.data.path)
                 .font(.system(size: 11, design: .monospaced))
+                .lineLimit(2)
+                .truncationMode(.middle)
                 .textSelection(.enabled)
-            HStack {
+            HStack(spacing: 8) {
                 Button("Change…") { chooseDataFolder() }
                     .disabled(model.snapshot.anyUp)
                 Button("Show in Finder") { model.reveal(env.data) }
@@ -100,63 +96,15 @@ struct SettingsView: View {
             Task { await model.moveData(url) }
         }
     }
+}
 
-    // MARK: - printer config (serial board + preset)
+struct UpdatesBlock: View {
+    @ObservedObject var model: AppModel
+    private var env: KEnvironment { model.env }
 
-    @ViewBuilder private var printerConfigSection: some View {
-        if env.installed {
-            Section("Printer config") {
-                Picker("Serial device", selection: $selectedSerial) {
-                    Text("Default — keep current printer.cfg").tag("")
-                    if model.serialPorts.isEmpty {
-                        Text("No USB serial devices found").disabled(true).tag(" ")
-                    }
-                    ForEach(model.serialPorts) { port in
-                        Text("\(port.path)   \(port.label)").tag(port.path)
-                    }
-                }
-                .onChange(of: selectedSerial) { value in
-                    if !value.isEmpty {
-                        let path = value
-                        selectedSerial = ""
-                        Task { await model.setSerial(path) }
-                    }
-                }
-
-                Picker("Preset config", selection: $selectedPreset) {
-                    Text("Default — use current printer.cfg").tag("")
-                    ForEach(model.presetNames, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                }
-                .disabled(model.presetNames.isEmpty)
-                .onChange(of: selectedPreset) { value in
-                    if !value.isEmpty {
-                        let name = value
-                        selectedPreset = ""
-                        Task { await model.usePreset(name) }
-                    }
-                }
-
-                Text("Both write to printer.cfg — restart the stack to apply.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if !env.printerConfigured {
-                    Label("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.",
-                          systemImage: "info.circle")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    // MARK: - updates
-
-    private var updatesSection: some View {
+    var body: some View {
         Section("Component updates") {
-            HStack {
+            HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }
                     .disabled(model.busy)
                 Button("Apply…") { Task { await model.applyUpdates() } }
@@ -177,13 +125,24 @@ struct SettingsView: View {
             }
         }
     }
+}
 
-    // MARK: - logs
+struct LogsBlock: View {
+    @ObservedObject var model: AppModel
+    @State private var logService = "klipper"
+    @State private var follow = false
+    @State private var logsOpen = false
 
-    private var logsSection: some View {
+    private var env: KEnvironment { model.env }
+
+    private var logURL: URL {
+        logService == "klipper" ? env.klippyLog : env.moonrakerLog
+    }
+
+    var body: some View {
         Section("Logs") {
-            // Collapsed by default: the log viewer is the one heavy view in this
-            // pane, and building it is most of the cost of opening Settings.
+            // Collapsed by default: the log viewer is the one heavy block on this
+            // page, and building it is most of the cost of opening the window.
             DisclosureGroup("Log viewer", isExpanded: $logsOpen) {
                 Picker("Service", selection: $logService) {
                     Text("Klipper (klippy.log)").tag("klipper")
@@ -193,21 +152,17 @@ struct SettingsView: View {
 
                 LogView(url: logURL, follow: follow)
 
-                HStack {
+                HStack(spacing: 8) {
                     Toggle("Follow new lines", isOn: $follow)
                         .toggleStyle(.switch)
                     Spacer()
                     Button("Reveal in Finder") { model.reveal(logURL) }
                     Button("Copy path") {
                         model.copyToPasteboard(logURL.path)
-                        model.notifier.message = "Log path copied"
+                        model.note("Log path copied")
                     }
                 }
             }
         }
-    }
-
-    private var logURL: URL {
-        logService == "klipper" ? env.klippyLog : env.moonrakerLog
     }
 }

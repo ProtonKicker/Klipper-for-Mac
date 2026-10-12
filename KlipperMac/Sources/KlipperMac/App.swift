@@ -10,7 +10,7 @@ struct KlipperForMacApp: App {
                 .environmentObject(model)
                 .task { await model.bootstrap() }
         }
-        .defaultSize(width: 880, height: 620)
+        .defaultSize(width: 1180, height: 760)
         .commands {
             CommandGroup(replacing: .help) {
                 Button("Klipper for Mac on GitHub") {
