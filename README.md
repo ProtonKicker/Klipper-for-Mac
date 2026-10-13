@@ -30,13 +30,16 @@ Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 ## GUI app
 
 A native SwiftUI app wraps the same CLI — same data folder, same running stack.
-Build and open it with:
+Install the CLI first, then build and open the `.app` (Command Line Tools only,
+no Xcode needed):
 
 ```sh
 KlipperMac/build-app.sh && open "KlipperMac/dist/Klipper for Mac.app"
 ```
 
-Install the CLI first; the GUI isn't in the installer one-liner yet.
+![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
+
+The GUI isn't in the installer one-liner yet; the `.app` is built locally and ad-hoc signed.
 
 ## Slicing in Orca Slicer
 
