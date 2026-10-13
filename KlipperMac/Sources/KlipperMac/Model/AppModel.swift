@@ -17,6 +17,12 @@ final class AppModel: ObservableObject {
     @Published var presetNames: [String] = []
     @Published var busy = false
 
+    // Monitoring dashboard state.
+    @Published var tempHistory: [TempSample] = []
+    @Published var gcodeLog: [GcodeLine] = []
+    @Published var webcam: WebcamInfo?
+    @Published var etaSeconds: Double?
+
     let notifier = Notifier()
 
     // streaming sheet (setup / update --apply)
@@ -33,6 +39,9 @@ final class AppModel: ObservableObject {
     private var refreshInFlight = false
     private var observingActive = false
     private var ticks = 0
+    private var filamentObjects: [String] = []
+    private var estimatedFor: String?
+    private var estimatedTotal: Double?
 
     func bootstrap() async {
         await refresh()
@@ -84,15 +93,108 @@ final class AppModel: ObservableObject {
              SerialScanner.scan(),
              scanPresets ? env.presetNames() : nil)
         }.value
-        let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort) : nil
+        if snap.anyUp && (filamentObjects.isEmpty || webcam == nil || ticks % 15 == 1) {
+            rescanMonitorConfig()
+        }
+        let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort,
+                                                          filamentObjects: filamentObjects) : nil
         if !busy { // don't churn while a command owns the screen
             // Assign only on change: every @Published write re-renders the whole
             // view tree, and most 2s polls change nothing.
             if snap != snapshot { snapshot = snap }
             if printer != self.printer { self.printer = printer }
             if serials != serialPorts { serialPorts = serials }
+            if snap.anyUp { sampleMonitor(printer) }
+            else if !tempHistory.isEmpty { tempHistory = [] ; etaSeconds = nil }
         }
         if let presets, presets != presetNames { presetNames = presets }
+    }
+
+    /// Dashboard-only collection: temperature sampling, ETA, console, camera.
+    /// Called once per poll while the stack is up.
+    private func sampleMonitor(_ printer: PrinterStatus?) {
+        if printer == nil {
+            if !tempHistory.isEmpty { tempHistory = [] }
+            etaSeconds = nil
+            return
+        }
+        let now = Date().timeIntervalSince1970
+        if let h = printer?.hotend {
+            let sample = TempSample(time: now, hotend: h.temp, hotendTarget: h.target,
+                                    bed: printer?.bed?.temp ?? 0,
+                                    bedTarget: printer?.bed?.target ?? 0)
+            tempHistory.append(sample)
+            if tempHistory.count > 150 { tempHistory.removeFirst(tempHistory.count - 150) }
+        }
+        etaSeconds = computeEta(printer!)
+
+        Task { @MainActor in
+            let store = await Moonraker.gcodeStore(port: env.moonrakerPort)
+            if !store.isEmpty { self.mergeStore(store) }
+        }
+    }
+
+    /// Live extrapolation while printing beats the slice estimate; the
+    /// estimate covers the first seconds when too little has elapsed.
+    private func computeEta(_ p: PrinterStatus) -> Double? {
+        guard p.printState == "printing" || p.printState == "paused",
+              let prog = p.progress else { return nil }
+        if let d = p.printDuration, d > 30, prog > 0.02 {
+            return d / prog * (1 - prog)
+        }
+        if let file = p.filename, !file.isEmpty {
+            if file != estimatedFor {
+                estimatedFor = file
+                estimatedTotal = nil
+                Task { @MainActor in
+                    let est = await Moonraker.estimatedTime(filename: file,
+                                                            port: env.moonrakerPort)
+                    if self.estimatedFor == file {
+                        self.estimatedTotal = est
+                        self.etaSeconds = self.computeEta(self.printer ?? p)
+                    }
+                }
+            }
+            if let total = estimatedTotal { return total * (1 - prog) }
+        }
+        return nil
+    }
+
+    /// Store rows are authoritative; locally echoed commands survive until the
+    /// store repeats them (Moonraker logs received commands).
+    private func mergeStore(_ lines: [GcodeLine]) {
+        var merged = lines
+        for echo in gcodeLog where echo.echoed {
+            if !lines.contains(where: { $0.message.contains(echo.message) }) {
+                merged.append(echo)
+            }
+        }
+        merged.sort { $0.time < $1.time }
+        if merged != gcodeLog { gcodeLog = merged }
+    }
+
+    func sendGcode(_ command: String) async {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return }
+        let echo = GcodeLine(time: Date().timeIntervalSince1970 + 0.001,
+                             message: cmd, echoed: true)
+        gcodeLog.append(echo)
+        if await Moonraker.sendGcode(cmd, port: env.moonrakerPort) {
+            mergeStore(await Moonraker.gcodeStore(port: env.moonrakerPort))
+        } else {
+            note("Could not reach Moonraker.", error: true)
+        }
+    }
+
+    /// Sensor names and camera config change rarely — rescan every ~30s.
+    private func rescanMonitorConfig() {
+        Task { @MainActor in
+            let objs = await Moonraker.filamentObjects(port: env.moonrakerPort)
+            if objs != self.filamentObjects { self.filamentObjects = objs }
+            let cams = await Moonraker.webcams(port: env.moonrakerPort)
+            let cam = cams.first
+            if cam != self.webcam { self.webcam = cam }
+        }
     }
 
     private func say(_ text: String, error: Bool = false) {

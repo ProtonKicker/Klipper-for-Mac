@@ -6,11 +6,13 @@ struct KlipperForMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environmentObject(model)
                 .task { await model.bootstrap() }
         }
-        .defaultSize(width: 800, height: 820)
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
+        .defaultSize(width: 960, height: 660)
         .commands {
             CommandGroup(replacing: .help) {
                 Button("Klipper for Mac on GitHub") {
