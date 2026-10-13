@@ -3,8 +3,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var logService = "klipper"
-    @State private var follow = false
     @State private var selectedSerial = ""
     @State private var selectedPreset = ""
 
@@ -16,7 +14,6 @@ struct SettingsView: View {
             componentsSection
             printerConfigSection
             dataSection
-            logsSection
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
@@ -171,32 +168,5 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - logs
 
-    private var logsSection: some View {
-        Section("Logs") {
-            Picker("Service", selection: $logService) {
-                Text("Klipper (klippy.log)").tag("klipper")
-                Text("Moonraker (moonraker.log)").tag("moonraker")
-            }
-            .pickerStyle(.segmented)
-
-            LogView(url: logURL, follow: follow)
-
-            HStack {
-                Toggle("Follow new lines", isOn: $follow)
-                    .toggleStyle(.switch)
-                Spacer()
-                Button("Reveal in Finder") { model.reveal(logURL) }
-                Button("Copy path") {
-                    model.copyToPasteboard(logURL.path)
-                    model.notifier.message = "Copied"
-                }
-            }
-        }
-    }
-
-    private var logURL: URL {
-        logService == "klipper" ? env.klippyLog : env.moonrakerLog
-    }
 }
