@@ -32,10 +32,12 @@ command -v gcc   >/dev/null 2>&1 || { say "compiler not found. Run: xcode-select
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null \
   || { say "python3 >= 3.10 required (setup needs it too). Try: brew install python@3.12"; exit 1; }
 
-# Fetch or update the app sources.
+# Fetch or update the app sources — CLI files only (GUI sources are skipped).
 mkdir -p "$(dirname "$SRC_DIR")"
 if [ -d "$SRC_DIR/.git" ]; then
-  say "updating existing checkout"
+  say "updating existing checkout (CLI files only)"
+  git -C "$SRC_DIR" sparse-checkout set bin klipperformac scripts 2>/dev/null \
+    || say "NOTE: git too old for sparse-checkout; full checkout kept"
   if ! git -C "$SRC_DIR" pull --ff-only --quiet; then
     say "WARNING: checkout at $SRC_DIR is dirty/diverged; leaving as-is."
   fi
