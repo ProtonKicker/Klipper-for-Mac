@@ -107,7 +107,7 @@ struct SettingsView: View {
         if env.installed {
             Section("Printer config") {
                 Picker("Serial device", selection: $selectedSerial) {
-                    Text("Default — keep current printer.cfg").tag("")
+                    Text("Select device…").tag("")
                     if model.serialPorts.isEmpty {
                         Text("No USB serial devices found").disabled(true).tag(" ")
                     }
@@ -124,7 +124,7 @@ struct SettingsView: View {
                 }
 
                 Picker("Preset config", selection: $selectedPreset) {
-                    Text("Default — use current printer.cfg").tag("")
+                    Text("Select config…").tag("")
                     ForEach(model.presetNames, id: \.self) { name in
                         Text(name).tag(name)
                     }

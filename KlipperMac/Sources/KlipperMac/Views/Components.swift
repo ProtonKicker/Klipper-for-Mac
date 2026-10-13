@@ -8,13 +8,15 @@ struct StatusBadge: View {
             : (overall == .notResponding ? .orange : .secondary)
         let text = overall == .running ? "Running"
             : (overall == .notResponding ? "Not responding" : "Stopped")
-        Text(text)
-            .font(.headline)
-            .foregroundStyle(color)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(0.14)))
-            .overlay(Capsule().strokeBorder(color.opacity(0.5), lineWidth: 1))
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(text)
+                .font(.callout.weight(.medium))
+        }
+        .foregroundStyle(.primary)
+        .fixedSize()
     }
 }
 
@@ -55,8 +57,8 @@ struct MessageBanner: View {
     }
 }
 
-/// URL row — clicking copies the address to the clipboard.
-struct CopyableURL: View {
+/// URL row — clicking opens the address in the default browser.
+struct BrowserLink: View {
     let label: String
     let url: String
     @EnvironmentObject private var model: AppModel
@@ -66,10 +68,10 @@ struct CopyableURL: View {
             Text(label)
             Spacer()
             Button(url) {
-                model.copyURL(url)
+                model.openURL(url)
             }
             .buttonStyle(.link)
-            .help("Click to copy the address")
+            .help("Click to open in your browser")
         }
     }
 }
