@@ -1,29 +1,13 @@
 import AppKit
 import Foundation
 
-/// Toast state lives on its own so a message appearing or auto-clearing never
-/// invalidates the forms (every @Published write on AppModel re-renders all
-/// views observing it).
-final class Notifier: ObservableObject {
-    @Published var message: String?
-    @Published var isError = false
-}
-
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = StackSnapshot()
-    @Published var printer: PrinterStatus?
-    @Published var serialPorts: [SerialPort] = []
     @Published var presetNames: [String] = []
+    @Published var serialPorts: [SerialPort] = []
+    @Published var currentSerial: String?
     @Published var busy = false
-
-    // Monitoring dashboard state.
-    @Published var tempHistory: [TempSample] = []
-    @Published var gcodeLog: [GcodeLine] = []
-    @Published var webcam: WebcamInfo?
-    @Published var etaSeconds: Double?
-
-    let notifier = Notifier()
 
     // streaming sheet (setup / update --apply)
     @Published var showSheet = false
@@ -35,13 +19,9 @@ final class AppModel: ObservableObject {
 
     let env = KEnvironment.shared
     private var timer: Timer?
-    private var clearTask: Task<Void, Never>?
     private var refreshInFlight = false
     private var observingActive = false
     private var ticks = 0
-    private var filamentObjects: [String] = []
-    private var estimatedFor: String?
-    private var estimatedTotal: Double?
 
     func bootstrap() async {
         await refresh()
@@ -88,134 +68,25 @@ final class AppModel: ObservableObject {
         ticks += 1
         let scanPresets = presetNames.isEmpty || ticks % 5 == 1
         // All filesystem/process work off the main thread — never block UI.
-        let (snap, serials, presets) = await Task.detached(priority: .utility) {
+        let (snap, presets, serials, cfgSerial) = await Task.detached(priority: .utility) {
             (StackReader.readSync(env: env),
-             SerialScanner.scan(),
-             scanPresets ? env.presetNames() : nil)
+             scanPresets ? env.presetNames() : nil,
+             scanPresets ? SerialScanner.scan() : nil,
+             env.currentSerialPath())
         }.value
-        if snap.anyUp && (filamentObjects.isEmpty || webcam == nil || ticks % 15 == 1) {
-            rescanMonitorConfig()
-        }
-        let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort,
-                                                          filamentObjects: filamentObjects) : nil
         if !busy { // don't churn while a command owns the screen
             // Assign only on change: every @Published write re-renders the whole
             // view tree, and most 2s polls change nothing.
             if snap != snapshot { snapshot = snap }
-            if printer != self.printer { self.printer = printer }
-            if serials != serialPorts { serialPorts = serials }
-            if snap.anyUp { sampleMonitor(printer) }
-            else if !tempHistory.isEmpty { tempHistory = [] ; etaSeconds = nil }
         }
         if let presets, presets != presetNames { presetNames = presets }
-    }
-
-    /// Dashboard-only collection: temperature sampling, ETA, console, camera.
-    /// Called once per poll while the stack is up.
-    private func sampleMonitor(_ printer: PrinterStatus?) {
-        if printer == nil {
-            if !tempHistory.isEmpty { tempHistory = [] }
-            etaSeconds = nil
-            return
-        }
-        let now = Date().timeIntervalSince1970
-        if let h = printer?.hotend {
-            let sample = TempSample(time: now, hotend: h.temp, hotendTarget: h.target,
-                                    bed: printer?.bed?.temp ?? 0,
-                                    bedTarget: printer?.bed?.target ?? 0)
-            tempHistory.append(sample)
-            if tempHistory.count > 150 { tempHistory.removeFirst(tempHistory.count - 150) }
-        }
-        etaSeconds = computeEta(printer!)
-
-        Task { @MainActor in
-            let store = await Moonraker.gcodeStore(port: env.moonrakerPort)
-            if !store.isEmpty { self.mergeStore(store) }
-        }
-    }
-
-    /// Live extrapolation while printing beats the slice estimate; the
-    /// estimate covers the first seconds when too little has elapsed.
-    private func computeEta(_ p: PrinterStatus) -> Double? {
-        guard p.printState == "printing" || p.printState == "paused",
-              let prog = p.progress else { return nil }
-        if let d = p.printDuration, d > 30, prog > 0.02 {
-            return d / prog * (1 - prog)
-        }
-        if let file = p.filename, !file.isEmpty {
-            if file != estimatedFor {
-                estimatedFor = file
-                estimatedTotal = nil
-                Task { @MainActor in
-                    let est = await Moonraker.estimatedTime(filename: file,
-                                                            port: env.moonrakerPort)
-                    if self.estimatedFor == file {
-                        self.estimatedTotal = est
-                        self.etaSeconds = self.computeEta(self.printer ?? p)
-                    }
-                }
-            }
-            if let total = estimatedTotal { return total * (1 - prog) }
-        }
-        return nil
-    }
-
-    /// Store rows are authoritative; locally echoed commands survive until the
-    /// store repeats them (Moonraker logs received commands).
-    private func mergeStore(_ lines: [GcodeLine]) {
-        var merged = lines
-        for echo in gcodeLog where echo.echoed {
-            if !lines.contains(where: { $0.message.contains(echo.message) }) {
-                merged.append(echo)
-            }
-        }
-        merged.sort { $0.time < $1.time }
-        if merged != gcodeLog { gcodeLog = merged }
-    }
-
-    func sendGcode(_ command: String) async {
-        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cmd.isEmpty else { return }
-        let echo = GcodeLine(time: Date().timeIntervalSince1970 + 0.001,
-                             message: cmd, echoed: true)
-        gcodeLog.append(echo)
-        if await Moonraker.sendGcode(cmd, port: env.moonrakerPort) {
-            mergeStore(await Moonraker.gcodeStore(port: env.moonrakerPort))
-        } else {
-            note("Could not reach Moonraker.", error: true)
-        }
-    }
-
-    /// Sensor names and camera config change rarely — rescan every ~30s.
-    private func rescanMonitorConfig() {
-        Task { @MainActor in
-            let objs = await Moonraker.filamentObjects(port: env.moonrakerPort)
-            if objs != self.filamentObjects { self.filamentObjects = objs }
-            let cams = await Moonraker.webcams(port: env.moonrakerPort)
-            let cam = cams.first
-            if cam != self.webcam { self.webcam = cam }
-        }
-    }
-
-    private func say(_ text: String, error: Bool = false) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        notifier.message = trimmed.isEmpty ? nil : String(trimmed.prefix(400))
-        notifier.isError = error
-        clearTask?.cancel()
-        clearTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 9_000_000_000)
-            if !Task.isCancelled { self?.notifier.message = nil }
-        }
-    }
-
-    /// Toasts raised from the views. Going through `say` rather than assigning
-    /// `notifier.message` directly is what makes them auto-clear.
-    func note(_ text: String, error: Bool = false) {
-        say(text, error: error)
+        if let serials, serials != serialPorts { serialPorts = serials }
+        if cfgSerial != currentSerial { currentSerial = cfgSerial }
     }
 
     // MARK: - CLI-backed actions
 
+    /// Stack actions run silently — the cards on the page are the feedback.
     @discardableResult
     func cli(_ args: [String]) async -> Bool {
         busy = true
@@ -223,17 +94,9 @@ final class AppModel: ObservableObject {
         defer { busy = false }
         do {
             let r = try await CLIRunner.shared.run(args)
-            if r.exit == 0 {
-                say(r.output)
-            } else {
-                say(r.output.isEmpty ? "klipperformac \(args.first ?? "") failed (exit \(r.exit))"
-                                     : r.output, error: true)
-            }
             await refresh()
             return r.exit == 0
         } catch {
-            say("Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh",
-                error: true)
             return false
         }
     }
@@ -243,39 +106,20 @@ final class AppModel: ObservableObject {
     func restartStack() async { _ = await cli(["restart"]) }
     func killAll() async { _ = await cli(["killall"]) }
 
-    /// LAN toggle: no big banner on success — the section itself shows the
-    /// state and the "restart to apply" hint. Errors still surface.
+    /// LAN toggle: the card itself shows the state and the "restart to
+    /// apply" hint — no banner.
     func setLAN(_ on: Bool) async {
         busy = true
         env.invalidateCaches()
         defer { busy = false }
-        do {
-            let r = try await CLIRunner.shared.run(["lan", on ? "on" : "off"])
-            if r.exit != 0 {
-                say(r.output.isEmpty ? "Could not change LAN access." : r.output, error: true)
-            }
-            await refresh()
-        } catch {
-            say("Klipper CLI not found.", error: true)
-        }
+        _ = try? await CLIRunner.shared.run(["lan", on ? "on" : "off"])
+        await refresh()
     }
-    func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"]) }
-    func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path]) }
-    func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name]) }
-    func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path]) }
 
-    func pausePrint() async {
-        if await Moonraker.post("/printer/print/pause", port: env.moonrakerPort) { say("pause sent") }
-        await refresh()
-    }
-    func resumePrint() async {
-        if await Moonraker.post("/printer/print/resume", port: env.moonrakerPort) { say("resume sent") }
-        await refresh()
-    }
-    func cancelPrint() async {
-        if await Moonraker.post("/printer/print/cancel", port: env.moonrakerPort) { say("print cancelled") }
-        await refresh()
-    }
+    func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"]) }
+    func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name]) }
+    func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path]) }
+    func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path]) }
 
     func checkUpdates() async {
         busy = true
@@ -294,10 +138,7 @@ final class AppModel: ObservableObject {
     }
 
     func applyUpdates() async {
-        if snapshot.anyUp {
-            say("Stop the stack before applying updates.", error: true)
-            return
-        }
+        guard !snapshot.anyUp else { return } // button is disabled while running
         await stream(["update", "--apply"], title: "Applying updates")
         await refresh()
     }
@@ -341,15 +182,5 @@ final class AppModel: ObservableObject {
 
     func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    func copyToPasteboard(_ s: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(s, forType: .string)
-    }
-
-    func copyURL(_ s: String) {
-        copyToPasteboard(s)
-        say("Copied \(s)")
     }
 }

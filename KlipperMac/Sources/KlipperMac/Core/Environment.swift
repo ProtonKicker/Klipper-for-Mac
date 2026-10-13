@@ -143,6 +143,21 @@ final class KEnvironment {
     var config: URL { data.appendingPathComponent("config") }
     var presetsDir: URL { config.appendingPathComponent("presets") }
     var printerCfg: URL { config.appendingPathComponent("printer.cfg") }
+
+    /// The `[mcu] serial:` line currently written in printer.cfg, if any.
+    func currentSerialPath() -> String? {
+        guard let text = try? String(contentsOf: printerCfg, encoding: .utf8) else { return nil }
+        var inMcu = false
+        for line in text.split(separator: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("[") { inMcu = t.hasPrefix("[mcu]"); continue }
+            if inMcu, t.hasPrefix("serial:") {
+                let v = t.dropFirst("serial:".count).trimmingCharacters(in: .whitespaces)
+                return (v.isEmpty || v.hasPrefix("#")) ? nil : v
+            }
+        }
+        return nil
+    }
     var run: URL { data.appendingPathComponent("run") }
     var state: URL { run.appendingPathComponent("state.json") }
     var logs: URL { data.appendingPathComponent("logs") }

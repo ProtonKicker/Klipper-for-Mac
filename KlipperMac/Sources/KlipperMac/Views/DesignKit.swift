@@ -53,7 +53,7 @@ struct GlassCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) { content() }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(16)
             .background(Skin.card)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -130,8 +130,7 @@ struct AppleButton: ButtonStyle {
 }
 
 /// Round icon-only button for the header chrome.
-struct IconButton: View {
-    let symbol: String
+struct IconButton: View {    let symbol: String
     var help: String? = nil
     var tint: Color? = nil
     let action: () -> Void
@@ -152,6 +151,15 @@ struct IconButton: View {
 }
 
 // MARK: - type
+
+/// 1px separator inside cards.
+struct Hairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Skin.hairlineSoft)
+            .frame(height: 1)
+    }
+}
 
 enum AppInfo {
     static var version: String {
@@ -176,9 +184,12 @@ struct MicroLabel: View {
             .font(.system(size: 10, weight: .semibold))
             .tracking(0.9)
             .foregroundStyle(Skin.inkMuted)
+            .fixedSize()
     }
 }
 
+/// Quiet inline status: a small dot and a gray word beside the title.
+/// No capsule, no tinted fill — the hue is a whisper, the word carries it.
 struct StatusPill: View {
     let overall: StackSnapshot.Overall
     var body: some View {
@@ -187,46 +198,10 @@ struct StatusPill: View {
         let text = overall == .running ? "Running"
             : (overall == .notResponding ? "Not responding" : "Stopped")
         HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text).font(.system(size: 11.5, weight: .medium))
-        }
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(Skin.tint(color)))
-        .overlay(Capsule().strokeBorder(Skin.tint(color, 0.35), lineWidth: 1))
-    }
-}
-
-// MARK: - toast
-
-/// Transient frosted capsule — the only glass surface besides the window
-/// chrome itself.
-struct Toast: View {
-    @ObservedObject var notifier: Notifier
-
-    var body: some View {
-        if let m = notifier.message {
-            HStack(spacing: 6) {
-                Image(systemName: notifier.isError
-                      ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(notifier.isError ? Skin.alert : Skin.ok)
-                Text(m.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Skin.ink)
-                    .lineLimit(2)
-                Button { notifier.message = nil } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(Skin.inkMuted)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Skin.hairline, lineWidth: 1))
-            .shadow(color: Skin.shadowSoft, radius: 8, y: 3)
-            .padding(16)
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Skin.inkSecondary)
         }
     }
 }
