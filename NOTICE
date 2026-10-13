@@ -1,7 +1,8 @@
 Third-party notices
 ===================
 
-MaKlipper does not copy, fork, or redistribute upstream source code. At
+Klipper for Mac (klipperformac) does not copy, fork, or redistribute upstream
+source code. At
 install time it clones the following projects, unmodified, from their
 official repositories; they remain under their own licenses:
 
@@ -12,7 +13,7 @@ official repositories; they remain under their own licenses:
 
 Runtime dependencies installed by the user or package managers (e.g.
 libsodium — ISC license — via Homebrew; CPython — PSF license) are not
-bundled by MaKlipper.
+bundled by Klipper for Mac.
 
 The two compatibility headers under klipperformac/compat/include/ are original
 small files (about 20-40 lines each) authored for this project. Their struct
