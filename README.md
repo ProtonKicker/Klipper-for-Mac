@@ -1,12 +1,11 @@
 # Klipper for Mac
 
 Run [Klipper](https://www.klipper3d.org) on any Mac — Intel or Apple Silicon —
-like it were the Raspberry Pi. Plug your printer board into USB, and the Mac
-becomes the host. No Linux VM, no SD card, no fork: Klipper, Moonraker, Mainsail
-and Fluidd are downloaded **pristine from upstream** at pinned versions. macOS
-support comes entirely from two small compatibility headers injected at compile
-time; upstream files are never edited (`klipperformac doctor` proves it with
-`git status`).
+like it were the Raspberry Pi: plug your printer board into USB and the Mac
+becomes the host. No Linux VM, no SD card, no fork — Klipper, Moonraker,
+Mainsail and Fluidd are **pristine upstream** at pinned versions. macOS support
+lives entirely in small compatibility shims injected at compile time; upstream
+files are never edited (`klipperformac doctor` proves it with `git status`).
 
 ![alt text]( https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/cli%20-%20oct%203%202026.png )
 
@@ -21,127 +20,89 @@ klipperformac serial --auto  # plug in the printer board first
 klipperformac up             # start everything, keep the Mac awake
 ```
 
-Open **http://localhost:8081** for the Fluidd dashboard (Mainsail is on :8080).
-Just type `klipperformac` alone for the interactive control panel.
+Fluidd dashboard: **http://localhost:8081** (Mainsail :8080). Bare
+`klipperformac` opens the interactive TUI.
 
 Requirements: Xcode Command Line Tools (`xcode-select --install`),
-Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
+Python ≥ 3.10, libsodium (`brew install python@3.12 libsodium`).
+
+`printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
+with your printer's real config (`klipperformac presets` can import one).
 
 ## GUI app
 
-A native SwiftUI app wraps the same CLI — same data folder, same running stack.
-Install the CLI first, then grab the GUI: it's distributed as a plain `.zip`,
-Chrome-style — unzip and drag **Klipper for Mac.app** into your Applications
-folder. Download it from the [Releases page](https://github.com/ProtonKicker/Klipper-for-Mac/releases).
+A native SwiftUI app wrapping the same CLI — same data folder, same running
+stack. Install the CLI first, then get the GUI from
+[Releases](https://github.com/ProtonKicker/Klipper-for-Mac/releases): unzip
+`Klipper-for-Mac.zip` and drag **Klipper for Mac.app** into Applications,
+Chrome-style. It's ad-hoc signed (notarization planned), so right-click →
+**Open** works around the first-launch warning. The CLI installer never
+downloads or builds the GUI — they're fully separate.
 
-The app is ad-hoc signed (not yet notarized), so on **first launch only**
-macOS will claim the developer can't be verified — right-click the app →
-**Open** → Open to get past it.
-
-Prefer building from source? `KlipperMac/build-app.sh` produces the same
-universal `.app` with Command Line Tools only (no Xcode needed); pass
-`KLIPPERFORMAC_ZIP=1` to also emit the distributable zip. (You need a full
-clone for that — the CLI installer's checkout deliberately excludes the GUI
-sources.) A prebuilt `KlipperMac/dist/Klipper-for-Mac.zip` is also committed
-in the repo as a fallback.
-
-The `.zip` is the GUI's only distribution channel — the CLI installer one-liner
-never downloads or builds the GUI; the two stay fully separate.
+Building from source (full clone needed): `KlipperMac/build-app.sh`, Command
+Line Tools only; `KLIPPERFORMAC_ZIP=1` also emits the zip. A prebuilt zip is
+committed at `KlipperMac/dist/` as a fallback.
 
 ![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
 
-## Slicing in Orca Slicer
+## Orca Slicer
 
-Orca can slice on the Mac and send jobs straight to the printer, with live
-progress in the slicer panel. In Orca (≥ 2.3), under **Prepare → device
-selector → + (Add Printer)**:
-
-- **Printer type / connection:** `Moonraker (Klipper)`
-- **Host:** `http://localhost:7125` — the Moonraker API port, *not* the
-  dashboard ports (:8080 Mainsail / :8081 Fluidd)
-- **Name:** anything, e.g. "Klipper on this Mac"
-
-`localhost` is already in Moonraker's trusted clients, so no key or login is
-needed. By default the stack only listens on this Mac; to slice from another
-computer, turn on LAN access first (see below) and use
-`http://<Mac's LAN IP>:7125` as the host. Uploads, start/pause/cancel and the
-progress tab then work exactly as they do against a Raspberry Pi host.
+Slice on the Mac and send jobs straight to the printer. In Orca (≥ 2.3),
+**Prepare → Add Printer**: type `Moonraker (Klipper)`, host
+`http://localhost:7125` — the API port, *not* the dashboard ports
+(:8080/:8081). No key needed; `localhost` is already trusted. From another
+computer, turn on LAN access below and use `http://<Mac's LAN IP>:7125`.
+Uploads, start/pause/cancel and progress work as against a Pi host.
 
 ## Access from other devices
 
 ```sh
-klipperformac lan on     # or `lan off` to lock back down; status with bare `lan`
-klipperformac restart    # applies the new bind addresses
+klipperformac lan on && klipperformac restart   # prints the LAN URLs; `lan off` locks back to localhost
 ```
 
-With LAN access on, the command prints the URLs to use from other devices —
-dashboards (`http://192.168.x.x:8080/8081`) and the Moonraker API
-(`:7125`, e.g. for Orca Slicer on another computer). The TUI shows the same
-addresses on its home screen; `lan off` returns everything to
-localhost-only.
-
-Tradeoff: Moonraker trusts private network ranges (192.168.0.0/16, 10.0.0.0/8,
-172.16.0.0/12) without passwords, so anyone on your local network can control
-the printer. Fine on home Wi-Fi — turn it off before joining a café or campus
-network.
+Dashboards at `http://192.168.x.x:8080/8081`, API at `:7125`; the TUI shows
+the same addresses. Tradeoff: Moonraker trusts private network ranges
+password-free, so anyone on your LAN can control the printer — fine at home,
+off at the café.
 
 ## Commands
 
-Run `klipperformac` with no arguments for the TUI; these are the CLI equivalents.
+`klipperformac` with no arguments is the TUI; these are the CLI equivalents.
 
 | command | what it does |
 |---|---|
-| `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify everything compiles |
-| `up` / `down` / `restart` | start/stop the stack (with `caffeinate`, so sleep can't kill a print) |
-| `killall` | force-kill the whole stack plus stray leftovers (e.g. a Fluidd/Mainsail server still running after the CLI was closed) |
+| `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify |
+| `up` / `down` / `restart` | start/stop the stack (`caffeinate` keeps Mac awake) |
+| `killall` | force-kill the stack plus stray leftovers |
 | `status` | service state, pinned versions, available updates |
-| `lan [on\|off]` | show/toggle access for other devices on your network |
-| `serial` | list USB serial devices; `--auto` / `--set PATH` writes `[mcu] serial:` into printer.cfg |
-| `data` | show the data folder; `--set PATH` moves everything there and fixes config paths |
-| `presets` | manage config presets (`--save/--use/--import`, auto-backup) |
+| `lan [on\|off]` | show/toggle access for other devices |
+| `serial` | list USB serials; `--auto`/`--set PATH` writes `[mcu] serial:` into printer.cfg |
+| `data` | show data folder; `--set PATH` moves everything there |
+| `presets` | config presets (`--save/--use/--import`, auto-backup) |
 | `ui [fluidd\|mainsail]` | switch the default dashboard and open it |
-| `gcode …` / `gcode --status` | send G-code / query printer state from the terminal |
+| `gcode …` / `--status` | send G-code / query printer state |
 | `logs [klipper\|moonraker] [-f]` | tail logs |
-| `update` | check upstream; `--apply` re-fetches pinned tags and rebuilds (never automatic) |
-| `doctor` / `selftest` | environment checks / end-to-end link checks |
-| `uninstall` | remove the app; asks in the terminal whether the data folder should be deleted too (`--data` / `--keep-data` to pre-answer) |
+| `update [--apply]` | check upstream; re-fetch pinned tags and rebuild (never automatic) |
+| `doctor` / `selftest` | environment / end-to-end link checks |
+| `uninstall` | remove everything; asks before deleting the data folder (`--data`/`--keep-data`) |
 
 ## Where things live
 
 - `~/Documents/Klipper for Mac/` — **your files**: configs, presets, g-codes,
   logs, web UIs (`klipperformac data --set PATH` to move it).
-  Delete `~/.klipperformac/` (app internals: checkouts, venv) to factory-reset —
-  your data survives. Everything binds to localhost only.
-
-## Uninstall
-
-```sh
-klipperformac uninstall
-```
-
-One line removes everything the installer added: stops the stack, deletes the
-`klipperformac` launcher symlink, and removes `~/.klipperformac/` (sources,
-venv, upstream checkouts, web UIs). It then asks in the terminal whether your
-data folder — the default `~/Documents/Klipper for Mac/` or wherever you moved
-it with `klipperformac data --set` — should be deleted too. Answering `n`
-(the default) keeps it. For unattended use, `--data` deletes the data folder
-without asking and `--keep-data` never does.
-
-`printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it with
-your printer's real config (`klipperformac presets` can import one).
+- `~/.klipperformac/` — app internals (checkouts, venv); deleting it
+  factory-resets while your data survives. `uninstall` removes both, asking
+  first about the data folder.
 
 ## How it works
 
 Klipper's host is nearly portable C + Python already; on macOS only two system
-headers it expects (`<linux/can.h>`, `<sys/prctl.h>`) are missing. Klipper for Mac
-ships two ~20-line stubs and sets `CPATH` so the compiler finds them first.
-At run time the venv it creates carries a tiny generated `sitecustomize.py`
-(Linux-only clock constants Moonraker touches) and an `ip` shim on Moonraker's
-PATH, so Mainsail's boot sequence completes and network stats work — without
-editing a single upstream file. Timing is comfortable: Klipper allows hundreds
-of milliseconds of host latency, and macOS delivers sub-millisecond timer
-precision. The one rule: **the Mac must stay awake while printing** — `up`
-runs `caffeinate` for you; keep it on AC.
+headers (`<linux/can.h>`, `<sys/prctl.h>`) are missing — this project ships
+~20-line stubs via `CPATH`, plus a tiny `sitecustomize.py` and `ip` shim in the
+venv so Moonraker/Mainsail run unmodified. Timing is comfortable: Klipper
+tolerates hundreds of ms of host latency; macOS delivers sub-millisecond.
+The one rule: **the Mac must stay awake while printing** — `up` runs
+`caffeinate` for you; keep it on AC.
 
 ## Limitations
 
@@ -149,11 +110,10 @@ runs `caffeinate` for you; keep it on AC.
   bugs still go upstream.
 - `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
 - No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
-- `.app` GUI is ad-hoc signed and needs right-click → Open on first launch;
-  notarized one-click distribution still planned.
+- `.app` GUI is ad-hoc signed; right-click → Open on first launch.
 
 ## License
 
-Klipper for Mac: MIT. Upstream components remain unmodified under their own licenses
-(Klipper/Moonraker/Mainsail/Fluidd: GPLv3 — see [NOTICE](NOTICE)).
+Klipper for Mac: MIT. Upstream components remain unmodified under their own
+licenses (Klipper/Moonraker/Mainsail/Fluidd: GPLv3 — see [NOTICE](NOTICE)).
 Not affiliated with the Klipper project.
