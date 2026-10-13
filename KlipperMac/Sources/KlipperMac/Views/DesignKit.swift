@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// The whole visual language of the app lives here: light-only surfaces, one
-/// blue accent, hairlines instead of borders, and two featherweight shadows.
-/// Literal RGB exists nowhere else.
+/// The whole visual language of the app lives here: a flat white page,
+/// hairline-divided tables, pastel property chips, one Notion blue.
+/// No cards, no shadows, no gradients. Literal RGB exists nowhere else.
 enum Skin {
     private static func hex(_ rgb: UInt32, _ a: Double = 1) -> Color {
         Color(.sRGB, red: Double((rgb >> 16) & 0xFF) / 255.0,
@@ -11,71 +11,170 @@ enum Skin {
               blue: Double(rgb & 0xFF) / 255.0, opacity: a)
     }
 
-    // surfaces
-    static let washTop = hex(0xF8F7F4)
-    static let washBottom = hex(0xF0F0EE)
-    static let card = Color.white
-    static let well = hex(0xF5F4F1)          // recessed insets (console, inputs)
-    static let hairline = Color.black.opacity(0.06)
-    static let hairlineSoft = Color.black.opacity(0.04)
-    static let specular = Color.white.opacity(0.75)
-    static let shadowSoft = Color.black.opacity(0.04)
-    static let shadowLift = Color.black.opacity(0.03)
-    static let trackFill = Color.black.opacity(0.05)
-    static let gridLine = Color.black.opacity(0.05)
+    // surfaces — the page IS the surface
+    static let page = Color.white
+    static let well = hex(0xF7F6F3)           // recessed insets (log blocks)
+    static let rowHover = Color.black.opacity(0.025)
+    static let tableLine = hex(0xE7E6E4)      // hairline row/column dividers
+    static let trackFill = Color.black.opacity(0.08)
 
     // text
-    static let ink = hex(0x1D1C1A)
-    static let inkSecondary = hex(0x6E6A66)
-    static let inkMuted = hex(0xA39E98)
+    static let ink = hex(0x191919)
+    static let inkSecondary = hex(0x6B6A68)
+    static let inkMuted = hex(0x9B9A97)
 
     // the one accent
-    static let accent = hex(0x0071E3)
-    static let accentHover = hex(0x0058B8)
-    static let accentFill = hex(0xEAF3FD)
+    static let accent = hex(0x2383E2)
+    static let accentHover = hex(0x1A6FC0)
     static let onAccent = Color.white
 
-    // semantic status — dots and tints only, never whole surfaces
-    static let ok = Color(.systemGreen)
-    static let alert = Color(.systemRed)
-    static let warn = Color(.systemOrange)
-
-    static func tint(_ c: Color, _ a: Double = 0.12) -> Color { c.opacity(a) }
+    // Notion property-chip palette — pastel fill, same-hue dark ink
+    static let chipGrayBG = hex(0xF1F1EF)
+    static let chipGrayInk = hex(0x757370)
+    static let chipGreenBG = hex(0xDFEFE3)
+    static let chipGreenInk = hex(0x33604A)
+    static let chipBlueBG = hex(0xDCEBFA)
+    static let chipBlueInk = hex(0x2A5B85)
+    static let chipYellowBG = hex(0xFAEFD2)
+    static let chipYellowInk = hex(0x8A651F)
+    static let chipRedBG = hex(0xFBE3E0)
+    static let chipRedInk = hex(0x9E3B31)
 }
 
-// MARK: - card
+// MARK: - chip
 
-/// A solid white card floating on the wash: hairline edge, a faint specular
-/// line along the top edge, two soft shadows. Content sits on cards; cards
-/// sit on the page — never cards on cards.
-struct GlassCard<Content: View>: View {
+/// A pastel property tag — Notion's status vocabulary.
+struct Chip: View {
+    let text: String
+    let bg: Color
+    let ink: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(ink)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 4).fill(bg))
+            .fixedSize()
+    }
+}
+
+/// Stack status as a chip pair: word + hue.
+struct StatusChip: View {
+    let overall: StackSnapshot.Overall
+    var body: some View {
+        switch overall {
+        case .running: Chip(text: "Running", bg: Skin.chipGreenBG, ink: Skin.chipGreenInk)
+        case .notResponding: Chip(text: "Not responding", bg: Skin.chipRedBG, ink: Skin.chipRedInk)
+        case .stopped: Chip(text: "Stopped", bg: Skin.chipGrayBG, ink: Skin.chipGrayInk)
+        }
+    }
+}
+
+// MARK: - table
+
+/// A database block: gray icon+title header, then hairline-divided rows.
+struct NotionSection<Accessory: View, Content: View>: View {
+    let title: String
+    let symbol: String
+    @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content() }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(16)
-            .background(Skin.card)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Skin.hairline, lineWidth: 1))
-            .overlay(alignment: .top) {
-                LinearGradient(colors: [.clear, Skin.specular, .clear],
-                               startPoint: .leading, endPoint: .trailing)
-                    .frame(height: 1)
-                    .padding(.horizontal, 30)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Skin.inkMuted)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Skin.inkSecondary)
+                    .fixedSize()
+                Spacer(minLength: 8)
+                accessory()
             }
-            .shadow(color: Skin.shadowSoft, radius: 3, y: 1)
-            .shadow(color: Skin.shadowLift, radius: 14, y: 6)
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            VStack(spacing: 0) { content() }
+        }
+    }
+}
+
+extension NotionSection where Accessory == EmptyView {
+    init(title: String, symbol: String,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(title: title, symbol: symbol,
+                  accessory: { EmptyView() }, content: content)
+    }
+}
+
+/// One table row: leading glyph, title, a vertical property divider,
+/// then the property cell. Full row highlights on hover.
+struct TRow<Trailing: View>: View {
+    let symbol: String
+    let title: String
+    var propertyWidth: CGFloat = 150
+    @ViewBuilder var trailing: () -> Trailing
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(Skin.inkMuted)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Skin.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 12)
+            Rectangle()
+                .fill(Skin.tableLine)
+                .frame(width: 1)
+            HStack(spacing: 8) { trailing() }
+                .frame(width: propertyWidth, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
+        .background(hovering ? Skin.rowHover : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A plain full-width row (no property column) for notes and empty states.
+struct TInfoRow: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(Skin.inkMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 12)
+    }
+}
+
+struct TableDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Skin.tableLine)
+            .frame(height: 1)
+            .padding(.horizontal, 8)
     }
 }
 
 // MARK: - controls
 
-enum AppleButtonVariant { case bordered, filled, danger }
+enum NButtonVariant { case gray, blue, red }
 
-struct AppleButton: ButtonStyle {
-    var variant: AppleButtonVariant = .bordered
+/// Notion's button: flat, radius 6, no border, subtle hover darkening.
+struct NotionButton: ButtonStyle {
+    var variant: NButtonVariant = .gray
     var small = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -85,7 +184,7 @@ struct AppleButton: ButtonStyle {
     private struct Styled: View {
         @Environment(\.isEnabled) private var isEnabled
         let configuration: Configuration
-        let variant: AppleButtonVariant
+        let variant: NButtonVariant
         let small: Bool
         @State private var hovering = false
 
@@ -93,73 +192,68 @@ struct AppleButton: ButtonStyle {
             configuration.label
                 .font(.system(size: small ? 12 : 13, weight: .medium))
                 .foregroundStyle(fg)
-                .padding(.horizontal, small ? 10 : 14)
-                .frame(height: small ? 26 : 30)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(bg))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(border, lineWidth: 1))
+                .padding(.horizontal, small ? 9 : 12)
+                .frame(height: small ? 24 : 28)
+                .background(RoundedRectangle(cornerRadius: 5).fill(bg))
                 .scaleEffect(configuration.isPressed ? 0.98 : 1)
                 .opacity(isEnabled ? 1 : 0.4)
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 5))
                 .onHover { hovering = $0 }
-                .animation(.easeOut(duration: 0.15), value: hovering)
+                .animation(.easeOut(duration: 0.12), value: hovering)
         }
 
         private var fg: Color {
             switch variant {
-            case .bordered: return Skin.ink
-            case .filled: return Skin.onAccent
-            case .danger: return Skin.alert
+            case .gray: return Skin.ink
+            case .blue: return Skin.onAccent
+            case .red: return Skin.chipRedInk
             }
         }
         private var bg: Color {
             switch variant {
-            case .bordered: return hovering ? Skin.well : Skin.card
-            case .filled: return hovering ? Skin.accentHover : Skin.accent
-            case .danger: return hovering ? Skin.tint(Skin.alert, 0.07) : Skin.card
+            case .gray: return hovering ? hex(0xE8E7E5) : hex(0xF1F1EF)
+            case .blue: return hovering ? Skin.accentHover : Skin.accent
+            case .red: return hovering ? hex(0xF8D5D1) : Skin.chipRedBG
             }
         }
-        private var border: Color {
-            switch variant {
-            case .bordered: return Skin.hairline
-            case .filled: return bg
-            case .danger: return Skin.tint(Skin.alert, 0.3)
-            }
+        private func hex(_ rgb: UInt32) -> Color {
+            Color(.sRGB, red: Double((rgb >> 16) & 0xFF) / 255.0,
+                  green: Double((rgb >> 8) & 0xFF) / 255.0,
+                  blue: Double(rgb & 0xFF) / 255.0)
         }
     }
 }
 
-/// Round icon-only button for the header chrome.
-struct IconButton: View {    let symbol: String
-    var help: String? = nil
-    var tint: Color? = nil
+/// Bare gray text button — Notion's inline affordance ("Move", "Reveal").
+struct TextButton: View {
+    let text: String
+    var enabled: Bool = true
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
+            Text(text)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(tint ?? Skin.inkSecondary)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(Skin.card))
-                .overlay(Circle().strokeBorder(Skin.hairline, lineWidth: 1))
-                .shadow(color: Skin.shadowSoft, radius: 2, y: 1)
+                .foregroundStyle(hovering ? Skin.ink : Skin.inkSecondary)
+                .background(hovering ? Skin.hexRowHover : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 4))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help ?? symbol)
+        .onHover { hovering = $0 }
+        .opacity(enabled ? 1 : 0.4)
+        .disabled(!enabled)
     }
+}
+
+extension Skin {
+    static let hexRowHover = Color.black.opacity(0.05)
 }
 
 // MARK: - type
-
-/// 1px separator inside cards.
-struct Hairline: View {
-    var body: some View {
-        Rectangle()
-            .fill(Skin.hairlineSoft)
-            .frame(height: 1)
-    }
-}
 
 enum AppInfo {
     static var version: String {
@@ -175,50 +269,3 @@ extension Font {
     }
 }
 
-/// Uppercase micro label — the only "heading" a card gets.
-struct MicroLabel: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-    var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.9)
-            .foregroundStyle(Skin.inkMuted)
-            .fixedSize()
-    }
-}
-
-/// Quiet inline status: a small dot and a gray word beside the title.
-/// No capsule, no tinted fill — the hue is a whisper, the word carries it.
-struct StatusPill: View {
-    let overall: StackSnapshot.Overall
-    var body: some View {
-        let color: Color = overall == .running ? Skin.ok
-            : (overall == .notResponding ? Skin.alert : Skin.inkMuted)
-        let text = overall == .running ? "Running"
-            : (overall == .notResponding ? "Not responding" : "Stopped")
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 5, height: 5)
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Skin.inkSecondary)
-        }
-    }
-}
-
-// MARK: - formatting
-
-enum Fmt {
-    static func remaining(_ seconds: Double) -> String {
-        let m = Int((seconds / 60).rounded())
-        if m >= 60 { return "\(m / 60) hr \(m % 60) min" }
-        if m >= 1 { return "\(m) min" }
-        return "under a minute"
-    }
-
-    static func clock(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f.string(from: date)
-    }
-}

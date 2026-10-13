@@ -12,7 +12,7 @@ struct KlipperForMacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
-        .defaultSize(width: 980, height: 760)
+        .defaultSize(width: 1040, height: 620)
         .commands {
             CommandGroup(replacing: .help) {
                 Button("Klipper for Mac on GitHub") {

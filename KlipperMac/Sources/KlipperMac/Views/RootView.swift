@@ -1,29 +1,30 @@
 import SwiftUI
 
-/// The entire app: one page, no scrolling. Header chrome (title, status,
-/// stack controls), a bento grid that fills the window, and a slim footer.
+/// The entire app: one flat white page, no scrolling. A Notion-style page
+/// header (icon + large title + actions), then two columns of database
+/// blocks, and a slim footer.
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             header
+                .padding(.top, 14)
+                .padding(.bottom, 10)
             if model.env.installed {
-                bento
+                columns
             } else {
-                InstallCard(model: model)
+                InstallBlock(model: model)
             }
+            Spacer(minLength: 12)
             footer
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
-        .frame(minWidth: 940, minHeight: 640)
-        .background(
-            LinearGradient(colors: [Skin.washTop, Skin.washBottom],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-        )
+        .frame(maxWidth: 1000)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+        .padding(.bottom, 10)
+        .frame(minWidth: 1040, minHeight: 560)
+        .background(Skin.page.ignoresSafeArea())
         // ⌘R stays available without a visible button — the page polls anyway.
         .background(
             Button("") { Task { await model.refresh() } }
@@ -42,17 +43,17 @@ struct RootView: View {
         HStack(spacing: 12) {
             // clearance for the traffic lights (hidden title bar)
             Color.clear.frame(width: 56, height: 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Klipper for Mac")
-                    .font(.system(size: 24, weight: .bold))
-                    .kerning(-0.6)
-                    .foregroundStyle(Skin.ink)
-            }
-            StatusPill(overall: model.snapshot.overall)
-                .padding(.leading, 4)
+            Image(systemName: "printer.fill")
+                .font(.system(size: 24))
+                .foregroundStyle(Skin.accent)
+            Text("Klipper for Mac")
+                .font(.system(size: 28, weight: .bold))
+                .kerning(-0.8)
+                .foregroundStyle(Skin.ink)
+            StatusChip(overall: model.snapshot.overall)
+                .padding(.leading, 6)
             if model.busy {
-                ProgressView().controlSize(.small)
-                    .padding(.leading, 2)
+                ProgressView().controlSize(.mini)
             }
             Spacer(minLength: 16)
             controls
@@ -71,7 +72,7 @@ struct RootView: View {
                         Text("Stop")
                     }
                 }
-                .buttonStyle(AppleButton())
+                .buttonStyle(NotionButton())
                 .disabled(model.busy)
                 .keyboardShortcut("s", modifiers: .command)
             } else {
@@ -83,7 +84,7 @@ struct RootView: View {
                         Text("Start")
                     }
                 }
-                .buttonStyle(AppleButton(variant: .filled))
+                .buttonStyle(NotionButton(variant: .blue))
                 .disabled(model.busy || !model.env.installed)
                 .keyboardShortcut("s", modifiers: .command)
             }
@@ -92,8 +93,9 @@ struct RootView: View {
                 Task { await model.restartStack() }
             } label: {
                 Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(AppleButton())
+            .buttonStyle(NotionButton())
             .disabled(model.busy || !model.env.installed)
             .help("Restart the stack")
 
@@ -101,37 +103,35 @@ struct RootView: View {
                 Task { await model.killAll() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.octagon").font(.system(size: 11))
+                    Image(systemName: "exclamationmark.octagon.fill").font(.system(size: 11))
                     Text("Kill")
                 }
             }
-            .buttonStyle(AppleButton(variant: .danger))
+            .buttonStyle(NotionButton(variant: .red))
             .disabled(model.busy || !model.snapshot.tracked)
             .help("Force kill everything, including strays a normal stop would miss")
         }
     }
 
-    // MARK: bento
+    // MARK: columns
 
-    /// Two equal columns, cards hugging their content, the whole composition
-    /// centered on the wash — margin as breathing room, not leftover stretch.
-    private var bento: some View {
-        Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-            GridRow(alignment: .top) {
-                StackCard(model: model)
-                UpdatesCard(model: model)
+    /// Two Notion columns of database blocks — services on the left,
+    /// software and settings on the right.
+    private var columns: some View {
+        HStack(alignment: .top, spacing: 48) {
+            VStack(alignment: .leading, spacing: 28) {
+                StackTable(model: model)
+                PresetsTable(model: model)
             }
-            GridRow(alignment: .top) {
-                WebUICard(model: model)
-                NetworkCard(model: model)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 28) {
+                UpdatesTable(model: model)
+                PreferencesTable(model: model)
             }
-            GridRow(alignment: .top) {
-                PresetsCard(model: model)
-                DeviceCard(model: model)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: 880)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: footer
@@ -145,7 +145,7 @@ struct RootView: View {
             FooterLink(text: model.env.uiName == "mainsail" ? "Mainsail" : "Fluidd",
                        url: model.env.webURL, live: model.snapshot.anyUp, model: model)
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 8)
     }
 }
 
@@ -174,35 +174,34 @@ private struct FooterLink: View {
 
 // MARK: - first-run install
 
-struct InstallCard: View {
+struct InstallBlock: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        GlassCard {
-            VStack(spacing: 14) {
-                Image(systemName: "arrow.down.app")
-                    .font(.system(size: 34, weight: .thin))
-                    .foregroundStyle(Skin.accent)
-                Text("Install the Klipper stack")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Skin.ink)
-                Text("Fetches Klipper, Moonraker and the web UIs from GitHub.\nTakes a few minutes and needs internet.")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Skin.inkSecondary)
-                    .multilineTextAlignment(.center)
-                Button {
-                    Task { await model.runSetup() }
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "play.fill").font(.system(size: 10))
-                        Text(model.busy ? "Working…" : "Install")
-                    }
+        VStack(spacing: 14) {
+            Image(systemName: "printer")
+                .font(.system(size: 36))
+                .foregroundStyle(Skin.accent)
+            Text("Install the Klipper stack")
+                .font(.system(size: 20, weight: .bold))
+                .kerning(-0.4)
+                .foregroundStyle(Skin.ink)
+            Text("Fetches Klipper, Moonraker and the web UIs from GitHub.\nTakes a few minutes and needs internet.")
+                .font(.system(size: 13))
+                .foregroundStyle(Skin.inkSecondary)
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await model.runSetup() }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.fill").font(.system(size: 10))
+                    Text(model.busy ? "Working…" : "Install")
                 }
-                .buttonStyle(AppleButton(variant: .filled))
-                .disabled(model.busy)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .buttonStyle(NotionButton(variant: .blue))
+            .disabled(model.busy)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -235,9 +234,9 @@ struct StreamSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
                 }
-                .background(Skin.well, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Skin.hairline, lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 6).fill(Skin.well))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Skin.tableLine, lineWidth: 1))
                 .onChange(of: lines.count) { _ in
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo(max(lines.count - 1, 0), anchor: .bottom)
