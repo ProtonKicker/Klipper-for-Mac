@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 KlipperMac/.build/
-KlipperMac/dist/
+KlipperMac/dist/*
+!KlipperMac/dist/Klipper-for-Mac.zip
 .build/
 .DS_Store

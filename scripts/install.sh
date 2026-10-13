@@ -40,8 +40,12 @@ if [ -d "$SRC_DIR/.git" ]; then
     say "WARNING: checkout at $SRC_DIR is dirty/diverged; leaving as-is."
   fi
 else
-  say "cloning $REPO"
-  git clone --quiet "$REPO" "$SRC_DIR"
+  say "cloning $REPO (CLI files only; GUI sources are skipped)"
+  git clone --quiet --filter=blob:none --no-checkout "$REPO" "$SRC_DIR"
+  git -C "$SRC_DIR" sparse-checkout init --cone
+  git -C "$SRC_DIR" sparse-checkout set bin klipperformac scripts
+  git -C "$SRC_DIR" checkout --quiet main 2>/dev/null \
+    || git -C "$SRC_DIR" checkout --quiet master
 fi
 
 # Install the launcher.

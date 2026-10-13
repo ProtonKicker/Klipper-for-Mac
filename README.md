@@ -30,16 +30,25 @@ Python ≥ 3.10 and libsodium (`brew install python@3.12 libsodium`).
 ## GUI app
 
 A native SwiftUI app wraps the same CLI — same data folder, same running stack.
-Install the CLI first, then build and open the `.app` (Command Line Tools only,
-no Xcode needed):
+Install the CLI first, then grab the GUI: it's distributed as a plain `.zip`,
+Chrome-style — unzip and drag **Klipper for Mac.app** into your Applications
+folder. Download it from the [Releases page](https://github.com/ProtonKicker/Klipper-for-Mac/releases).
 
-```sh
-KlipperMac/build-app.sh && open "KlipperMac/dist/Klipper for Mac.app"
-```
+The app is ad-hoc signed (not yet notarized), so on **first launch only**
+macOS will claim the developer can't be verified — right-click the app →
+**Open** → Open to get past it.
+
+Prefer building from source? `KlipperMac/build-app.sh` produces the same
+universal `.app` with Command Line Tools only (no Xcode needed); pass
+`KLIPPERFORMAC_ZIP=1` to also emit the distributable zip. (You need a full
+clone for that — the CLI installer's checkout deliberately excludes the GUI
+sources.) A prebuilt `KlipperMac/dist/Klipper-for-Mac.zip` is also committed
+in the repo as a fallback.
+
+The `.zip` is the GUI's only distribution channel — the CLI installer one-liner
+never downloads or builds the GUI; the two stay fully separate.
 
 ![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
-
-The GUI isn't in the installer one-liner yet; the `.app` is built locally and ad-hoc signed.
 
 ## Slicing in Orca Slicer
 
@@ -140,7 +149,8 @@ runs `caffeinate` for you; keep it on AC.
   bugs still go upstream.
 - `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
 - No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
-- `.app` GUI is built locally and ad-hoc signed; notarized one-click `.app` still planned.
+- `.app` GUI is ad-hoc signed and needs right-click → Open on first launch;
+  notarized one-click distribution still planned.
 
 ## License
 

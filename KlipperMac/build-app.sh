@@ -41,4 +41,12 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 echo "==> ad-hoc codesign"
 codesign --force --sign - "$APP"
 
+if [ -n "${KLIPPERFORMAC_ZIP:-}" ]; then
+    echo "==> zipping"
+    ZIP="dist/Klipper-for-Mac.zip"
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP" "$ZIP"
+    echo "    zip: $ZIP"
+fi
+
 echo "done: $APP  (open it with: open $APP)"
