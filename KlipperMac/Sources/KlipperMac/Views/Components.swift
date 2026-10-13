@@ -1,43 +1,44 @@
 import SwiftUI
 
-/// Icon + title for a bordered button that lives in a grouped Form row.
-///
-/// A plain `Label` in that position is treated as a labelled row rather than as
-/// button content, and its title truncates even when the row has ~200pt of slack
-/// ("Install sta…", "GitH…"). An `HStack` is not, so buttons use this instead.
+/// Icon + title for a button label. An `HStack` (rather than a `Label`) is used
+/// because in some containers a `Label` is treated as a labelled row and its
+/// title truncates even when there is slack.
 struct ButtonLabel: View {
     let title: String
     let symbol: String
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 7) {
             Image(systemName: symbol)
             Text(title)
         }
     }
 }
 
-struct StatusBadge: View {
+/// Status pill: a dot and a word. Hue never carries the meaning alone —
+/// the word always states it, so the pill survives colour-blind viewing.
+struct StatusPill: View {
     let overall: StackSnapshot.Overall
 
     var body: some View {
-        let color: Color = overall == .running ? Tint.ok
-            : (overall == .notResponding ? Tint.attention : Tint.inkSecondary)
-        let glyph = overall == .running ? "checkmark.circle.fill"
-            : (overall == .notResponding ? "exclamationmark.triangle.fill" : "minus.circle.fill")
+        let color: Color = overall == .running ? Palette.green
+            : (overall == .notResponding ? Palette.red : Palette.textMuted)
         let text = overall == .running ? "Running"
             : (overall == .notResponding ? "Not responding" : "Stopped")
-        HStack(spacing: 5) {
-            Image(systemName: glyph)
-                .foregroundStyle(color)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
             Text(text)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(Tint.ink)
+                .font(.system(size: 12, weight: .medium))
+                .tracking(0.1)
         }
-        .padding(.horizontal, 12)
+        .foregroundStyle(color)
+        .padding(.leading, 9)
+        .padding(.trailing, 12)
         .padding(.vertical, 5)
-        .background(Capsule().fill(color.opacity(0.14)))
-        .overlay(Capsule().strokeBorder(color.opacity(0.5), lineWidth: 1))
+        .background(Capsule().fill(Palette.tintFill(color)))
+        .overlay(Capsule().strokeBorder(Palette.tintFillStrong(color), lineWidth: 1))
     }
 }
 
@@ -53,10 +54,10 @@ struct MessageBanner: View {
             HStack(spacing: 6) {
                 Image(systemName: notifier.isError
                       ? "xmark.octagon.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(notifier.isError ? Tint.down : Tint.ok)
+                    .foregroundStyle(notifier.isError ? Palette.red : Tint.ok)
                 Text(notifier.isError ? "Failed" : "Done")
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(Tint.ink)
+                    .foregroundStyle(Palette.textPrimary)
                 if notifier.isError {
                     Text(m.replacingOccurrences(of: "\n", with: " "))
                         .font(.callout)
@@ -76,38 +77,59 @@ struct MessageBanner: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+            .overlay(Capsule().strokeBorder(Palette.border, lineWidth: 1))
             .help(m)
             .padding(12)
-            // Sized to sit under the first column only, so a toast never covers the
-            // other columns' content.
-            .frame(maxWidth: 340, alignment: .leading)
+            // Matched to the card's width so the toast sits under the panel it reports on.
+            .frame(maxWidth: 620, alignment: .leading)
         }
     }
 }
 
-/// URL row — clicking copies the address to the clipboard. `model` is passed by
-/// reference on purpose: this view must not observe it, or every 2s poll would
+/// Mono URL chip — clicking copies the address to the clipboard. `model` is passed
+/// by reference on purpose: this view must not observe it, or every 2s poll would
 /// re-render every row on the page.
-struct CopyableURL: View {
+struct LinkChip: View {
     let model: AppModel
     let label: String
     let url: String
+    var systemImage: String? = nil
+    var dimmed = false
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "network")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Tint.network)
-            Text(label)
-            Spacer()
-            Button(url) {
-                model.copyURL(url)
+        Button {
+            model.copyURL(url)
+        } label: {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 11))
+                        .opacity(0.55)
+                }
+                Text(url.replacingOccurrences(of: "http://", with: ""))
+                    .font(.panelMono(11.5))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .fixedSize()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .opacity(0.45)
             }
-            .buttonStyle(.link)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help("Click to copy the address")
+            .foregroundStyle(hovering ? Palette.accent : Palette.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 4)
+                .fill(hovering ? Palette.accentLight : Palette.surface)
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(hovering ? Palette.accentBorder : Palette.border,
+                                  lineWidth: 1)))
+            .contentShape(RoundedRectangle(cornerRadius: 4))
         }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .opacity(dimmed ? 0.35 : 1)
+        .allowsHitTesting(!dimmed)
+        .help("\(label) — click to copy")
     }
 }

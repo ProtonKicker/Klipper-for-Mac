@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
-// How the printer is reached and configured. Web UI choice and LAN exposure are
-// two halves of one question, so they live in a single section.
+// How the printer is reached and configured. Reachability lives in the Links
+// section; the frontend choice, config sources, data folder and CLI path live
+// in Configuration.
 
-struct AccessBlock: View {
+struct LinksBlock: View {
     @ObservedObject var model: AppModel
     /// Hoisted by the page: Net.lanIP() opens a socket per call.
     let lanIP: String?
@@ -11,121 +13,173 @@ struct AccessBlock: View {
     private var env: KEnvironment { model.env }
 
     var body: some View {
-        Section {
-            Picker("Default interface", selection: Binding(
-                get: { env.uiName },
-                set: { name in
-                    if name != env.uiName {
-                        Task { await model.switchUI(name) }
-                    }
+        PanelSection("Links") {
+            HStack(spacing: 8) {
+                LinkChip(model: model, label: "Web UI", url: env.webURL)
+                if model.snapshot.anyUp {
+                    LinkChip(model: model, label: "Moonraker API", url: env.moonrakerURL)
                 }
-            )) {
-                Text("Fluidd").tag("fluidd")
-                Text("Mainsail").tag("mainsail")
+                if env.lanEnabled, let ip = lanIP {
+                    LinkChip(model: model, label: "LAN UI",
+                             url: "http://\(ip):\(env.uiPort(env.uiName))",
+                             systemImage: "globe")
+                    LinkChip(model: model, label: "LAN API",
+                             url: "http://\(ip):\(env.moonrakerPort)",
+                             systemImage: "globe")
+                }
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
 
             HStack(spacing: 8) {
-                Button(env.uiName == "mainsail" ? "Mainsail" : "Fluidd") {
+                Button(env.uiName == "mainsail" ? "Open Mainsail" : "Open Fluidd") {
                     model.openURL(env.uiURL(env.uiName))
                 }
-                Text("open in browser")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                .buttonStyle(DemoButton(small: true))
+
                 Spacer()
-            }
-            CopyableURL(model: model, label: "Local", url: env.webURL)
-            if model.snapshot.anyUp {
-                CopyableURL(model: model, label: "Moonraker API", url: env.moonrakerURL)
+
+                HStack(spacing: 10) {
+                    Text("LAN access")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Palette.textSecondary)
+                    DemoSwitch(isOn: env.lanEnabled) {
+                        Task { await model.setLAN(!env.lanEnabled) }
+                    }
+                    .help("Reachable from other devices on your network")
+                }
             }
 
-            Toggle("Reachable from other devices on your network", isOn: Binding(
-                get: { env.lanEnabled },
-                set: { on in Task { await model.setLAN(on) } }
-            ))
             if env.lanEnabled {
-                if let ip = lanIP {
-                    CopyableURL(model: model,
-                                label: "LAN UI",
-                                url: "http://\(ip):\(env.uiPort(env.uiName))")
-                    CopyableURL(model: model,
-                                label: "LAN API",
-                                url: "http://\(ip):\(env.moonrakerPort)")
-                    Text("Restart the stack to apply.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if lanIP == nil {
+                    hint("Enabled — but this Mac has no network address right now.")
                 } else {
-                    Text("Enabled — but this Mac has no network address right now.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    hint("Restart the stack to apply.")
                 }
             } else {
-                Text("Only this Mac can reach the stack (localhost).")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                hint("Only this Mac can reach the stack (localhost).")
                 if model.snapshot.anyUp {
-                    Text("Restart the stack to apply.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    hint("Restart the stack to apply.")
                 }
             }
-        } header: {
-            Text("Web UI & LAN access")
         }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(Palette.textMuted)
     }
 }
 
-struct ConfigBlock: View {
+struct ConfigSectionBlock: View {
     @ObservedObject var model: AppModel
-    @State private var selectedSerial = ""
-    @State private var selectedPreset = ""
-
     private var env: KEnvironment { model.env }
 
     var body: some View {
-        Section("Printer config") {
-            Picker("Serial device", selection: $selectedSerial) {
-                Text("Default — keep current printer.cfg").tag("")
+        PanelSection("Configuration") {
+            if env.installed {
+                ConfigRow(label: "Frontend") {
+                    DemoSegmented(
+                        items: [.init(value: "fluidd", title: "Fluidd"),
+                                .init(value: "mainsail", title: "Mainsail")],
+                        selected: env.uiName
+                    ) { name in
+                        if name != env.uiName {
+                            Task { await model.switchUI(name) }
+                        }
+                    }
+                }
+
+                ConfigRow(label: "Serial") {
+                    MenuSelect(
+                        placeholder: "Default — keep current printer.cfg",
+                        options: model.serialPorts.map {
+                            MenuSelectOption(value: $0.path,
+                                             title: "\($0.path)  \($0.label)")
+                        },
+                        disabled: model.serialPorts.isEmpty
+                    ) { path in
+                        Task { await model.setSerial(path) }
+                    }
+                }
                 if model.serialPorts.isEmpty {
-                    Text("No USB serial devices found").disabled(true).tag(" ")
+                    hint("No USB serial devices found.")
                 }
-                ForEach(model.serialPorts) { port in
-                    Text("\(port.path)   \(port.label)").tag(port.path)
+
+                ConfigRow(label: "Preset") {
+                    MenuSelect(
+                        placeholder: model.presetNames.isEmpty
+                            ? "No presets in \(env.presetsDir.path)"
+                            : "Default — use current printer.cfg",
+                        options: model.presetNames.map {
+                            MenuSelectOption(value: $0, title: $0)
+                        },
+                        disabled: model.presetNames.isEmpty
+                    ) { name in
+                        Task { await model.usePreset(name) }
+                    }
                 }
-            }
-            .onChange(of: selectedSerial) { value in
-                if !value.isEmpty {
-                    let path = value
-                    selectedSerial = ""
-                    Task { await model.setSerial(path) }
+
+                hint("Serial and preset both write to printer.cfg — restart the stack to apply.")
+
+                if !env.printerConfigured {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(Palette.textMuted)
+                        Text("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Palette.textMuted)
+                    }
                 }
             }
 
-            Picker("Preset config", selection: $selectedPreset) {
-                Text("Default — use current printer.cfg").tag("")
-                ForEach(model.presetNames, id: \.self) { name in
-                    Text(name).tag(name)
+            ConfigRow(label: "Data") {
+                HStack(spacing: 8) {
+                    PathChip(env.data.path)
+                    Button("Browse…") { chooseDataFolder() }
+                        .buttonStyle(DemoButton(small: true))
+                        .disabled(model.snapshot.anyUp)
+                    Button("Finder") { model.reveal(env.data) }
+                        .buttonStyle(DemoButton(small: true))
                 }
             }
-            .disabled(model.presetNames.isEmpty)
-            .onChange(of: selectedPreset) { value in
-                if !value.isEmpty {
-                    let name = value
-                    selectedPreset = ""
-                    Task { await model.usePreset(name) }
+            if model.snapshot.anyUp {
+                hint("Stop the stack before moving the data folder.")
+            }
+
+            ConfigRow(label: "Klipper CLI") {
+                HStack(spacing: 6) {
+                    Image(systemName: env.isCLIInstalled ? "checkmark.circle.fill"
+                                                         : "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(env.isCLIInstalled ? Tint.ok : Tint.attention)
+                    Text(env.cliURL?.path ?? "not found")
+                        .font(.panelMono(11.5))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
             }
+        }
+    }
 
-            Text("Both write to printer.cfg — restart the stack to apply.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(Palette.textMuted)
+    }
 
-            if !env.printerConfigured {
-                Label("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.",
-                      systemImage: "info.circle")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+    private func chooseDataFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Move data here"
+        panel.message = "Move all Klipper data (configs, logs, web) to a new folder"
+        panel.directoryURL = env.data
+        if panel.runModal() == .OK, let url = panel.url {
+            Task { await model.moveData(url) }
         }
     }
 }

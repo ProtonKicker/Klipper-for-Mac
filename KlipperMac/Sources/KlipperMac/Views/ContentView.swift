@@ -5,19 +5,19 @@ struct ContentView: View {
     @State private var showKillConfirm = false
 
     var body: some View {
-        GeometryReader { geo in
-            ScrollView {
-                PageBody(width: geo.size.width,
-                         model: model,
-                         lanIP: lanIP,
-                         onRequestKill: { showKillConfirm = true })
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        ScrollView {
+            SinglePanelView(model: model,
+                            lanIP: lanIP,
+                            onRequestKill: { showKillConfirm = true })
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.top, 32)
+                .padding(.bottom, 24)
         }
-        .frame(minWidth: 720, minHeight: 500)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .scrollContentBackground(.hidden)
+        .background(Palette.pageBG)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(minWidth: 680, minHeight: 500)
         .navigationTitle("Klipper for Mac")
         .navigationSubtitle(subtitle)
         .toolbar {
@@ -31,9 +31,9 @@ struct ContentView: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-        // An overlay pinned under the Stack column: it reserves no space, and staying
-        // in the left column keeps a toast from covering the rest of the page.
-        .overlay(alignment: .bottomLeading) {
+        // An overlay pinned under the card: it reserves no space, and matching the
+        // card's width keeps a toast from drifting away from the content it reports on.
+        .overlay(alignment: .bottom) {
             MessageBanner(notifier: model.notifier)
         }
         .sheet(isPresented: $model.showSheet) {
