@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Control Panel</title>
+<script src="https://aisearch-task.bj.bcebos.com/static/tailwindcss-3.4.17.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --card: #ffffff;
+    --border: #e5e5e7;
+    --border-strong: #d4d4d8;
+    --text: #18181b;
+    --muted: #71717a;
+    --muted-2: #a1a1aa;
+    --accent: #111111;
+    --success: #10b981;
+    --success-bg: #ecfdf5;
+    --warning: #f59e0b;
+    --warning-bg: #fffbeb;
+    --danger: #ef4444;
+    --danger-bg: #fef2f2;
+    --link: #2563eb;
+    --ring: rgba(37, 99, 235, 0.15);
+  }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono {
+    font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace;
+  }
+  /* Card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+  /* Button base */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: 9px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #f4f4f5; border-color: var(--border-strong); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+  .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+  .btn-primary {
+    background: #111;
+    color: #fff;
+    border-color: #111;
+  }
+  .btn-primary:hover { background: #000; border-color: #000; }
+
+  .btn-success {
+    background: var(--success);
+    color: #fff;
+    border-color: var(--success);
+  }
+  .btn-success:hover { background: #059669; border-color: #059669; }
+
+  .btn-warning {
+    background: #fff;
+    color: var(--warning);
+    border-color: #fcd34d;
+  }
+  .btn-warning:hover { background: var(--warning-bg); }
+
+  .btn-danger {
+    background: #fff;
+    color: var(--danger);
+    border-color: #fecaca;
+  }
+  .btn-danger:hover { background: var(--danger-bg); }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+  }
+  .btn-ghost:hover { background: #f4f4f5; color: var(--text); border-color: transparent; }
+
+  /* Segmented control */
+  .seg {
+    display: inline-flex;
+    padding: 3px;
+    background: #f4f4f5;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+  }
+  .seg label {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 150ms ease, background 150ms ease;
+    user-select: none;
+  }
+  .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+  .seg input:checked + span {
+    background: #fff;
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 0 0 1px var(--border);
+  }
+  .seg span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 6px;
+  }
+
+  /* Toggle switch */
+  .toggle {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+  .toggle .track {
+    width: 38px;
+    height: 22px;
+    background: #e4e4e7;
+    border-radius: 999px;
+    position: relative;
+    transition: background 180ms ease;
+    flex-shrink: 0;
+  }
+  .toggle .thumb {
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    background: #fff;
+    border-radius: 999px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    transition: left 200ms cubic-bezier(.2,.8,.2,1);
+  }
+  .toggle input:checked ~ .track { background: var(--success); }
+  .toggle input:checked ~ .track .thumb { left: 18px; }
+  .toggle .label-text { font-size: 14px; font-weight: 500; color: var(--text); }
+  .toggle .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+  /* Status dot */
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 999px;
+    background: var(--success);
+    box-shadow: 0 0 0 3px rgba(16,185,129,0.2);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 3px rgba(16,185,129,0.18); }
+    50% { box-shadow: 0 0 0 6px rgba(16,185,129,0.05); }
+  }
+
+  /* Link row */
+  .link-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: #fafafa;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .link-row:hover { background: #f4f4f5; border-color: var(--border-strong); }
+  .link-row .url {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .link-row .badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 5px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .badge-local { background: #f4f4f5; color: #52525b; }
+  .badge-public { background: #ecfdf5; color: #047857; }
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .copy-btn:hover { background: #e4e4e7; color: var(--text); }
+  .copy-btn svg { width: 14px; height: 14px; }
+
+  /* Folder picker row */
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 10px;
+    background: #fcfcfd;
+  }
+
+  /* Section heading */
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-2);
+  }
+
+  /* Subtle divider */
+  .divider { height: 1px; background: var(--border); }
+
+  /* Uptime digits */
+  .uptime-num {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .uptime-unit {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+
+  /* Log button card */
+  .log-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+    text-align: left;
+    width: 100%;
+  }
+  .log-card:hover { background: #fafafa; border-color: var(--border-strong); }
+  .log-card:active { transform: translateY(1px); }
+  .log-card .log-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .log-card .log-title { font-size: 14px; font-weight: 500; color: var(--text); }
+  .log-card .log-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* Tiny tooltip-ish toast */
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #18181b;
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease, transform 200ms ease;
+    z-index: 50;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Entrance animation */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .panel { animation: rise 400ms cubic-bezier(.2,.8,.2,1) both; }
+  .panel:nth-child(1) { animation-delay: 40ms; }
+  .panel:nth-child(2) { animation-delay: 100ms; }
+  .panel:nth-child(3) { animation-delay: 160ms; }
+  .panel:nth-child(4) { animation-delay: 220ms; }
+  .panel:nth-child(5) { animation-delay: 280ms; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-3xl mx-auto px-5 py-10 md:py-14">
+
+  <!-- Header / Status -->
+  <div class="panel mb-8">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-700 flex items-center justify-center shadow-sm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]">
+            <path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/>
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-[17px] font-semibold tracking-tight">Application</h1>
+            <span class="inline-flex items-center gap-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              Running
+            </span>
+          </div>
+          <p class="text-[13px] text-zinc-500 mt-0.5">Local instance · All components healthy</p>
+        </div>
+      </div>
+
+      <!-- Uptime -->
+      <div class="text-right">
+        <div class="section-label mb-1.5">Uptime</div>
+        <div class="mono text-[15px]">
+          <span class="uptime-num" id="d">00</span><span class="uptime-unit">d</span>
+          <span class="uptime-num" id="h">02</span><span class="uptime-unit">h</span>
+          <span class="uptime-num" id="m">47</span><span class="uptime-unit">m</span>
+          <span class="uptime-num" id="s">13</span><span class="uptime-unit">s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Primary lifecycle controls -->
+  <div class="panel card p-5 mb-5">
+    <div class="flex items-center justify-between mb-4">
+      <div class="section-label">Process Control</div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <button class="btn btn-success" id="btn-start">
+        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M8 5v14l11-7z"/></svg>
+        Start
+      </button>
+      <button class="btn btn-warning" id="btn-stop">
+        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        Stop
+      </button>
+      <button class="btn btn-danger" id="btn-kill">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        Kill All
+      </button>
+
+      <div class="h-6 w-px bg-zinc-200 mx-1"></div>
+
+      <button class="btn" id="btn-update">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        Update Component
+      </button>
+    </div>
+  </div>
+
+  <!-- Endpoints / Links -->
+  <div class="panel card p-5 mb-5">
+    <div class="flex items-center justify-between mb-4">
+      <div class="section-label">Endpoints</div>
+      <button class="btn btn-primary" id="btn-open-fe">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        Open Frontend
+      </button>
+    </div>
+
+    <!-- Frontend switcher -->
+    <div class="flex items-center justify-between mb-4 pb-4 border-b border-zinc-100">
+      <div>
+        <div class="text-[13px] font-medium text-zinc-800">Active Frontend</div>
+        <div class="text-[12px] text-zinc-500 mt-0.5">Choose which frontend to route to</div>
+      </div>
+      <div class="seg" role="tablist">
+        <label>
+          <input type="radio" name="fe" value="a" checked>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[13px] h-[13px]"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Frontend A
+          </span>
+        </label>
+        <label>
+          <input type="radio" name="fe" value="b">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[13px] h-[13px]"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            Frontend B
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Links list -->
+    <div class="space-y-2">
+      <a href="http://localhost:7860" target="_blank" rel="noopener" class="link-row" style="display:flex;">
+        <span class="badge badge-local">Local</span>
+        <span class="url mono">http://localhost:7860</span>
+        <button class="copy-btn" data-copy="http://localhost:7860" title="Copy link" onclick="event.preventDefault(); event.stopPropagation();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        </button>
+      </a>
+      <a href="http://localhost:8080" target="_blank" rel="noopener" class="link-row" style="display:flex;">
+        <span class="badge badge-local">Local</span>
+        <span class="url mono">http://localhost:8080</span>
+        <button class="copy-btn" data-copy="http://localhost:8080" title="Copy link" onclick="event.preventDefault(); event.stopPropagation();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        </button>
+      </a>
+      <a href="#" id="public-row" class="link-row" style="opacity:0.5; filter:grayscale(0.5); display:flex; cursor:not-allowed;" onclick="return false;">
+        <span class="badge badge-public">Public</span>
+        <span class="url mono text-zinc-400" id="public-url">Public link disabled</span>
+        <button class="copy-btn" id="public-copy" disabled title="Enable public link first">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+        </button>
+      </a>
+    </div>
+
+    <!-- Public link toggle -->
+    <div class="mt-4 pt-4 border-t border-zinc-100 flex items-center justify-between">
+      <div>
+        <div class="text-[13px] font-medium text-zinc-800">Public Link</div>
+        <div class="text-[12px] text-zinc-500 mt-0.5">Expose a shareable URL via tunnel</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-public" aria-label="Toggle public link">
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Data folder -->
+  <div class="panel card p-5 mb-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="section-label">Workspace</div>
+    </div>
+    <div class="folder-row">
+      <div class="w-9 h-9 rounded-lg bg-zinc-100 flex items-center justify-center flex-shrink-0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px] text-zinc-600"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-[13px] font-medium text-zinc-800">Data Folder</div>
+        <div class="mono text-[12px] text-zinc-500 truncate mt-0.5" id="data-path">~/projects/app/data</div>
+      </div>
+      <button class="btn" id="btn-folder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        Select…
+      </button>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="panel mb-5">
+    <div class="section-label mb-3">Logs</div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <button class="log-card" id="btn-log-1">
+        <div class="log-icon bg-blue-50 text-blue-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="log-title">Application Logs</div>
+          <div class="log-sub mono">stdout · stderr · main process</div>
+        </div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[14px] h-[14px] text-zinc-400"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+
+      <button class="log-card" id="btn-log-2">
+        <div class="log-icon bg-amber-50 text-amber-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[18px] h-[18px]"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="log-title">Service Logs</div>
+          <div class="log-sub mono">worker · model · background tasks</div>
+        </div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[14px] h-[14px] text-zinc-400"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="panel pt-6 mt-8 border-t border-zinc-200/70 flex items-center justify-between">
+    <div class="text-[12px] text-zinc-500">
+      <span class="mono text-[11px] text-zinc-400 mr-2">v1.0.0</span>
+      <a href="#" id="author-link" class="text-zinc-600 hover:text-zinc-900 transition-colors inline-flex items-center gap-1 underline-offset-2 hover:underline">
+        Built by
+        <span class="font-medium text-zinc-800">Author</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-[11px] h-[11px]"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+      </a>
+    </div>
+    <div class="text-[11px] text-zinc-400 mono">idle · 0.0% CPU · 0 MB</div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast">Copied</div>
+
+<script>
+  // Uptime ticker
+  let sec = 13, min = 47, hr = 2, day = 0;
+  const pad = n => String(n).padStart(2, '0');
+  setInterval(() => {
+    sec++;
+    if (sec >= 60) { sec = 0; min++; }
+    if (min >= 60) { min = 0; hr++; }
+    if (hr >= 24) { hr = 0; day++; }
+    document.getElementById('s').textContent = pad(sec);
+    document.getElementById('m').textContent = pad(min);
+    document.getElementById('h').textContent = pad(hr);
+    document.getElementById('d').textContent = pad(day);
+  }, 1000);
+
+  // Toast
+  const toast = document.getElementById('toast');
+  let toastTimer;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  // Copy buttons
+  document.querySelectorAll('.copy-btn[data-copy]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const txt = btn.getAttribute('data-copy');
+      navigator.clipboard?.writeText(txt);
+      showToast('Link copied');
+    });
+  });
+
+  // Public link toggle
+  const publicToggle = document.getElementById('toggle-public');
+  const publicRow = document.getElementById('public-row');
+  const publicUrl = document.getElementById('public-url');
+  const publicCopy = document.getElementById('public-copy');
+  const PUBLIC_FAKE = 'https://abc123.gradio.live';
+  publicToggle.addEventListener('change', () => {
+    if (publicToggle.checked) {
+      publicRow.style.opacity = '1';
+      publicRow.style.filter = 'none';
+      publicUrl.textContent = PUBLIC_FAKE;
+      publicUrl.classList.remove('text-zinc-400');
+      publicCopy.disabled = false;
+      publicCopy.setAttribute('data-copy', PUBLIC_FAKE);
+      showToast('Public link enabled');
+    } else {
+      publicRow.style.opacity = '0.5';
+      publicRow.style.filter = 'grayscale(0.5)';
+      publicUrl.textContent = 'Public link disabled';
+      publicUrl.classList.add('text-zinc-400');
+      publicCopy.disabled = true;
+      publicCopy.removeAttribute('data-copy');
+      showToast('Public link disabled');
+    }
+  });
+
+  // Frontend switch visual feedback
+  document.querySelectorAll('input[name="fe"]').forEach(r => {
+    r.addEventListener('change', () => showToast('Switched to Frontend ' + r.value.toUpperCase()));
+  });
+
+  // Folder select mock
+  document.getElementById('btn-folder').addEventListener('click', () => {
+    const paths = ['~/projects/app/data', '~/storage/models', '/mnt/external/datasets', '~/Downloads/app-output'];
+    const next = paths[Math.floor(Math.random() * paths.length)];
+    document.getElementById('data-path').textContent = next;
+    showToast('Folder updated');
+  });
+
+  // Log buttons / action buttons mock
+  const actionFeedback = {
+    'btn-start': 'Starting…',
+    'btn-stop': 'Stopping…',
+    'btn-kill': 'All processes killed',
+    'btn-update': 'Checking for updates…',
+    'btn-open-fe': 'Opening frontend…',
+    'btn-log-1': 'Opening application logs…',
+    'btn-log-2': 'Opening service logs…',
+    'author-link': null,
+  };
+  Object.keys(actionFeedback).forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', (e) => {
+      if (id === 'author-link') { e.preventDefault(); showToast('Author link'); return; }
+      showToast(actionFeedback[id]);
+    });
+  });
+</script>
+</body>
+</html>
