@@ -23,19 +23,13 @@ from .installer import (checkout, create_venv, fetch_fluidd, fetch_mainsail,
 
 
 def moonraker_objects():
-    url = ("http://localhost:{}/printer/objects/query?print_stats&extruder"
-           "&heater_bed&gcode_move").format(paths.MOONRAKER_PORT)
+    url = "http://localhost:{}/printer/objects/query?print_stats".format(
+        paths.MOONRAKER_PORT)
     try:
         with urllib.request.urlopen(url, timeout=2) as r:
             return json.loads(r.read().decode())["result"]["status"]
     except Exception:
         return None
-
-
-def _fmt_temp(vals):
-    if vals is None:
-        return "-- / --"
-    return "{:.0f} / {:.0f}".format(vals[0], vals[1])
 
 
 def _add_keys(std, y, text):
@@ -250,16 +244,6 @@ class App(object):
             row(3, "printer", "{}{}".format(
                 printer, (" | file: " + ps["filename"]) if ps.get("filename")
                 else ""))
-            ex = obj.get("extruder") or {}
-            hb = obj.get("heater_bed") or {}
-            gmv = (obj.get("gcode_move") or {}).get("gcode_position")
-            row(4, "hotend", "{}      bed  {}".format(
-                _fmt_temp((ex.get("temperature", 0), ex.get("target", 0))),
-                _fmt_temp((hb.get("temperature", 0), hb.get("target", 0)))))
-            if isinstance(gmv, list) and len(gmv) >= 3:
-                row(5, "position",
-                    "X {:.1f}   Y {:.1f}   Z {:.2f}".format(
-                        gmv[0], gmv[1], gmv[2]))
         else:
             row(3, "printer", "(moonraker not answering)")
         pins = versions.load_pins()
