@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instance Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --page-bg: #f5f4f1;
+  --surface: #ffffff;
+  --border: #e7e5e4;
+  --border-subtle: #f0eeec;
+  --text-primary: #1c1917;
+  --text-secondary: #78716c;
+  --text-muted: #a8a29e;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-light: #eef2ff;
+  --accent-border: #c7d2fe;
+  --green: #16a34a;
+  --green-bg: #f0fdf4;
+  --green-border: #bbf7d0;
+  --red: #dc2626;
+  --red-bg: #fef2f2;
+  --red-border: #fecaca;
+  --radius-lg: 14px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  --shadow: 0 0 0 1px rgba(0,0,0,0.03), 0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--page-bg);
+  color: var(--text-primary);
+  line-height: 1.5;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.panel {
+  width: 100%;
+  max-width: 620px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* ===== HEADER ===== */
+.header {
+  padding: 28px 28px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.instance-name {
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  border: none;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  padding-bottom: 2px;
+  outline: none;
+  width: 100%;
+  min-width: 120px;
+  transition: border-color 0.15s;
+}
+.instance-name:hover { border-bottom-color: var(--border); }
+.instance-name:focus { border-bottom-color: var(--accent); }
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.meta .sep {
+  width: 3px;
+  height: 3px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.meta .mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  letter-spacing: -0.01em;
+}
+
+.header-right {
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 9px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.status-badge.online {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+.status-badge.offline {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
+}
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ===== SECTIONS ===== */
+.section {
+  padding: 0 28px;
+}
+.section-inner {
+  padding: 22px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.section-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+/* ===== BUTTONS ===== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  user-select: none;
+}
+.btn:hover { background: var(--page-bg); }
+.btn:active { transform: scale(0.985); }
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-danger {
+  color: var(--red);
+  border-color: var(--red-border);
+}
+.btn-danger:hover {
+  background: var(--red-bg);
+  border-color: var(--red-border);
+}
+
+.btn-sm {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12px;
+  border-radius: var(--radius-xs);
+  gap: 5px;
+}
+
+/* ===== ACTION BUTTONS ===== */
+.actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* ===== LINKS ===== */
+.links-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+.link-chip:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+.link-chip.dimmed {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.link-chip .arrow {
+  font-size: 10px;
+  opacity: 0.45;
+}
+.link-chip .globe {
+  font-size: 11px;
+  opacity: 0.5;
+}
+
+.links-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* Toggle */
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 21px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 11px;
+  transition: background 0.2s ease;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 1px rgba(0,0,0,0.06);
+  transition: transform 0.2s ease;
+}
+.toggle input:checked ~ .toggle-track {
+  background: var(--accent);
+}
+.toggle input:checked ~ .toggle-thumb {
+  transform: translateX(15px);
+}
+
+/* ===== CONFIGURATION ===== */
+.config-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 88px;
+  flex-shrink: 0;
+}
+
+/* Segmented Control */
+.segmented {
+  display: inline-flex;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2.5px;
+  gap: 2px;
+}
+.segment {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.segment:hover { color: var(--text-secondary); }
+.segment.active {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Path */
+.path-display {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 6px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Select */
+.select-wrap {
+  flex: 1;
+  position: relative;
+}
+.select {
+  width: 100%;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 6px 30px 6px 10px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.select:hover { border-color: var(--text-muted); }
+.select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+.select-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* ===== COMPONENTS ===== */
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.section-header-row .section-label { margin-bottom: 0; }
+
+.components-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.component-row {
+  display: flex;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.component-row:first-child { border-top: none; }
+
+.component-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+
+.component-version {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 16px;
+}
+.ver-current { color: var(--text-secondary); }
+.ver-arrow { color: var(--text-muted); opacity: 0.6; }
+.ver-new {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.component-action {
+  flex-shrink: 0;
+  min-width: 82px;
+  text-align: right;
+}
+
+.latest-tag {
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* ===== DIAGNOSTICS ===== */
+.diagnostics-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* ===== FOOTER ===== */
+.footer {
+  padding: 18px 28px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.author-link {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.author-link:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.footer-version {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="panel">
+
+    <!-- ===== HEADER ===== -->
+    <div class="header">
+      <div class="header-left">
+        <input class="instance-name" type="text" value="my-instance" spellcheck="false">
+        <div class="meta">
+          <span>Uptime <strong style="font-weight:500;color:var(--text-secondary)" id="uptime">2h 34m 12s</strong></span>
+          <div class="sep"></div>
+          <span class="mono">UI v1.4.2</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="status-badge online">
+          <div class="status-dot"></div>
+          Connected
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== PRIMARY ACTIONS ===== -->
+    <div class="section">
+      <div class="section-inner">
+        <div class="actions-row">
+          <button class="btn btn-primary">Start</button>
+          <button class="btn">Stop</button>
+          <button class="btn btn-danger">Kill All</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== LINKS ===== -->
+    <div class="section">
+      <div class="section-inner">
+        <div class="section-label">Links</div>
+        <div class="links-chips">
+          <a href="#" class="link-chip">localhost:3000<span class="arrow">↗</span></a>
+          <a href="#" class="link-chip">localhost:8080<span class="arrow">↗</span></a>
+          <a href="#" class="link-chip dimmed" id="publicLink"><span class="globe">⊕</span>public.myservice.io<span class="arrow">↗</span></a>
+        </div>
+        <div class="links-controls">
+          <button class="btn btn-sm">Open Frontend</button>
+          <div class="toggle-group">
+            <span>Public Link</span>
+            <label class="toggle">
+              <input type="checkbox" id="publicToggle">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CONFIGURATION ===== -->
+    <div class="section">
+      <div class="section-inner">
+        <div class="section-label">Configuration</div>
+        <div class="config-rows">
+          <div class="config-row">
+            <span class="config-label">Frontend</span>
+            <div class="segmented">
+              <button class="segment active" onclick="switchFrontend(this)">Frontend A</button>
+              <button class="segment" onclick="switchFrontend(this)">Frontend B</button>
+            </div>
+          </div>
+          <div class="config-row">
+            <span class="config-label">Data Folder</span>
+            <div class="path-display">/home/user/.config/instance/data</div>
+            <button class="btn btn-sm">Browse</button>
+          </div>
+          <div class="config-row">
+            <span class="config-label">File</span>
+            <div class="select-wrap">
+              <select class="select">
+                <option>config_default.py</option>
+                <option>config_production.py</option>
+                <option>config_testing.py</option>
+                <option>profile_lightweight.py</option>
+                <option>profile_full.py</option>
+              </select>
+              <div class="select-arrow">▾</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== COMPONENTS ===== -->
+    <div class="section">
+      <div class="section-inner">
+        <div class="section-header-row">
+          <div class="section-label">Components</div>
+          <button class="btn btn-sm">Update All</button>
+        </div>
+        <div class="components-list">
+          <div class="component-row">
+            <div class="component-name">model-engine</div>
+            <div class="component-version">
+              <span class="ver-current">v2.1.0</span>
+              <span class="ver-arrow">→</span>
+              <span class="ver-new">v2.3.1</span>
+            </div>
+            <div class="component-action">
+              <button class="btn btn-sm">Update</button>
+            </div>
+          </div>
+          <div class="component-row">
+            <div class="component-name">stream-handler</div>
+            <div class="component-version">
+              <span class="ver-current">v1.0.4</span>
+              <span class="ver-arrow">→</span>
+              <span class="ver-new">v1.1.0</span>
+            </div>
+            <div class="component-action">
+              <button class="btn btn-sm">Update</button>
+            </div>
+          </div>
+          <div class="component-row">
+            <div class="component-name">io-bridge</div>
+            <div class="component-version">
+              <span class="ver-current">v3.2.1</span>
+            </div>
+            <div class="component-action">
+              <span class="latest-tag">✓ Latest</span>
+            </div>
+          </div>
+          <div class="component-row">
+            <div class="component-name">interface-core</div>
+            <div class="component-version">
+              <span class="ver-current">v1.5.2</span>
+              <span class="ver-arrow">→</span>
+              <span class="ver-new">v1.6.0</span>
+            </div>
+            <div class="component-action">
+              <button class="btn btn-sm">Update</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== DIAGNOSTICS ===== -->
+    <div class="section">
+      <div class="section-inner">
+        <div class="section-label">Diagnostics</div>
+        <div class="diagnostics-row">
+          <button class="btn btn-sm">Server Logs</button>
+          <button class="btn btn-sm">System Logs</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== FOOTER ===== -->
+    <div class="footer">
+      <a href="#" class="author-link">Made by @author</a>
+      <span class="footer-version">UI v1.4.2</span>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Uptime counter
+  let seconds = (2 * 3600) + (34 * 60) + 12;
+  const uptimeEl = document.getElementById('uptime');
+  function updateUptime() {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    uptimeEl.textContent = `${h}h ${m}m ${String(s).padStart(2, '0')}s`;
+    seconds++;
+  }
+  setInterval(updateUptime, 1000);
+
+  // Public link toggle
+  const toggle = document.getElementById('publicToggle');
+  const publicLink = document.getElementById('publicLink');
+  toggle.addEventListener('change', () => {
+    publicLink.classList.toggle('dimmed', !toggle.checked);
+  });
+
+  // Frontend segmented control
+  function switchFrontend(el) {
+    el.parentElement.querySelectorAll('.segment').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+  }
+</script>
+
+</body>
+</html>
