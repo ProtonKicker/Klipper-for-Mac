@@ -109,14 +109,14 @@ final class AppModel: ObservableObject {
     // MARK: - CLI-backed actions
 
     @discardableResult
-    func cli(_ args: [String]) async -> Bool {
+    func cli(_ args: [String], ok: String? = nil) async -> Bool {
         busy = true
         env.invalidateCaches()
         defer { busy = false }
         do {
             let r = try await CLIRunner.shared.run(args)
             if r.exit == 0 {
-                say(r.output)
+                say(ok ?? r.output)
             } else {
                 say(r.output.isEmpty ? "klipperformac \(args.first ?? "") failed (exit \(r.exit))"
                                      : r.output, error: true)
@@ -130,10 +130,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func startStack() async { _ = await cli(["up"]) }
-    func stopStack() async { _ = await cli(["down"]) }
-    func restartStack() async { _ = await cli(["restart"]) }
-    func killAll() async { _ = await cli(["killall"]) }
+    func startStack() async { _ = await cli(["up"], ok: "Started") }
+    func stopStack() async { _ = await cli(["down"], ok: "Stopped") }
+    func restartStack() async { _ = await cli(["restart"], ok: "Restarted") }
+    func killAll() async { _ = await cli(["killall"], ok: "Killed everything") }
 
     /// LAN toggle: no big banner on success — the section itself shows the
     /// state and the "restart to apply" hint. Errors still surface.
@@ -151,21 +151,21 @@ final class AppModel: ObservableObject {
             say("Klipper CLI not found.", error: true)
         }
     }
-    func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"]) }
-    func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path]) }
-    func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name]) }
-    func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path]) }
+    func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"], ok: "Switched to \(name.capitalized)") }
+    func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path], ok: "Serial device set") }
+    func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name], ok: "Preset applied") }
+    func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path], ok: "Data folder moved") }
 
     func pausePrint() async {
-        if await Moonraker.post("/printer/print/pause", port: env.moonrakerPort) { say("pause sent") }
+        if await Moonraker.post("/printer/print/pause", port: env.moonrakerPort) { say("Paused") }
         await refresh()
     }
     func resumePrint() async {
-        if await Moonraker.post("/printer/print/resume", port: env.moonrakerPort) { say("resume sent") }
+        if await Moonraker.post("/printer/print/resume", port: env.moonrakerPort) { say("Resumed") }
         await refresh()
     }
     func cancelPrint() async {
-        if await Moonraker.post("/printer/print/cancel", port: env.moonrakerPort) { say("print cancelled") }
+        if await Moonraker.post("/printer/print/cancel", port: env.moonrakerPort) { say("Print cancelled") }
         await refresh()
     }
 
@@ -238,10 +238,5 @@ final class AppModel: ObservableObject {
     func copyToPasteboard(_ s: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(s, forType: .string)
-    }
-
-    func copyURL(_ s: String) {
-        copyToPasteboard(s)
-        say("Copied \(s)")
     }
 }

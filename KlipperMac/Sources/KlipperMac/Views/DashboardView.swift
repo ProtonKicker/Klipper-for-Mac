@@ -2,14 +2,12 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var showKillConfirm = false
 
     var body: some View {
         Form {
             setupSection
             stackSection
             printerSection
-            webUISection
             lanSection
         }
         .formStyle(.grouped)
@@ -27,13 +25,6 @@ struct DashboardView: View {
         .sheet(isPresented: $model.showSheet) {
             SetupSheet(title: model.sheetTitle, lines: model.sheetLines,
                        running: model.sheetRunning)
-        }
-        .confirmationDialog("Force kill everything, including strays a normal stop would miss?",
-                            isPresented: $showKillConfirm, titleVisibility: .visible) {
-            Button("Kill everything", role: .destructive) {
-                Task { await model.killAll() }
-            }
-            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -86,17 +77,34 @@ struct DashboardView: View {
                 }
                 .disabled(model.busy || !model.env.installed)
 
-                Button("Kill all…", role: .destructive) { showKillConfirm = true }
-                    .disabled(model.busy || !model.snapshot.tracked)
+                Button("Kill all", role: .destructive) {
+                    Task { await model.killAll() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .disabled(model.busy || !model.snapshot.tracked)
                 Spacer()
             }
 
             if model.snapshot.tracked { serviceGrid }
 
+            Picker("Default interface", selection: Binding(
+                get: { model.env.uiName },
+                set: { name in
+                    if name != model.env.uiName {
+                        Task { await model.switchUI(name) }
+                    }
+                }
+            )) {
+                Text("Fluidd").tag("fluidd")
+                Text("Mainsail").tag("mainsail")
+            }
+            .pickerStyle(.segmented)
+
+            BrowserLink(label: model.env.uiName == "mainsail" ? "Mainsail" : "Fluidd",
+                        url: model.env.webURL)
             if model.snapshot.anyUp {
-                CopyableURL(label: model.env.uiName == "mainsail" ? "Mainsail" : "Fluidd",
-                            url: model.env.webURL)
-                CopyableURL(label: "Moonraker API", url: model.env.moonrakerURL)
+                BrowserLink(label: "Moonraker API", url: model.env.moonrakerURL)
             }
         }
     }
@@ -139,19 +147,6 @@ struct DashboardView: View {
                         }
                     }
                 }
-                if let h = p.hotend {
-                    LabeledContent("Hotend",
-                                   value: String(format: "%.0f / %.0f °C", h.temp, h.target))
-                }
-                if let b = p.bed {
-                    LabeledContent("Bed",
-                                   value: String(format: "%.0f / %.0f °C", b.temp, b.target))
-                }
-                if let pos = p.position {
-                    LabeledContent("Position",
-                                   value: String(format: "X %.1f   Y %.1f   Z %.2f",
-                                                 pos.x, pos.y, pos.z))
-                }
                 if let m = p.message, !m.isEmpty {
                     Text(m)
                         .font(.callout)
@@ -175,42 +170,6 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - web UI
-
-    private var webUISection: some View {
-        Section("Web UI") {
-            Picker("Default interface", selection: Binding(
-                get: { model.env.uiName },
-                set: { name in
-                    if name != model.env.uiName {
-                        Task { await model.switchUI(name) }
-                    }
-                }
-            )) {
-                Text("Fluidd").tag("fluidd")
-                Text("Mainsail").tag("mainsail")
-            }
-            .pickerStyle(.segmented)
-
-            HStack(spacing: 8) {
-                if model.env.uiName == "mainsail" {
-                    Button("Mainsail") {
-                        model.openURL(model.env.uiURL("mainsail"))
-                    }
-                } else {
-                    Button("Fluidd") {
-                        model.openURL(model.env.uiURL("fluidd"))
-                    }
-                }
-                Text("open in browser")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            CopyableURL(label: "Local", url: model.env.webURL)
-        }
-    }
-
     // MARK: - LAN
 
     private var lanSection: some View {
@@ -221,9 +180,9 @@ struct DashboardView: View {
             ))
             if model.env.lanEnabled {
                 if let ip = Net.lanIP() {
-                    CopyableURL(label: "LAN UI",
+                    BrowserLink(label: "LAN UI",
                                 url: "http://\(ip):\(model.env.uiPort(model.env.uiName))")
-                    CopyableURL(label: "LAN API",
+                    BrowserLink(label: "LAN API",
                                 url: "http://\(ip):\(model.env.moonrakerPort)")
                     Text("Restart the stack to apply.")
                         .font(.caption)

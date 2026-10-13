@@ -5,7 +5,6 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var logService = "klipper"
     @State private var follow = false
-    @State private var logsOpen = false
     @State private var selectedSerial = ""
     @State private var selectedPreset = ""
 
@@ -14,9 +13,9 @@ struct SettingsView: View {
     var body: some View {
         Form {
             aboutSection
-            dataSection
+            componentsSection
             printerConfigSection
-            updatesSection
+            dataSection
             logsSection
         }
         .formStyle(.grouped)
@@ -31,6 +30,18 @@ struct SettingsView: View {
             LabeledContent("Klipper CLI",
                            value: env.cliURL?.path ?? "not found")
                 .foregroundStyle(env.isCLIInstalled ? Color.primary : Color.orange)
+            Button {
+                model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
+            } label: {
+                Label("Project on GitHub", systemImage: "link")
+            }
+        }
+    }
+
+    // MARK: - components
+
+    private var componentsSection: some View {
+        Section("Components") {
             if env.installed {
                 let pins = env.pins
                 LabeledContent("Klipper", value: pinText(pins, "klipper"))
@@ -39,14 +50,22 @@ struct SettingsView: View {
                 LabeledContent("Fluidd", value: pinText(pins, "fluidd"))
             }
             HStack {
-                Button {
-                    model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
-                } label: {
-                    Label("Project on GitHub", systemImage: "link")
+                Button("Check") { Task { await model.checkUpdates() } }
+                    .disabled(model.busy)
+                Button("Update") { Task { await model.applyUpdates() } }
+                    .disabled(model.busy || model.snapshot.anyUp || !env.installed)
+                if model.busy && !model.showSheet {
+                    ProgressView().controlSize(.small)
                 }
-                Button("Copy install command") {
-                    model.copyToPasteboard("curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh")
-                    model.notifier.message = "Install command copied"
+                Spacer()
+            }
+            if !model.updateLines.isEmpty {
+                ForEach(Array(model.updateLines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -152,56 +171,26 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - updates
-
-    private var updatesSection: some View {
-        Section("Component updates") {
-            HStack {
-                Button("Check") { Task { await model.checkUpdates() } }
-                    .disabled(model.busy)
-                Button("Apply…") { Task { await model.applyUpdates() } }
-                    .disabled(model.busy || model.snapshot.anyUp || !env.installed)
-                if model.busy && !model.showSheet {
-                    ProgressView().controlSize(.small)
-                }
-                Spacer()
-            }
-            if !model.updateLines.isEmpty {
-                ForEach(Array(model.updateLines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-
     // MARK: - logs
 
     private var logsSection: some View {
         Section("Logs") {
-            // Collapsed by default: the log viewer is the one heavy view in this
-            // pane, and building it is most of the cost of opening Settings.
-            DisclosureGroup("Log viewer", isExpanded: $logsOpen) {
-                Picker("Service", selection: $logService) {
-                    Text("Klipper (klippy.log)").tag("klipper")
-                    Text("Moonraker (moonraker.log)").tag("moonraker")
-                }
-                .pickerStyle(.segmented)
+            Picker("Service", selection: $logService) {
+                Text("Klipper (klippy.log)").tag("klipper")
+                Text("Moonraker (moonraker.log)").tag("moonraker")
+            }
+            .pickerStyle(.segmented)
 
-                LogView(url: logURL, follow: follow)
+            LogView(url: logURL, follow: follow)
 
-                HStack {
-                    Toggle("Follow new lines", isOn: $follow)
-                        .toggleStyle(.switch)
-                    Spacer()
-                    Button("Reveal in Finder") { model.reveal(logURL) }
-                    Button("Copy path") {
-                        model.copyToPasteboard(logURL.path)
-                        model.notifier.message = "Log path copied"
-                    }
+            HStack {
+                Toggle("Follow new lines", isOn: $follow)
+                    .toggleStyle(.switch)
+                Spacer()
+                Button("Reveal in Finder") { model.reveal(logURL) }
+                Button("Copy path") {
+                    model.copyToPasteboard(logURL.path)
+                    model.notifier.message = "Copied"
                 }
             }
         }
