@@ -18,7 +18,7 @@ struct RootView: View {
         .padding(.horizontal, 24)
         .padding(.top, 16)
         .padding(.bottom, 12)
-        .frame(minWidth: 1000, minHeight: 640)
+        .frame(minWidth: 940, minHeight: 640)
         .background(
             LinearGradient(colors: [Skin.washTop, Skin.washBottom],
                            startPoint: .top, endPoint: .bottom)
@@ -113,25 +113,24 @@ struct RootView: View {
 
     // MARK: bento
 
-    /// Cards hug their content and the whole composition sits centered on the
-    /// wash — margin as breathing room, not leftover stretch.
+    /// Two equal columns, cards hugging their content, the whole composition
+    /// centered on the wash — margin as breathing room, not leftover stretch.
     private var bento: some View {
         Grid(horizontalSpacing: 16, verticalSpacing: 16) {
             GridRow(alignment: .top) {
                 StackCard(model: model)
-                    .gridCellColumns(2)
                 UpdatesCard(model: model)
-                WebUICard(model: model)
             }
             GridRow(alignment: .top) {
-                DeviceCard(model: model)
+                WebUICard(model: model)
                 NetworkCard(model: model)
+            }
+            GridRow(alignment: .top) {
                 PresetsCard(model: model)
-                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                DeviceCard(model: model)
             }
         }
-        .gridColumnAlignment(.leading)
-        .frame(maxWidth: 1000)
+        .frame(maxWidth: 880)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
