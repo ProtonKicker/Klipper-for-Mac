@@ -226,8 +226,6 @@ struct DashboardView: View {
                     } label: {
                         Text("Change printer config")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
 
                 LabeledContent("Config versions") {
