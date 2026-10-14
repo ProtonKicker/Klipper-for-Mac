@@ -3,7 +3,6 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedSerial = ""
-    @State private var selectedPreset = ""
     @State private var showLibrary = false
 
     private let stackButtonWidth: CGFloat = 92
@@ -221,21 +220,6 @@ struct DashboardView: View {
                     }
                 }
 
-                Picker("Preset config", selection: $selectedPreset) {
-                    Text("Select config…").tag("")
-                    ForEach(model.presetNames, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
-                }
-                .disabled(model.presetNames.isEmpty)
-                .onChange(of: selectedPreset) { value in
-                    if !value.isEmpty {
-                        let name = value
-                        selectedPreset = ""
-                        Task { await model.usePreset(name) }
-                    }
-                }
-
                 Button {
                     showLibrary = true
                 } label: {
@@ -246,7 +230,7 @@ struct DashboardView: View {
                     Button("Show") { model.showConfigHistoryFolder() }
                 }
 
-                Text("Both write to printer.cfg — restart the stack to apply. "
+                Text("These write to printer.cfg — restart the stack to apply. "
                      + "The last 10 config versions are saved automatically; "
                      + "press Show to open the folder.")
                     .font(.caption)

@@ -29,22 +29,37 @@ struct LibrarySheet: View {
                 .padding(.bottom, 8)
 
             List {
-                if loading {
-                    Text("Loading…")
-                        .foregroundStyle(.secondary)
-                } else if filtered.isEmpty {
-                    Text("No matches — try a shorter word.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(filtered, id: \.self) { name in
-                        Button {
-                            dismiss()
-                            Task { await model.applyLibrary(name) }
-                        } label: {
-                            Text(Self.readable(name))
-                                .lineLimit(1)
+                if !model.presetNames.isEmpty {
+                    Section("Your saved configs") {
+                        ForEach(model.presetNames, id: \.self) { name in
+                            Button {
+                                dismiss()
+                                Task { await model.usePreset(name) }
+                            } label: {
+                                Text(Self.readable(name)).lineLimit(1)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                    }
+                }
+                Section("Printer library") {
+                    if loading {
+                        Text("Loading…")
+                            .foregroundStyle(.secondary)
+                    } else if filtered.isEmpty {
+                        Text("No matches — try a shorter word.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(filtered, id: \.self) { name in
+                            Button {
+                                dismiss()
+                                Task { await model.applyLibrary(name) }
+                            } label: {
+                                Text(Self.readable(name))
+                                    .lineLimit(1)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }
