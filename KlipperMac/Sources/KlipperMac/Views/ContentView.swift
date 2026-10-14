@@ -23,9 +23,10 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("didOpenOnce") private var didOpenOnce = false
     @State private var pane: Pane? = .printer
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: $pane) {
                 ForEach(Pane.allCases) { p in
                     Label {
@@ -36,7 +37,9 @@ struct ContentView: View {
                     .tag(p)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 150, ideal: 170)
+            // Fixed width: during expand the list and detail keep the same
+            // layout every frame, matching the slide used on collapse.
+            .navigationSplitViewColumnWidth(170)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 MessageBanner(notifier: model.notifier)
             }
@@ -48,6 +51,7 @@ struct ContentView: View {
                 SettingsView()
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: columnVisibility)
         .frame(minWidth: 820, minHeight: 560)
         .task {
             // First run only: land on Settings so the data folder, CLI and

@@ -130,8 +130,6 @@ struct DashboardView: View {
             ForEach(model.snapshot.services.filter { $0.name != "caffeinate" },
                     id: \.name) { s in
                 HStack(spacing: 6) {
-                    FlatIcon(kind: Self.serviceIcon(s.name), size: 13,
-                             color: Self.serviceTint(s.name))
                     Text(Self.shortName(s.name))
                         .font(.callout)
                     Circle()
@@ -148,26 +146,6 @@ struct DashboardView: View {
         case "web_mainsail": return "Mainsail"
         case "web_fluidd": return "Fluidd"
         default: return StackReader.pretty(name)
-        }
-    }
-
-    private static func serviceIcon(_ name: String) -> FlatIconKind {
-        switch name {
-        case "klipper": return .gear
-        case "moonraker": return .moon
-        case "web_mainsail", "web_fluidd": return .link
-        case "caffeinate": return .check
-        default: return .info
-        }
-    }
-
-    private static func serviceTint(_ name: String) -> Color {
-        switch name {
-        case "klipper": return FlatPalette.brown
-        case "moonraker": return FlatPalette.purple
-        case "web_mainsail", "web_fluidd": return FlatPalette.blue
-        case "caffeinate": return FlatPalette.green
-        default: return FlatPalette.amber
         }
     }
 

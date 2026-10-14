@@ -24,11 +24,7 @@ struct SettingsView: View {
             Button {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             } label: {
-                Label {
-                    Text("Project on GitHub")
-                } icon: {
-                    FlatIcon(kind: .link, size: 14, color: FlatPalette.brown)
-                }
+                Text("Project on GitHub")
             }
         }
     }
