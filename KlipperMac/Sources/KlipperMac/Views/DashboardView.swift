@@ -202,7 +202,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
-            Section {
+            Section("Printer config") {
                 Picker("Serial device", selection: $selectedSerial) {
                     Text("Select device…").tag("")
                     if model.serialPorts.isEmpty {
@@ -218,6 +218,16 @@ struct DashboardView: View {
                         selectedSerial = ""
                         Task { await model.setSerial(path) }
                     }
+                }
+
+                LabeledContent("Current config") {
+                    Button {
+                        showLibrary = true
+                    } label: {
+                        Text("Change printer config")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
 
                 LabeledContent("Config versions") {
@@ -238,18 +248,6 @@ struct DashboardView: View {
                     }
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                }
-            } header: {
-                HStack {
-                    Text("Printer config")
-                    Spacer()
-                    Button {
-                        showLibrary = true
-                    } label: {
-                        Text("Change printer config")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
         }
