@@ -61,11 +61,7 @@ struct BrowserLink: View {
 
     var body: some View {
         HStack {
-            Label {
-                Text(label)
-            } icon: {
-                FlatIcon(kind: .link, size: 14, color: FlatPalette.blue)
-            }
+            Text(label)
             Spacer()
             Button(url) {
                 model.openURL(url)
