@@ -150,6 +150,7 @@ final class KEnvironment {
     var printerConfigured: Bool { cached().printerConfigured }
 
     var config: URL { data.appendingPathComponent("config") }
+    var configHistory: URL { config.appendingPathComponent("history") }
     var presetsDir: URL { config.appendingPathComponent("presets") }
     var printerCfg: URL { config.appendingPathComponent("printer.cfg") }
     var run: URL { data.appendingPathComponent("run") }

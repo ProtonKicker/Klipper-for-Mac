@@ -3,6 +3,7 @@ logs | serial | update | open | doctor | cam | uninstall."""
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -333,9 +334,137 @@ def cmd_ui(args):
         webbrowser.open(url)
 
 
+def _history_dir():
+    d = paths.CONFIG / "history"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+HISTORY_KEEP = 10
+
+
+def snapshot_printer_cfg(reason=""):
+    """Copy the current printer.cfg into the version history.
+
+    Deduped against the newest entry so repeated triggers (our own apply plus
+    the GUI's edit watcher) store one version, not two. Keeps the newest
+    HISTORY_KEEP files. Returns the new path, or None when nothing changed.
+    """
+    if not paths.PRINTER_CFG.exists():
+        return None
+    data = paths.PRINTER_CFG.read_bytes()
+    hist = sorted(_history_dir().glob("printer-*.cfg"), key=lambda p: p.name)
+    if hist and hist[-1].read_bytes() == data:
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    suffix = ("-" + re.sub(r"[^A-Za-z0-9._-]+", "-", reason)[:40]) if reason else ""
+    dest = _history_dir() / ("printer-{}{}.cfg".format(stamp, suffix))
+    dest.write_bytes(data)
+    hist.append(dest)
+    while len(hist) > HISTORY_KEEP:
+        try:
+            hist.pop(0).unlink()
+        except OSError:
+            pass
+    return dest
+
+
+def catalog_names():
+    """{name: path} of the pristine upstream example configs."""
+    cdir = paths.KLIPPER / "config"
+    if not cdir.exists():
+        return {}
+    out = {}
+    for p in sorted(cdir.rglob("*.cfg")):
+        out.setdefault(p.stem, p)
+    return out
+
+
+def auto_serial(cfg_path):
+    """Fill [mcu] serial: with the detected USB board when the config does
+    not already carry a real port. Returns (lines, picked_ok)."""
+    lines = []
+    try:
+        text = cfg_path.read_text(errors="replace")
+    except OSError:
+        text = ""
+    m = re.search(r"(?m)^\s*serial\s*:(?!\s*$)(.*)$", text)
+    if m and re.search(r"/dev/(cu|tty|usbserial|usbmodem)\S*", m.group(1)):
+        return ["Serial port already set in printer.cfg."], True
+    ports = detect.scan()
+    if not ports:
+        return ["No USB printer board detected. Plug it in, then pick it "
+                "under Serial device (or: klipperformac serial --auto)."], False
+    if len(ports) > 1:
+        out = ["Multiple USB devices found - pick one (then: "
+               "klipperformac serial --set PATH):"]
+        out += ["  " + p["path"] + (" (" + p["description"] + ")"
+                                    if p["description"] else "")
+                for p in ports]
+        return out, False
+    if detect.write_serial(cfg_path, ports[0]["path"]):
+        desc = (" (" + ports[0]["description"] + ")") if ports[0]["description"] else ""
+        return ["Board connected: " + ports[0]["path"] + desc], True
+    return ["The config has no [mcu] section to put the serial port in."], False
+
+
 def cmd_presets(args):
     import shutil
     paths.PRESETS.mkdir(parents=True, exist_ok=True)
+    if args.library:
+        names = catalog_names()
+        if not names:
+            _die("No upstream configs found yet. Run: klipperformac setup")
+        print("\n".join(sorted(names)))
+        return
+    if args.use_library:
+        names = catalog_names()
+        src = names.get(args.use_library)
+        if src is None:
+            _die("No library config '{}'. Browse them with: "
+                 "klipperformac presets --library".format(args.use_library))
+        if paths.PRINTER_CFG.exists():
+            snapshot_printer_cfg("before-library")
+            shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
+        name = args.use_library
+        shutil.copy2(src, paths.PRESETS / (name + ".cfg"))
+        shutil.copy2(src, paths.PRINTER_CFG)
+        print("Library config '{}' applied.".format(name))
+        for line in auto_serial(paths.PRINTER_CFG)[0]:
+            print(line)
+        print("Restart to load it: klipperformac restart")
+        return
+    if args.history:
+        hist = sorted(_history_dir().glob("printer-*.cfg"),
+                      key=lambda p: p.name, reverse=True)
+        if not hist:
+            print("No saved versions yet (they are created automatically "
+                  "when a config is applied or edited).")
+            return
+        for p in hist:
+            print("  " + p.name)
+        print("Restore with: klipperformac presets --restore NAME")
+        return
+    if args.restore:
+        src = _history_dir() / args.restore
+        if not src.exists():
+            cand = sorted(_history_dir().glob("*" + args.restore + "*"))
+            if len(cand) != 1:
+                _die("No saved version matching '{}' (see: "
+                     "klipperformac presets --history)".format(args.restore))
+            src = cand[0]
+        if paths.PRINTER_CFG.exists():
+            snapshot_printer_cfg("before-restore")
+        shutil.copy2(src, paths.PRINTER_CFG)
+        print("Restored {} as the current config. "
+              "Restart to load it.".format(src.name))
+        return
+    if args.snapshot:
+        dest = snapshot_printer_cfg(args.snapshot if args.snapshot is True
+                                    else args.snapshot)
+        print("Version saved: " + (dest.name if dest
+                                   else "unchanged since the last one"))
+        return
     if args.save:
         if not paths.PRINTER_CFG.exists():
             _die("No printer.cfg to save")
@@ -350,10 +479,14 @@ def cmd_presets(args):
             _die("No preset '{}'. Available: {}".format(
                 args.use, ", ".join(avail) or "none"))
         if paths.PRINTER_CFG.exists():
+            snapshot_printer_cfg("before-preset")
             shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
         shutil.copy2(src, paths.PRINTER_CFG)
         print("Preset '{}' applied (previous config kept as printer.cfg.bak)."
               .format(args.use))
+        if args.auto_serial:
+            for line in auto_serial(paths.PRINTER_CFG)[0]:
+                print(line)
         if process.running() is not None:
             print("Restart to load it: klipperformac restart")
         return
@@ -691,6 +824,19 @@ def main(argv=None):
                        help="list / save / use / import printer.cfg presets")
     p.add_argument("--save", metavar="NAME")
     p.add_argument("--use", metavar="NAME")
+    p.add_argument("--auto-serial", action="store_true",
+                   help="with --use/--use-library: fill [mcu] serial from "
+                        "the detected USB board")
+    p.add_argument("--library", action="store_true",
+                   help="list upstream example configs (klipper/config)")
+    p.add_argument("--use-library", metavar="NAME",
+                   help="apply an upstream example config as a preset")
+    p.add_argument("--history", action="store_true",
+                   help="list saved config versions (last 10)")
+    p.add_argument("--restore", metavar="NAME",
+                   help="restore a saved version as the current config")
+    p.add_argument("--snapshot", nargs="?", const="manual", metavar="REASON",
+                   help="save the current config as a version")
     p.add_argument("--import", dest="import_", metavar="PATH")
     p.add_argument("--import-name", metavar="NAME")
     p = sub.add_parser("gcode", help="send gcode to Klipper or query status")

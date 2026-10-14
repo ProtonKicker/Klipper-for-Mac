@@ -4,6 +4,7 @@ struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedSerial = ""
     @State private var selectedPreset = ""
+    @State private var showLibrary = false
 
     private let stackButtonWidth: CGFloat = 92
 
@@ -30,6 +31,10 @@ struct DashboardView: View {
         .sheet(isPresented: $model.showSheet) {
             SetupSheet(title: model.sheetTitle, lines: model.sheetLines,
                        running: model.sheetRunning)
+        }
+        .sheet(isPresented: $showLibrary) {
+            LibrarySheet()
+                .environmentObject(model)
         }
     }
 
@@ -231,7 +236,19 @@ struct DashboardView: View {
                     }
                 }
 
-                Text("Both write to printer.cfg — restart the stack to apply.")
+                Button {
+                    showLibrary = true
+                } label: {
+                    Text("Browse printer configs…")
+                }
+
+                LabeledContent("Config versions") {
+                    Button("Show") { model.showConfigHistoryFolder() }
+                }
+
+                Text("Both write to printer.cfg — restart the stack to apply. "
+                     + "The last 10 config versions are saved automatically; "
+                     + "press Show to open the folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

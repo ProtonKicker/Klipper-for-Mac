@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Toast state lives on its own so a message appearing or auto-clearing never
@@ -55,6 +56,7 @@ final class AppModel: ObservableObject {
     private var refreshQueued = false
     private var observingActive = false
     private var ticks = 0
+    private var lastCfgHash: String?
 
     func bootstrap() async {
         await refresh()
@@ -132,11 +134,27 @@ final class AppModel: ObservableObject {
         ticks += 1
         let scanPresets = presetNames.isEmpty || ticks % 5 == 1
         // All filesystem/process work off the main thread — never block UI.
-        let (snap, serials, presets) = await Task.detached(priority: .utility) {
-            (StackReader.readSync(env: env),
-             SerialScanner.scan(),
-             scanPresets ? env.presetNames() : nil)
+        let (snap, serials, presets, cfgHash) = await Task.detached(priority: .utility) {
+            () -> (StackSnapshot, [SerialPort], [String]?, String?) in
+            let hash: String? = {
+                guard let d = try? Data(contentsOf: env.printerCfg) else { return nil }
+                return SHA256.hash(data: d).description
+            }()
+            return (StackReader.readSync(env: env),
+                    SerialScanner.scan(),
+                    scanPresets ? env.presetNames() : nil,
+                    hash)
         }.value
+        // Config edited outside the app (TextEdit etc.) -> save a version.
+        // The CLI dedups, so our own applies never double-store.
+        if let cfgHash {
+            if lastCfgHash == nil {
+                lastCfgHash = cfgHash
+            } else if cfgHash != lastCfgHash {
+                lastCfgHash = cfgHash
+                Task { _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"]) }
+            }
+        }
         let camPort = env.camPort
         // One cheap GET on the camera port, fired alongside the status fetch so
         // a poll never waits for it twice.
@@ -222,8 +240,58 @@ final class AppModel: ObservableObject {
     }
     func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"], ok: "Switched to \(name.capitalized)") }
     func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path], ok: "Serial device set") }
-    func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name], ok: "Preset applied") }
+    func usePreset(_ name: String) async {
+        _ = await cliShort(["presets", "--use", name, "--auto-serial"])
+    }
     func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path], ok: "Data folder moved") }
+
+    /// Same pipeline as cli() but the toast is one line: the CLI's first
+    /// output line (or a canned message), never the full terminal paragraph.
+    @discardableResult
+    func cliShort(_ args: [String], ok: String? = nil) async -> Bool {
+        busy = true
+        env.invalidateCaches()
+        var good = false
+        var toast = ""
+        do {
+            let r = try await CLIRunner.shared.run(args)
+            good = r.exit == 0
+            let first = Self.firstLine(r.output)
+            if good {
+                toast = ok ?? (first.isEmpty ? "Done" : first)
+            } else {
+                toast = first.isEmpty ? "klipperformac \(args.first ?? "") failed." : first
+            }
+        } catch {
+            toast = "Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh"
+        }
+        busy = false
+        say(toast, error: !good)
+        await refresh(reloadEnv: true)
+        return good
+    }
+
+    /// Upstream example configs (klipper/config), for the Browse sheet.
+    func libraryConfigs() async -> [String] {
+        do {
+            let r = try await CLIRunner.shared.run(["presets", "--library"])
+            guard r.exit == 0 else { return [] }
+            return r.output.split(separator: "\n").map(String.init)
+        } catch {
+            return []
+        }
+    }
+
+    func applyLibrary(_ name: String) async {
+        _ = await cliShort(["presets", "--use-library", name, "--auto-serial"])
+    }
+
+    func showConfigHistoryFolder() {
+        let fm = FileManager.default
+        do { try fm.createDirectory(at: env.configHistory, withIntermediateDirectories: true) }
+        catch { say("Could not open the versions folder.", error: true); return }
+        NSWorkspace.shared.activateFileViewerSelecting([env.configHistory])
+    }
 
     // MARK: - camera
 
