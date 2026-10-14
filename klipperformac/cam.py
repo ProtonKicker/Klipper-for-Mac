@@ -511,8 +511,7 @@ def start():
     word, usable = permission()
     if word == "not determined":
         # Spawning is what triggers the one-time macOS prompt, so go ahead.
-        prompt_line = ("macOS will ask once whether " + CAM + " may use the "
-                       "camera - click OK.")
+        prompt_line = ("macOS will ask once to allow camera access - click OK.")
     elif usable or word == "unknown":
         prompt_line = None
     else:

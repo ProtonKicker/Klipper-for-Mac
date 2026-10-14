@@ -76,7 +76,11 @@ struct CameraView: View {
                 Button {
                     // Only a start attempt can mean "macOS is waiting for approval".
                     triedStarting = !camOn
-                    Task { await model.runCam(camOn ? ["cam", "off"] : ["cam", "on"]) }
+                    if camOn {
+                        Task { await model.runCam(["cam", "off"]) }
+                    } else {
+                        Task { await model.startCamera() }
+                    }
                 } label: {
                     Text(camOn ? "Turn off camera" : "Turn on camera")
                 }

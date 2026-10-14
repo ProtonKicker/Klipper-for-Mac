@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Foundation
 
@@ -219,6 +220,28 @@ final class AppModel: ObservableObject {
     @discardableResult
     func runCam(_ args: [String]) async -> Bool {
         await cli(args)
+    }
+
+    /// A bare CLI process cannot surface the macOS camera prompt — the request
+    /// hangs unshown and the helper times out. So the app asks first: the
+    /// dialog then belongs to "Klipper for Mac", and the helper we spawn
+    /// inherits that grant as our child process.
+    func startCamera() async {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .notDetermined:
+            guard await AVCaptureDevice.requestAccess(for: .video) else {
+                say("Camera access declined. To allow it later: System Settings > Privacy & Security > Camera.",
+                    error: true)
+                return
+            }
+        case .denied, .restricted:
+            say("macOS has blocked camera access for Klipper for Mac. Allow it in System Settings > Privacy & Security > Camera.",
+                error: true)
+            return
+        default:
+            break
+        }
+        await runCam(["cam", "on"])
     }
 
     func camList() async -> [String] {
