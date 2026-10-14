@@ -63,7 +63,7 @@ def cmd_up(args):
             webbrowser.open(paths.web_url())
 
 
-def _wait_ready(timeout=20):
+def _wait_ready(timeout=35):
     import json as _json
     import time
     import urllib.request
