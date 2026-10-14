@@ -234,7 +234,8 @@ struct CameraView: View {
 
     private var privacySection: some View {
         Section("Privacy") {
-            Text("The camera only runs when you turn it on. Only this Mac can see the stream (localhost).")
+            Text("The camera only runs when you turn it on, and quitting this app turns it off. "
+                 + "Only this Mac can see the stream (localhost).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

@@ -75,6 +75,26 @@ final class AppModel: ObservableObject {
                     await self.refresh()
                 }
             }
+            // The camera helper is deliberately detached (a print's monitoring
+            // must survive window/terminal churn) — so it also survives app
+            // quit. Users read the green camera light as "this app is
+            // watching", so quitting must put it out. Synchronous, because
+            // the process is about to end; capped, because it must never
+            // wedge termination.
+            center.addObserver(forName: NSApplication.willTerminateNotification,
+                               object: nil, queue: .main) { _ in
+                guard let cli = KEnvironment.shared.cliURL else { return }
+                let p = Process()
+                p.executableURL = cli
+                p.arguments = ["cam", "off"]
+                p.standardOutput = FileHandle.nullDevice
+                p.standardError = FileHandle.nullDevice
+                p.standardInput = FileHandle.nullDevice
+                do { try p.run() } catch { return }
+                let deadline = Date().addingTimeInterval(8)
+                while p.isRunning && Date() < deadline { usleep(100_000) }
+                if p.isRunning { p.terminate() }
+            }
         }
     }
 
