@@ -202,7 +202,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
-            Section("Printer config") {
+            Section {
                 Picker("Serial device", selection: $selectedSerial) {
                     Text("Select device…").tag("")
                     if model.serialPorts.isEmpty {
@@ -220,17 +220,11 @@ struct DashboardView: View {
                     }
                 }
 
-                Button {
-                    showLibrary = true
-                } label: {
-                    Text("Browse printer configs…")
-                }
-
                 LabeledContent("Config versions") {
                     Button("Show") { model.showConfigHistoryFolder() }
                 }
 
-                Text("These write to printer.cfg — restart the stack to apply. "
+                Text("Changes write to printer.cfg — restart the stack to apply. "
                      + "The last 10 config versions are saved automatically; "
                      + "press Show to open the folder.")
                     .font(.caption)
@@ -238,12 +232,24 @@ struct DashboardView: View {
 
                 if !model.env.printerConfigured {
                     Label {
-                        Text("No printer.cfg yet — add one to \(model.env.config.path), or apply a preset above.")
+                        Text("No printer.cfg yet — press Change printer config, or add one to \(model.env.config.path).")
                     } icon: {
                         FlatIcon(kind: .info, size: 14, color: FlatPalette.amber)
                     }
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                }
+            } header: {
+                HStack {
+                    Text("Printer config")
+                    Spacer()
+                    Button {
+                        showLibrary = true
+                    } label: {
+                        Text("Change printer config")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
         }
