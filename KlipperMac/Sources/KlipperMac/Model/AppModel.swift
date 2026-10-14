@@ -9,12 +9,29 @@ final class Notifier: ObservableObject {
     @Published var isError = false
 }
 
+/// Camera liveness probe: the helper answers on its own port, so a short GET is
+/// cheaper and more honest than reading its pid file from the app.
+private enum CamProbe {
+    static func isUp(port: Int) async -> Bool {
+        guard let url = URL(string: "http://localhost:\(port)/healthz") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 0.7
+        guard let (_, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse
+        else { return false }
+        return (200..<300).contains(http.statusCode)
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var snapshot = StackSnapshot()
     @Published var printer: PrinterStatus?
     @Published var serialPorts: [SerialPort] = []
     @Published var presetNames: [String] = []
+    /// nil until the first check answers — the Camera pane reads that as "unknown".
+    @Published var camOnline: Bool?
     @Published var busy = false
     /// Selected interface lives here rather than in KEnvironment so a tap is
     /// reflected at once instead of after the CLI round-trip and cache refill.
@@ -99,13 +116,19 @@ final class AppModel: ObservableObject {
              SerialScanner.scan(),
              scanPresets ? env.presetNames() : nil)
         }.value
+        let camPort = env.camPort
+        // One cheap GET on the camera port, fired alongside the status fetch so
+        // a poll never waits for it twice.
+        async let camUp = CamProbe.isUp(port: camPort)
         let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort) : nil
+        let cam = await camUp
         if !busy { // don't churn while a command owns the screen
             // Assign only on change: every @Published write re-renders the whole
             // view tree, and most 2s polls change nothing.
             if snap != snapshot { snapshot = snap }
             if printer != self.printer { self.printer = printer }
             if serials != serialPorts { serialPorts = serials }
+            if cam != camOnline { camOnline = cam }
             if env.uiName != uiName { uiName = env.uiName }
         }
         if let presets, presets != presetNames { presetNames = presets }
@@ -124,6 +147,11 @@ final class AppModel: ObservableObject {
 
     // MARK: - CLI-backed actions
 
+    /// The install one-liner lives here so the error toast and the Camera pane
+    /// can never drift apart.
+    static let installCommand = "curl -fsSL https://raw.githubusercontent.com/"
+        + "ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh"
+
     @discardableResult
     func cli(_ args: [String], ok: String? = nil) async -> Bool {
         busy = true
@@ -139,7 +167,7 @@ final class AppModel: ObservableObject {
                                      : r.output, error: true)
             }
         } catch {
-            say("Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh",
+            say("Klipper CLI not found — install it first:\n" + Self.installCommand,
                 error: true)
             exit = -1
         }
@@ -175,6 +203,47 @@ final class AppModel: ObservableObject {
     func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path], ok: "Serial device set") }
     func usePreset(_ name: String) async { _ = await cli(["presets", "--use", name], ok: "Preset applied") }
     func moveData(_ dir: URL) async { _ = await cli(["data", "--set", dir.path], ok: "Data folder moved") }
+
+    // MARK: - camera
+
+    /// Failure lines are guidance, never device names — the Camera pane shows
+    /// them as a hint instead of a camera option.
+    static let camListNoCLI = "Klipper CLI not found — install it first."
+    static let camListFailed = "Camera list not ready — press Turn on camera, then Refresh."
+    static let camGuidance: Set<String> = [camListNoCLI, camListFailed]
+
+    /// Camera actions ride the same path as up/down so the busy banner, toast and
+    /// refresh behave identically. No canned `ok:` text: the CLI's own first line
+    /// is the step the beginner has to take next — the one-time "click OK" on the
+    /// macOS camera prompt, or the exact file a snapshot just wrote.
+    @discardableResult
+    func runCam(_ args: [String]) async -> Bool {
+        await cli(args)
+    }
+
+    func camList() async -> [String] {
+        do {
+            let r = try await CLIRunner.shared.run(["cam", "list"])
+            guard r.exit == 0 else { return [Self.camListFailed] }
+            return deviceNames(from: r.output)
+        } catch {
+            return [Self.camListNoCLI]
+        }
+    }
+
+    /// The helper prints "index<tab>name<tab>size<tab>fps" per camera. A sentence
+    /// (trailing period) is advice from the tool, not a camera — drop it.
+    private func deviceNames(from text: String) -> [String] {
+        var names: [String] = []
+        for raw in text.split(separator: "\n") {
+            let fields = raw.split(separator: "\t")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            let name = fields.count > 1 ? fields[1] : (fields.first ?? "")
+            if name.isEmpty || name.hasSuffix(".") { continue }
+            names.append(name)
+        }
+        return names
+    }
 
     func pausePrint() async {
         if await Moonraker.post("/printer/print/pause", port: env.moonrakerPort) { say("Paused") }
@@ -253,6 +322,15 @@ final class AppModel: ObservableObject {
 
     func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Snapshots land in the data folder and the toast disappears after a few
+    /// seconds, so the Camera pane needs a standing door to the photos. Before
+    /// the first snapshot the folder does not exist yet — show the data folder
+    /// instead so the click always lands somewhere real.
+    func revealSnapshots() {
+        let dir = env.timelapse
+        reveal(FileManager.default.fileExists(atPath: dir.path) ? dir : env.data)
     }
 
     func copyToPasteboard(_ s: String) {

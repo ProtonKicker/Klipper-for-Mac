@@ -1,6 +1,7 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
-logs | serial | update | open | doctor | uninstall."""
+logs | serial | update | open | doctor | cam | uninstall."""
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import time
 import webbrowser
 from pathlib import Path
 
-from . import configgen, detect, installer, paths, process, versions
+from . import cam, configgen, detect, installer, paths, process, shaper, versions
 
 
 def _die(msg):
@@ -18,7 +19,8 @@ def _die(msg):
 
 
 def cmd_setup(args):
-    installer.setup()
+    installer.setup(with_shaper=getattr(args, "with_shaper", False),
+                    install_python=getattr(args, "install_python", False))
 
 
 def _lan_urls(indent="  "):
@@ -45,7 +47,10 @@ def cmd_up(args):
     if process.running() is not None:
         print("Already running.")
     else:
+        note = shaper.interpreter_for_klipper()[1]
         process.start()
+        if note:
+            print(note)
         print("Klipper stack starting:")
         print("  Mainsail:  " + paths.ui_url("mainsail"))
         print("  Fluidd:    " + paths.ui_url("fluidd"))
@@ -79,17 +84,25 @@ def _wait_ready(timeout=20):
 
 
 def cmd_down(args):
-    if process.stop():
+    stopped = process.stop()
+    cam_off, cam_lines = cam.stop()
+    if cam_off:
+        print("Stopped (camera turned off too)." if stopped
+              else "Stack was not running; camera stopped.")
+    elif stopped:
         print("Stopped.")
     else:
         print("Was not running.")
+        for line in cam_lines or []:
+            if "Camera was not on." not in line:
+                print(line)
 
 
 def cmd_killall(args):
     """Force-kill the whole stack plus any stray service processes that a
     plain `down` would leave behind (untracked proxies, orphan klipper/
     moonraker/caffeinate)."""
-    killed = process.kill_all()
+    killed = process.kill_all() + cam.kill_orphans()
     if not killed:
         print("Nothing to kill.")
         return
@@ -120,6 +133,15 @@ def cmd_status(args):
         print(line)
     print("  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
         pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]))
+    st = shaper.readiness()
+    print("  shaper       " + st["detail"])
+    cam_state = cam.running()
+    if cam_state:
+        print("  camera       on  " + cam.stream_url(cam_state.get("port")))
+    elif cam.helper_path():
+        print("  camera       off  (turn on: klipperformac cam on)")
+    else:
+        print("  camera       not installed (build: klipperformac cam build)")
     updates, errors = versions.check_updates()
     for e in errors:
         print("  [!] " + e)
@@ -426,6 +448,52 @@ def cmd_gcode(args):
     print("sent: " + script + "  (output appears in: klipperformac logs)")
 
 
+def cmd_cam(args):
+    action = args.action
+    if action == "on":
+        ok, lines = cam.start()
+    elif action == "off":
+        ok, lines = cam.stop()
+    elif action == "status":
+        ok, lines = True, cam.status()
+    elif action == "list":
+        ok, lines = cam.list_devices()
+    elif action == "snapshot":
+        ok, lines = cam.snapshot(args.path)
+    elif action == "build":
+        ok, lines = cam.build_helper()
+    else:  # config
+        kw = {}
+        for flag in ("device", "width", "height", "fps", "quality"):
+            value = getattr(args, flag)
+            if value is None:
+                continue
+            if flag != "device":
+                lo, hi = {"width": (160, 4096), "height": (120, 4096),
+                          "fps": (1, 60), "quality": (1, 100)}[flag]
+                if not lo <= value <= hi:
+                    _die("cam config: {} must be between {} and {} "
+                         "(got {})".format(flag, lo, hi, value))
+            kw[flag] = value
+        if kw:
+            merged = cam.save_prefs(**kw)
+            ok = True
+            lines = ["Saved camera settings: " + ", ".join(
+                "{}={}".format(k, kw[k]) for k in sorted(kw)),
+                "Turn the camera off and on again to apply."]
+        else:
+            ok = True
+            p = cam.prefs()
+            lines = ["Camera settings:"] + [
+                "  {:<9} {}".format(k, p.get(k)) for k in
+                ("device", "width", "height", "fps", "quality")]
+            lines.append("Change with: klipperformac cam config --fps 20 "
+                         "--quality 90 --device <camera name>")
+    print("\n".join(lines) if isinstance(lines, list) else str(lines))
+    if not ok:
+        sys.exit(1)
+
+
 def cmd_selftest(args):
     env = dict(os.environ)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -481,13 +549,29 @@ def cmd_doctor(args):
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
         if down:
             print("[!] services not running: " + ", ".join(down))
+    st_shaper = shaper.readiness()
+    if st_shaper["needed"] and not st_shaper["healthy"]:
+        print("[!] shaper: " + st_shaper["detail"])
+        ok = False
+    else:
+        print("[ok] shaper: " + st_shaper["detail"])
+    cam_configured = bool(paths.cam_settings()) or cam.running() is not None \
+        or configgen.webcam_state()[0]
+    for cam_ok, cam_msg in cam.doctor():
+        if cam_ok:
+            print("[ok] camera: " + cam_msg)
+        elif cam_configured:
+            print("[!] camera: " + cam_msg)
+            ok = False
+        else:
+            print("[i]  camera: " + cam_msg)
     sys.exit(0 if ok else 1)
 
 
 def cmd_uninstall(args):
     """Remove the app (launcher symlink + app home). Asks before touching the
     user data folder unless --data/--keep-data says otherwise."""
-    killed = process.kill_all()
+    killed = process.kill_all() + cam.kill_orphans()
     if killed:
         print("Stopped {} process(es).".format(len(killed)))
 
@@ -508,15 +592,6 @@ def cmd_uninstall(args):
         except OSError:
             pass
 
-    removed = []
-    for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
-        if home.exists():
-            shutil.rmtree(home, ignore_errors=True)
-            print("Removed app folder: " + str(home))
-            removed.append(home)
-    if not removed:
-        print("No app installation found at " + str(paths.APP_HOME))
-
     data = paths.DATA
     if args.keep_data:
         remove_data = False
@@ -528,12 +603,39 @@ def cmd_uninstall(args):
         ).strip().lower() in ("y", "yes")
     else:
         remove_data = False
+
+    # The data folder lives inside the app folder by default now: rescue it
+    # BEFORE the app-folder rmtree, or "keep my data" would destroy it.
+    kept = None
+    inside_app = str(data).startswith(str(paths.APP_HOME) + os.sep)
+    if data.exists() and not remove_data and inside_app:
+        base = paths.APP_HOME.parent / (paths.APP_HOME.name + ".data-kept")
+        kept = base
+        n = 1
+        while kept.exists():
+            n += 1
+            kept = base.with_name(base.name + "-" + str(n))
+        shutil.move(str(data), str(kept))
+        print("Moved your data folder out of the app folder: " + str(kept))
+
+    removed = []
+    for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
+        if home.exists():
+            shutil.rmtree(home, ignore_errors=True)
+            print("Removed app folder: " + str(home))
+            removed.append(home)
+    if not removed:
+        print("No app installation found at " + str(paths.APP_HOME))
+
     if remove_data:
         if data in (Path.home(), Path("/")) or not data.exists():
             print("[!] Refusing to delete: " + str(data))
         else:
             shutil.rmtree(data)
             print("Removed data folder: " + str(data))
+    elif kept is not None:
+        print("Kept data folder: {} (point a fresh install at it with "
+              "klipperformac data --set {})".format(kept, kept))
     else:
         print("Kept data folder: {} (delete it yourself if you want)".format(data))
     print("Uninstalled. Reload your shell or open a new terminal to clear the "
@@ -554,7 +656,11 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd")
     sub.required = True
 
-    sub.add_parser("setup", help="fetch upstream components + verify build")
+    p = sub.add_parser("setup", help="fetch upstream components + verify build")
+    p.add_argument("--with-shaper", action="store_true",
+                   help="also build the Python 3.14 venv for SHAPER_CALIBRATE")
+    p.add_argument("--install-python", action="store_true",
+                   help="let setup install python@3.14 via Homebrew if missing")
     p = sub.add_parser("up", help="start klipper + moonraker + mainsail")
     p.add_argument("--open", action="store_true", help="open browser")
     sub.add_parser("down", help="stop everything")
@@ -590,6 +696,19 @@ def main(argv=None):
     p = sub.add_parser("gcode", help="send gcode to Klipper or query status")
     p.add_argument("script", nargs="*")
     p.add_argument("--status", action="store_true")
+    p = sub.add_parser("cam", help="Mac webcam for the printer dashboard "
+                                   "(localhost-only MJPEG stream)")
+    p.add_argument("action", choices=("on", "off", "status", "list",
+                                      "snapshot", "build", "config"))
+    p.add_argument("path", nargs="?",
+                   help="snapshot output file (default: data folder timelapse)")
+    p.add_argument("--device", metavar="NAME", help="camera name or index")
+    p.add_argument("--width", type=int)
+    p.add_argument("--height", type=int)
+    p.add_argument("--fps", type=int)
+    p.add_argument("--quality", type=int, help="JPEG quality 1-100")
+    p.add_argument("--show", action="store_true",
+                   help="with config: show current settings")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
     sub.add_parser("tui", help="interactive dashboard (default with no args)")
@@ -609,6 +728,7 @@ def main(argv=None):
         "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
+        "cam": cmd_cam,
         "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
     }
     handlers[args.cmd](args)

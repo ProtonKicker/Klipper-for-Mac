@@ -16,7 +16,7 @@ import signal
 import subprocess
 import time
 
-from . import paths
+from . import paths, shaper
 from .compat import (build_env, ensure_runtime_shims, invalidate_stale_build,
                      shim_env)
 
@@ -183,11 +183,14 @@ def start():
     ensure_runtime_shims(paths.VENV_PY)
 
     py = str(paths.VENV_PY)
+    # klippy alone may run on the Python 3.14 shaper venv (numpy is imported
+    # in-process by shaper_calibrate); moonraker always stays on the main venv.
+    kpy = shaper.interpreter_for_klipper()[0]
     klipper_klippy = paths.KLIPPER / "klippy"
     env = build_env()
 
     kproc = _popen(
-        [py, str(klipper_klippy / "klippy.py"),
+        [kpy, str(klipper_klippy / "klippy.py"),
          "-a", str(paths.API_SOCKET), "-l", str(paths.KLIPPY_LOG),
          str(paths.PRINTER_CFG)],
         cwd=str(klipper_klippy), env=env,

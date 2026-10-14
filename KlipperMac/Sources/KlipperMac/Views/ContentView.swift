@@ -2,18 +2,21 @@ import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
     case printer = "Printer"
+    case camera = "Camera"
     case settings = "Settings"
 
     var id: String { rawValue }
     var icon: FlatIconKind {
         switch self {
         case .printer: return .grid
+        case .camera: return .camera
         case .settings: return .gear
         }
     }
     var tint: Color {
         switch self {
         case .printer: return FlatPalette.brown
+        case .camera: return FlatPalette.blue
         case .settings: return FlatPalette.red
         }
     }
@@ -47,6 +50,8 @@ struct ContentView: View {
             switch pane ?? .printer {
             case .printer:
                 DashboardView()
+            case .camera:
+                CameraView()
             case .settings:
                 SettingsView()
             }

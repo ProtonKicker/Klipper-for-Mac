@@ -13,6 +13,7 @@ final class KEnvironment {
     let webPort: Int
     let fluiddPort: Int
     let moonrakerPort: Int
+    let camPort: Int
 
     private init() {
         let e = ProcessInfo.processInfo.environment
@@ -20,6 +21,7 @@ final class KEnvironment {
         webPort = Int(e["KLIPPERFORMAC_WEB_PORT"] ?? "") ?? 8080
         fluiddPort = Int(e["KLIPPERFORMAC_FLUIDD_PORT"] ?? "") ?? 8081
         moonrakerPort = Int(e["KLIPPERFORMAC_MOONRAKER_PORT"] ?? "") ?? 7125
+        camPort = Int(e["KLIPPERFORMAC_CAM_PORT"] ?? "") ?? 8082
     }
 
     // MARK: - cache
@@ -98,10 +100,17 @@ final class KEnvironment {
         let e = ProcessInfo.processInfo.environment
         if let env = e["KLIPPERFORMAC_DATA"] { return URL(fileURLWithPath: expand(env)) }
         if let s = settings["data"] as? String, !s.isEmpty { return URL(fileURLWithPath: expand(s)) }
-        let def = URL(fileURLWithPath: expand("~/Documents/Klipper for Mac"))
+        let docs = URL(fileURLWithPath: expand("~/Documents/Klipper for Mac"))
+        // Mirrors paths.py: the default folder now lives inside the app home
+        // (macOS never asks for Documents permission there); a returning user
+        // keeps a pre-existing folder. Migrations are the CLI's job, not ours.
+        if fm.fileExists(atPath: docs.path) { return docs }
+        let new = appHome.appendingPathComponent("data")
         let legacy = URL(fileURLWithPath: expand("~/KlipperData"))
-        if !fm.fileExists(atPath: def.path) && fm.fileExists(atPath: legacy.path) { return legacy }
-        return def
+        if !fm.fileExists(atPath: new.path) && fm.fileExists(atPath: legacy.path) {
+            return legacy
+        }
+        return new
     }
 
     static func resolveCLI() -> URL? {
@@ -146,6 +155,7 @@ final class KEnvironment {
     var run: URL { data.appendingPathComponent("run") }
     var state: URL { run.appendingPathComponent("state.json") }
     var logs: URL { data.appendingPathComponent("logs") }
+    var timelapse: URL { data.appendingPathComponent("timelapse") }
     var klippyLog: URL { logs.appendingPathComponent("klippy.log") }
     var moonrakerLog: URL { logs.appendingPathComponent("moonraker.log") }
     var venvPy: URL { appHome.appendingPathComponent("venv/bin/python") }
@@ -193,4 +203,5 @@ final class KEnvironment {
     func uiURL(_ name: String) -> String { "http://localhost:\(uiPort(name))" }
     var webURL: String { uiURL(uiName) }
     var moonrakerURL: String { "http://localhost:\(moonrakerPort)" }
+    var camURL: String { "http://localhost:\(camPort)" }
 }

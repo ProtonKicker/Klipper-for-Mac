@@ -11,7 +11,7 @@ enum FlatPalette {
 }
 
 enum FlatIconKind {
-    case grid, moon, gear, warning, download, link, info, check, close
+    case grid, moon, gear, warning, download, link, info, check, close, camera
 }
 
 struct FlatIcon: View {
@@ -62,6 +62,11 @@ struct FlatIcon: View {
             case .close:
                 Circle().fill(soft)
                 CloseGlyph().stroke(color, style: stroke)
+
+            case .camera:
+                CameraLens().fill(soft)
+                CameraBody().fill(color, style: FillStyle(eoFill: true))
+                CameraBump().fill(color)
             }
         }
         .frame(width: size, height: size)
@@ -267,5 +272,30 @@ private struct CloseGlyph: Shape {
         p.move(to: g.p(8.4, 8.4)); p.addLine(to: g.p(15.6, 15.6))
         p.move(to: g.p(15.6, 8.4)); p.addLine(to: g.p(8.4, 15.6))
         return p
+    }
+}
+
+private struct CameraBody: Shape {
+    func path(in rect: CGRect) -> Path {
+        let g = IconGrid(rect)
+        var p = Path(roundedRect: g.box(1.8, 6.6, 20.4, 13.8),
+                     cornerSize: CGSize(width: g.r(2.8), height: g.r(2.8)))
+        p.addPath(g.ring(12, 13.5, 4.3))
+        p.addPath(g.ring(19.4, 9.6, 1.1))
+        return p
+    }
+}
+
+private struct CameraLens: Shape {
+    func path(in rect: CGRect) -> Path {
+        IconGrid(rect).ring(12, 13.5, 4.3)
+    }
+}
+
+private struct CameraBump: Shape {
+    func path(in rect: CGRect) -> Path {
+        let g = IconGrid(rect)
+        return Path(roundedRect: g.box(4.0, 3.6, 6.6, 3.6),
+                    cornerSize: CGSize(width: g.r(1.4), height: g.r(1.4)))
     }
 }

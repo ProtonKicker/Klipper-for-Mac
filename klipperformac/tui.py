@@ -16,7 +16,7 @@ import time
 import urllib.request
 import webbrowser
 
-from . import configgen, detect, paths, process, versions
+from . import cam, configgen, detect, paths, process, shaper, versions
 from .cli import relocate_data
 from .installer import (checkout, create_venv, fetch_fluidd, fetch_mainsail,
                         install_requirements, test_chelper_build)
@@ -75,6 +75,7 @@ class App(object):
         self.save_name = ""
         self.data_input = ""
         self.footnote = ""
+        self._shaper = None
 
     # Transient: status-line messages fade out so they don't masquerade as
     # current state (e.g. "restarting..." lingering after the restart).
@@ -119,6 +120,17 @@ class App(object):
                 configgen.apply_lan(settings["lan"])
                 self.message = ("LAN {} — [r] restart to apply".format(
                     "on" if settings["lan"] else "off"))
+            elif action == "camera":
+                if cam.running() is not None:
+                    ok, lines = cam.stop()
+                    self.message = ("camera off" if ok else
+                                    (lines[0] if lines else
+                                     "camera stop failed"))
+                else:
+                    ok, lines = cam.start()
+                    self.message = (("camera on  " + cam.stream_url())
+                                    if ok else (lines[0] if lines else
+                                                "camera failed"))
             elif action == "serial":
                 ports = detect.scan()
                 if not ports:
@@ -251,6 +263,9 @@ class App(object):
             pins.get("klipper_sha", "")[:7] or pins["klipper"],
             pins["moonraker"], pins.get("ui", "fluidd")))
         row(8, "data", str(paths.DATA))
+        cam_state = cam.running()
+        row(9, "camera", ("on   " + cam.stream_url(cam_state.get("port"))
+                          if cam_state else "off   [c] turn it on"))
         ui = pins.get("ui", "fluidd")
         api_host = "localhost"
         if paths.lan_enabled():
@@ -266,6 +281,9 @@ class App(object):
             lan_line = "closed (this Mac only)   [a] open to local network"
         row(10, "lan", lan_line)
         row(11, "api", "http://{}:{}".format(api_host, paths.MOONRAKER_PORT))
+        if self._shaper is None:
+            self._shaper = shaper.readiness()
+        row(12, "shaper", self._shaper["detail"])
         y = 13
         if self.mode == "main":
             col = lambda s: s.ljust(24)
@@ -273,7 +291,8 @@ class App(object):
                 col("[s] start") + col("[o] open dashboard") + "[w] switch UI",
                 col("[x] stop") + col("[r] restart") + col("[q] quit cli") + "[k] kill all & exit",
                 "",
-                col("[d] serial device") + col("[p] presets") + "[f] data folder",
+                col("[d] serial device") + col("[p] presets") +
+                    col("[f] data folder") + "[c] camera",
                 col("[l] klipper logs") + col("[m] moonraker logs") + "[u] updates",
                 col("[a] lan access") + ("open" if paths.lan_enabled() else "closed"),
             ]
@@ -327,7 +346,7 @@ class App(object):
             table = {"s": "start", "x": "stop",
                      "r": "restart", "o": "open",
                      "w": "toggle_ui", "d": "serial", "p": "presets",
-                     "f": "data", "a": "toggle_lan",
+                     "f": "data", "a": "toggle_lan", "c": "camera",
                      "l": ("logs", "klipper"), "m": ("logs", "moonraker"),
                      "u": "update"}
             c = chr(ch) if ch > 0 else ""

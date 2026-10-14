@@ -16,7 +16,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import configgen, paths
+from . import configgen, paths, shaper
 from .compat import build_env, ensure_runtime_shims, invalidate_stale_build
 from .versions import REPOS, load_pins, save_pins
 
@@ -284,7 +284,7 @@ def test_chelper_build():
             "compat shims.\n" + detail)
 
 
-def setup(verbose=True):
+def setup(verbose=True, with_shaper=False, install_python=False):
     pins = load_pins()
     save_pins(pins)
     problems = check_prereqs()
@@ -317,6 +317,8 @@ def setup(verbose=True):
             print("[!] {} checkout is not pristine:\n{}".format(comp, out))
     elif verbose:
         print("  upstream checkouts verified pristine (git status clean)")
+    shaper.ensure_shaper(with_shaper=with_shaper, install_python=install_python,
+                         verbose=verbose)
     if verbose:
         print("\nAll components fetched from upstream and verified to build on "
               "this Mac.\nNext: connect your printer board, run `klipperformac "

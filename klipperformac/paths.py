@@ -10,10 +10,13 @@ def _p(env, default):
 APP_HOME = _p("KLIPPERFORMAC_HOME", "~/.klipperformac")
 
 # User-visible data folder. Resolution order: env var, settings.json
-# (written by `klipperformac data --set`), then the default.
+# (written by `klipperformac data --set`), the default inside APP_HOME
+# (macOS never asks for Documents permission there), then pre-existing
+# legacy folders for returning users (never moved without `data --set`).
 SETTINGS = APP_HOME / "settings.json"
-DEFAULT_DATA = "~/Documents/Klipper for Mac"
+DEFAULT_DATA = APP_HOME / "data"
 LEGACY_DATA = "~/KlipperData"
+LEGACY_DOCUMENTS = "~/Documents/Klipper for Mac"
 
 
 def load_settings():
@@ -37,26 +40,31 @@ def _resolve_data():
     saved = load_settings().get("data")
     if saved:
         return Path(saved).expanduser()
-    new = Path(DEFAULT_DATA).expanduser()
+    docs = Path(LEGACY_DOCUMENTS).expanduser()
+    if docs.exists():
+        return docs
     old = Path(LEGACY_DATA).expanduser()
-    if old.exists() and not new.exists():
+    if old.exists() and not DEFAULT_DATA.exists():
         try:
-            old.rename(new)
+            DEFAULT_DATA.parent.mkdir(parents=True, exist_ok=True)
+            old.rename(DEFAULT_DATA)
         except OSError:
             return old
-    return new
+        return DEFAULT_DATA
+    return DEFAULT_DATA
 
 
 WEB_PORT = int(os.environ.get("KLIPPERFORMAC_WEB_PORT", "8080"))
 FLUIDD_PORT = int(os.environ.get("KLIPPERFORMAC_FLUIDD_PORT", "8081"))
 MOONRAKER_PORT = int(os.environ.get("KLIPPERFORMAC_MOONRAKER_PORT", "7125"))
+CAM_PORT = int(os.environ.get("KLIPPERFORMAC_CAM_PORT", "8082"))
 
 
 def set_data(path):
     """Point all data-derived paths at a new folder (relocation-safe)."""
     global DATA, CONFIG, PRESETS, PRINTER_CFG, MOONRAKER_CONF, RUN, STATE
     global LOGS, WEB, WEB_MAINSAIL, WEB_FLUIDD, API_SOCKET, KLIPPY_LOG
-    global MOONRAKER_LOG
+    global MOONRAKER_LOG, CAM_STATE, CAM_LOG, TIMELAPSE
     DATA = Path(path).expanduser()
     CONFIG = DATA / "config"
     PRESETS = CONFIG / "presets"
@@ -71,6 +79,9 @@ def set_data(path):
     API_SOCKET = RUN / "klippy.sock"
     KLIPPY_LOG = LOGS / "klippy.log"
     MOONRAKER_LOG = LOGS / "moonraker.log"
+    CAM_STATE = RUN / "cam.json"
+    CAM_LOG = LOGS / "klippacam.log"
+    TIMELAPSE = DATA / "timelapse"
 
 
 set_data(_resolve_data())
@@ -98,7 +109,33 @@ if not os.environ.get("KLIPPERFORMAC_HOME"):
 KLIPPER = APP_HOME / "klipper"
 MOONRAKER = APP_HOME / "moonraker"
 VENV_PY = APP_HOME / "venv" / "bin" / "python"
+# Shaper-only interpreter (Python 3.14): Klipper imports numpy in-process for
+# SHAPER_CALIBRATE, so klippy runs here when the printer.cfg needs it.
+SHAPER_VENV = APP_HOME / "venv-shaper"
+SHAPER_PY = SHAPER_VENV / "bin" / "python"
+BIN = APP_HOME / "bin"
+CAM_BIN = BIN / "KlipperCam"
 LOCKFILE = APP_HOME / "lockfile.json"
+
+
+def cam_settings():
+    """Camera prefs from settings.json: device/width/height/fps/quality."""
+    cam = load_settings().get("cam")
+    return dict(cam) if isinstance(cam, dict) else {}
+
+
+def save_cam_settings(**kwargs):
+    settings = load_settings()
+    cam = settings.get("cam")
+    cam = dict(cam) if isinstance(cam, dict) else {}
+    for key, value in kwargs.items():
+        if value is None:
+            cam.pop(key, None)
+        else:
+            cam[key] = value
+    settings["cam"] = cam
+    save_settings(settings)
+    return cam
 
 
 def lan_enabled():
