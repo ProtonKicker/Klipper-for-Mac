@@ -233,13 +233,58 @@ final class AppModel: ObservableObject {
     static let camListFailed = "Camera list not ready — press Turn on camera, then Refresh."
     static let camGuidance: Set<String> = [camListNoCLI, camListFailed]
 
-    /// Camera actions ride the same path as up/down so the busy banner, toast and
-    /// refresh behave identically. No canned `ok:` text: the CLI's own first line
-    /// is the step the beginner has to take next — the one-time "click OK" on the
-    /// macOS camera prompt, or the exact file a snapshot just wrote.
+    /// Camera actions share the busy/refresh behavior of cli(), but the toast
+    /// stays to ONE short line: the CLI prints multi-paragraph guidance for the
+    /// terminal, which reads as a wall of text in a popup. The two hints that
+    /// matter (macOS is asking for permission; a stack restart is needed for
+    /// the web UI) get folded into the short line instead of dropped.
     @discardableResult
     func runCam(_ args: [String]) async -> Bool {
-        await cli(args)
+        busy = true
+        env.invalidateCaches()
+        var ok = false
+        var toast = ""
+        do {
+            let r = try await CLIRunner.shared.run(args)
+            ok = r.exit == 0
+            toast = ok ? Self.camToast(args.first ?? "", output: r.output)
+                       : (Self.firstLine(r.output).isEmpty ? "Camera command failed."
+                                                           : Self.firstLine(r.output))
+        } catch {
+            toast = Self.camListNoCLI
+            say(toast, error: true)
+            busy = false
+            await refresh(reloadEnv: true)
+            return false
+        }
+        busy = false
+        say(toast, error: !ok)
+        await refresh(reloadEnv: true)
+        return ok
+    }
+
+    static func firstLine(_ text: String) -> String {
+        text.split(separator: "\n").first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+    }
+
+    static func camToast(_ action: String, output: String) -> String {
+        let first = firstLine(output)
+        switch action {
+        case "on":
+            if first.contains("ask once") { return "macOS is asking for camera access — click OK." }
+            return output.contains("restart")
+                ? "Camera is on — restart the stack once to see it in the web UI."
+                : "Camera is on"
+        case "off":
+            return "Camera is off"
+        case "snapshot":
+            return first  // "Saved: <path>" — short and the point of the action
+        case "config":
+            return "Saved — turn the camera off and on to apply."
+        default:
+            return first.isEmpty ? "Done" : first
+        }
     }
 
     /// A bare CLI process cannot surface the macOS camera prompt — the request
