@@ -2,16 +2,19 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var selectedSerial = ""
+    @State private var selectedPreset = ""
 
     var body: some View {
         Form {
             setupSection
             stackSection
             printerSection
+            printerConfigSection
             lanSection
         }
         .formStyle(.grouped)
-        .navigationTitle("Dashboard")
+        .navigationTitle("Printer")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -86,7 +89,7 @@ struct DashboardView: View {
                     Task { await model.killAll() }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.orange)
+                .tint(FlatPalette.red)
                 .disabled(model.busy || !model.snapshot.tracked)
                 Spacer()
             }
@@ -192,6 +195,60 @@ struct DashboardView: View {
                             Task { await model.cancelPrint() }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - printer config (serial board + preset)
+
+    @ViewBuilder private var printerConfigSection: some View {
+        if model.env.installed {
+            Section("Printer config") {
+                Picker("Serial device", selection: $selectedSerial) {
+                    Text("Select device…").tag("")
+                    if model.serialPorts.isEmpty {
+                        Text("No USB serial devices found").disabled(true).tag(" ")
+                    }
+                    ForEach(model.serialPorts) { port in
+                        Text("\(port.path)   \(port.label)").tag(port.path)
+                    }
+                }
+                .onChange(of: selectedSerial) { value in
+                    if !value.isEmpty {
+                        let path = value
+                        selectedSerial = ""
+                        Task { await model.setSerial(path) }
+                    }
+                }
+
+                Picker("Preset config", selection: $selectedPreset) {
+                    Text("Select config…").tag("")
+                    ForEach(model.presetNames, id: \.self) { name in
+                        Text(name).tag(name)
+                    }
+                }
+                .disabled(model.presetNames.isEmpty)
+                .onChange(of: selectedPreset) { value in
+                    if !value.isEmpty {
+                        let name = value
+                        selectedPreset = ""
+                        Task { await model.usePreset(name) }
+                    }
+                }
+
+                Text("Both write to printer.cfg — restart the stack to apply.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !model.env.printerConfigured {
+                    Label {
+                        Text("No printer.cfg yet — add one to \(model.env.config.path), or apply a preset above.")
+                    } icon: {
+                        FlatIcon(kind: .info, size: 14, color: FlatPalette.amber)
+                    }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

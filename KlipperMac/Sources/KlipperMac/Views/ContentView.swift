@@ -1,19 +1,19 @@
 import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
-    case dashboard = "Dashboard"
+    case printer = "Printer"
     case settings = "Settings"
 
     var id: String { rawValue }
     var icon: FlatIconKind {
         switch self {
-        case .dashboard: return .grid
+        case .printer: return .grid
         case .settings: return .gear
         }
     }
     var tint: Color {
         switch self {
-        case .dashboard: return FlatPalette.brown
+        case .printer: return FlatPalette.brown
         case .settings: return FlatPalette.red
         }
     }
@@ -22,7 +22,7 @@ enum Pane: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("didOpenOnce") private var didOpenOnce = false
-    @State private var pane: Pane? = .dashboard
+    @State private var pane: Pane? = .printer
 
     var body: some View {
         NavigationSplitView {
@@ -41,8 +41,8 @@ struct ContentView: View {
                 MessageBanner(notifier: model.notifier)
             }
         } detail: {
-            switch pane ?? .dashboard {
-            case .dashboard:
+            switch pane ?? .printer {
+            case .printer:
                 DashboardView()
             case .settings:
                 SettingsView()
@@ -52,7 +52,7 @@ struct ContentView: View {
         .task {
             // First run only: land on Settings so the data folder, CLI and
             // printer config are where a new user starts. Later runs open on
-            // the Dashboard.
+            // the Printer pane.
             if !didOpenOnce {
                 didOpenOnce = true
                 pane = .settings
