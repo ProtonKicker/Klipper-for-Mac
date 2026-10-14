@@ -14,11 +14,15 @@ struct CameraView: View {
     @State private var savedDevice = ""
     @State private var fps = 15
     @State private var savedFps = 15
-    @State private var quality = 80
-    @State private var savedQuality = 80
+    @State private var resolution = "1280 x 720"
+    @State private var savedResolution = "1280 x 720"
 
     private let fpsOptions = [10, 15, 20, 25, 30]
-    private let qualityOptions = [60, 70, 80, 90]
+    private let resolutionOptions: [(label: String, width: Int, height: Int)] = [
+        ("640 x 480", 640, 480),
+        ("1280 x 720", 1280, 720),
+        ("1920 x 1080", 1920, 1080),
+    ]
 
     private var env: KEnvironment { model.env }
     private var camOn: Bool { model.camOnline == true }
@@ -185,7 +189,7 @@ struct CameraView: View {
                 Task { await model.runCam(["cam", "config", "--device", value]) }
             }
 
-            Picker("Picture smoothness", selection: $fps) {
+            Picker("FPS (smoothness)", selection: $fps) {
                 ForEach(fpsOptions, id: \.self) { ticks in
                     Text("\(ticks)").tag(ticks)
                 }
@@ -197,20 +201,26 @@ struct CameraView: View {
                 Task { await model.runCam(["cam", "config", "--fps", String(value)]) }
             }
 
-            Picker("Picture quality", selection: $quality) {
-                ForEach(qualityOptions, id: \.self) { level in
-                    Text("\(level)%").tag(level)
+            Picker("Resolution", selection: $resolution) {
+                ForEach(resolutionOptions, id: \.label) { option in
+                    Text(option.label).tag(option.label)
                 }
             }
             .pickerStyle(.segmented)
-            .onChange(of: quality) { value in
-                guard value != savedQuality else { return }
-                savedQuality = value
-                Task { await model.runCam(["cam", "config", "--quality", String(value)]) }
+            .onChange(of: resolution) { value in
+                guard value != savedResolution,
+                      let pick = resolutionOptions.first(where: { $0.label == value })
+                else { return }
+                savedResolution = value
+                Task { await model.runCam(["cam", "config",
+                                           "--width", String(pick.width),
+                                           "--height", String(pick.height)]) }
             }
 
-            Text("Smoothness is how often the picture updates. Quality is how sharp it looks. "
-                 + "Higher values use more of your Mac. Turn the camera off and on again to apply.")
+            Text("FPS is how smooth the motion looks; resolution is how large and "
+                 + "sharp the picture is. Higher values use more of your Mac. Some "
+                 + "built-in cameras cap at 1280 x 720 — the best supported picture "
+                 + "is used automatically. Turn the camera off and on again to apply.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -243,14 +253,17 @@ struct CameraView: View {
         guard !prefsLoaded else { return }
         prefsLoaded = true
         let cam = env.settings["cam"] as? [String: Any] ?? [:]
-        // The CLI only bounds these (fps 1-60, quality 1-100), so a saved value
-        // can sit between our steps. Show the nearest step rather than the
-        // default — the picker must never claim a number that is not set.
+        // The CLI only bounds these (fps 1-60, width/height 120-4096), so a
+        // saved value can sit between our steps. Show the nearest step rather
+        // than the default — the picker must never claim a number that is not set.
         if let f = cam["fps"] as? Int {
             let near = nearest(f, fpsOptions); fps = near; savedFps = near
         }
-        if let q = cam["quality"] as? Int {
-            let near = nearest(q, qualityOptions); quality = near; savedQuality = near
+        if let w = cam["width"] as? Int {
+            let near = resolutionOptions.min {
+                abs($0.width - w) < abs($1.width - w)
+            }?.label ?? resolution
+            resolution = near; savedResolution = near
         }
         if let d = cam["device"] as? String, !d.isEmpty {
             selectedDevice = d; savedDevice = d
