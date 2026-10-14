@@ -57,10 +57,12 @@ final class AppModel: ObservableObject {
     private var observingActive = false
     private var ticks = 0
     private var lastCfgHash: String?
+    private var cfgWatch: DispatchSourceFileSystemObject?
 
     func bootstrap() async {
         await refresh()
         startPolling()
+        startConfigWatch()
         if !observingActive {
             observingActive = true
             let center = NotificationCenter.default
@@ -111,6 +113,47 @@ final class AppModel: ObservableObject {
     private func stopPolling() {
         timer?.invalidate()
         timer = nil
+    }
+
+    /// Event-based watcher on the config directory: edits made in TextEdit
+    /// must produce a saved version even while the app is backgrounded
+    /// (polling stops when inactive). Re-arms after each event because an
+    /// atomic save can replace the directory entry itself.
+    func startConfigWatch() {
+        cfgWatch?.cancel()
+        let fd = open(env.config.path, O_EVTONLY)
+        guard fd >= 0 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.startConfigWatch()
+            }
+            return
+        }
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        src.setCancelHandler { close(fd) }
+        src.setEventHandler { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.checkConfigVersion()
+                self.startConfigWatch()
+            }
+        }
+        cfgWatch = src
+        src.resume()
+    }
+
+    @MainActor
+    func checkConfigVersion() async {
+        let url = env.printerCfg
+        let hash: String? = await Task.detached(priority: .utility) {
+            guard let d = try? Data(contentsOf: url) else { return nil }
+            return SHA256.hash(data: d).description
+        }.value
+        guard let hash else { return }
+        if lastCfgHash == nil { lastCfgHash = hash; return }
+        guard hash != lastCfgHash else { return }
+        lastCfgHash = hash
+        _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"])
     }
 
     func refresh(reloadEnv: Bool = false) async {
