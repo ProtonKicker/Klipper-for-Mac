@@ -33,17 +33,22 @@ struct DashboardView: View {
     @ViewBuilder private var setupSection: some View {
         if !model.env.installed {
             Section("Setup") {
-                Label("Klipper stack is not installed on this Mac",
-                      systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.orange)
+                Label {
+                    Text("Klipper stack is not installed on this Mac")
+                } icon: {
+                    FlatIcon(kind: .warning, size: 16, color: FlatPalette.amber)
+                }
                 Text("Installs pristine Klipper, Moonraker, Mainsail and Fluidd from GitHub. Takes a few minutes and needs internet.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Button {
                     Task { await model.runSetup() }
                 } label: {
-                    Label(model.busy ? "Working…" : "Install stack",
-                          systemImage: "square.and.arrow.down")
+                    Label {
+                        Text(model.busy ? "Working…" : "Install stack")
+                    } icon: {
+                        FlatIcon(kind: .download, size: 14, color: FlatPalette.blue)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.busy)
@@ -113,15 +118,37 @@ struct DashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
                   alignment: .leading, spacing: 6) {
             ForEach(model.snapshot.services, id: \.name) { s in
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(s.up ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
+                HStack(spacing: 8) {
+                    FlatIcon(kind: Self.serviceIcon(s.name), size: 14,
+                             color: Self.serviceTint(s.name))
                     Text(StackReader.pretty(s.name))
                         .font(.callout)
                     Spacer()
+                    Circle()
+                        .fill(s.up ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
                 }
             }
+        }
+    }
+
+    private static func serviceIcon(_ name: String) -> FlatIconKind {
+        switch name {
+        case "klipper": return .gear
+        case "moonraker": return .moon
+        case "web_mainsail", "web_fluidd": return .link
+        case "caffeinate": return .check
+        default: return .info
+        }
+    }
+
+    private static func serviceTint(_ name: String) -> Color {
+        switch name {
+        case "klipper": return FlatPalette.brown
+        case "moonraker": return FlatPalette.purple
+        case "web_mainsail", "web_fluidd": return FlatPalette.blue
+        case "caffeinate": return FlatPalette.green
+        default: return FlatPalette.amber
         }
     }
 

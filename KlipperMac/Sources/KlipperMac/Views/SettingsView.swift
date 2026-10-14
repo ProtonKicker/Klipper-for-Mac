@@ -30,7 +30,11 @@ struct SettingsView: View {
             Button {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             } label: {
-                Label("Project on GitHub", systemImage: "link")
+                Label {
+                    Text("Project on GitHub")
+                } icon: {
+                    FlatIcon(kind: .link, size: 14, color: FlatPalette.brown)
+                }
             }
         }
     }
@@ -159,8 +163,11 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 if !env.printerConfigured {
-                    Label("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.",
-                          systemImage: "info.circle")
+                    Label {
+                        Text("No printer.cfg yet — add one to \(env.config.path), or apply a preset above.")
+                    } icon: {
+                        FlatIcon(kind: .info, size: 14, color: FlatPalette.amber)
+                    }
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
