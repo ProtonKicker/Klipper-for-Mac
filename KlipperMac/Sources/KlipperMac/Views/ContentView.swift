@@ -5,10 +5,16 @@ enum Pane: String, CaseIterable, Identifiable {
     case settings = "Settings"
 
     var id: String { rawValue }
-    var symbol: String {
+    var icon: FlatIconKind {
         switch self {
-        case .dashboard: return "gauge"
-        case .settings: return "gearshape.fill"
+        case .dashboard: return .grid
+        case .settings: return .gear
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .dashboard: return FlatPalette.brown
+        case .settings: return FlatPalette.red
         }
     }
 }
@@ -22,10 +28,15 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $pane) {
                 ForEach(Pane.allCases) { p in
-                    Label(p.rawValue, systemImage: p.symbol).tag(p)
+                    Label {
+                        Text(p.rawValue)
+                    } icon: {
+                        FlatIcon(kind: p.icon, size: 16, color: p.tint)
+                    }
+                    .tag(p)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+            .navigationSplitViewColumnWidth(min: 150, ideal: 170)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 MessageBanner(notifier: model.notifier)
             }

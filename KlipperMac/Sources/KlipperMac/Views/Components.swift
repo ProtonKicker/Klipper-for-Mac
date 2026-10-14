@@ -26,20 +26,16 @@ struct MessageBanner: View {
     var body: some View {
         if let m = notifier.message {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    Image(systemName: notifier.isError
-                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(notifier.isError ? Color.orange : Color.green)
+                HStack(spacing: 6) {
+                    FlatIcon(kind: notifier.isError ? .warning : .check, size: 14,
+                             color: notifier.isError ? FlatPalette.amber : FlatPalette.green)
                     Text(notifier.isError ? "Problem" : "Done")
                         .font(.caption.bold())
                     Spacer()
                     Button {
                         notifier.message = nil
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        FlatIcon(kind: .close, size: 13, color: Color.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -65,7 +61,11 @@ struct BrowserLink: View {
 
     var body: some View {
         HStack {
-            Text(label)
+            Label {
+                Text(label)
+            } icon: {
+                FlatIcon(kind: .link, size: 14, color: FlatPalette.blue)
+            }
             Spacer()
             Button(url) {
                 model.openURL(url)
