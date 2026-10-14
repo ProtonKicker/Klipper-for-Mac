@@ -16,6 +16,9 @@ final class AppModel: ObservableObject {
     @Published var serialPorts: [SerialPort] = []
     @Published var presetNames: [String] = []
     @Published var busy = false
+    /// Selected interface lives here rather than in KEnvironment so a tap is
+    /// reflected at once instead of after the CLI round-trip and cache refill.
+    @Published var uiName = KEnvironment.shared.uiName
 
     let notifier = Notifier()
 
@@ -31,6 +34,7 @@ final class AppModel: ObservableObject {
     private var timer: Timer?
     private var clearTask: Task<Void, Never>?
     private var refreshInFlight = false
+    private var refreshQueued = false
     private var observingActive = false
     private var ticks = 0
 
@@ -69,10 +73,21 @@ final class AppModel: ObservableObject {
         timer = nil
     }
 
-    func refresh() async {
-        guard !refreshInFlight else { return }
+    func refresh(reloadEnv: Bool = false) async {
+        if reloadEnv { env.invalidateCaches() }
+        // A 2s poll is usually in flight when a command finishes or the user
+        // hits Refresh. Dropping those requests is what made the UI lag a poll
+        // tick behind, so coalesce them into one trailing pass.
+        guard !refreshInFlight else { refreshQueued = true; return }
         refreshInFlight = true
         defer { refreshInFlight = false }
+        repeat {
+            refreshQueued = false
+            await refreshOnce()
+        } while refreshQueued
+    }
+
+    private func refreshOnce() async {
         let env = self.env
         // Presets are only listed in Settings and the scan can block on iCloud;
         // check them every ~10s instead of every tick.
@@ -91,6 +106,7 @@ final class AppModel: ObservableObject {
             if snap != snapshot { snapshot = snap }
             if printer != self.printer { self.printer = printer }
             if serials != serialPorts { serialPorts = serials }
+            if env.uiName != uiName { uiName = env.uiName }
         }
         if let presets, presets != presetNames { presetNames = presets }
     }
@@ -112,22 +128,26 @@ final class AppModel: ObservableObject {
     func cli(_ args: [String], ok: String? = nil) async -> Bool {
         busy = true
         env.invalidateCaches()
-        defer { busy = false }
+        let exit: Int32
         do {
             let r = try await CLIRunner.shared.run(args)
+            exit = r.exit
             if r.exit == 0 {
                 say(ok ?? r.output)
             } else {
                 say(r.output.isEmpty ? "klipperformac \(args.first ?? "") failed (exit \(r.exit))"
                                      : r.output, error: true)
             }
-            await refresh()
-            return r.exit == 0
         } catch {
             say("Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh",
                 error: true)
-            return false
+            exit = -1
         }
+        // Release the screen before refreshing: refreshOnce() skips its writes
+        // while busy, so refreshing inside the busy window published nothing.
+        busy = false
+        await refresh(reloadEnv: true)
+        return exit == 0
     }
 
     func startStack() async { _ = await cli(["up"], ok: "Started") }
@@ -140,16 +160,16 @@ final class AppModel: ObservableObject {
     func setLAN(_ on: Bool) async {
         busy = true
         env.invalidateCaches()
-        defer { busy = false }
         do {
             let r = try await CLIRunner.shared.run(["lan", on ? "on" : "off"])
             if r.exit != 0 {
                 say(r.output.isEmpty ? "Could not change LAN access." : r.output, error: true)
             }
-            await refresh()
         } catch {
             say("Klipper CLI not found.", error: true)
         }
+        busy = false
+        await refresh(reloadEnv: true)
     }
     func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"], ok: "Switched to \(name.capitalized)") }
     func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path], ok: "Serial device set") }

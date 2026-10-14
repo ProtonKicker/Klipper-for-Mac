@@ -5,6 +5,8 @@ struct DashboardView: View {
     @State private var selectedSerial = ""
     @State private var selectedPreset = ""
 
+    private let stackButtonWidth: CGFloat = 92
+
     var body: some View {
         Form {
             setupSection
@@ -18,7 +20,7 @@ struct DashboardView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    Task { await model.refresh() }
+                    Task { await model.refresh(reloadEnv: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -69,24 +71,32 @@ struct DashboardView: View {
                 Spacer()
             }
             HStack(spacing: 8) {
-                Button("Start") {
+                Button {
                     Task { await model.startStack() }
+                } label: {
+                    Text("Start").frame(width: stackButtonWidth)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.busy || model.snapshot.anyUp || !model.env.installed)
 
-                Button("Stop") {
+                Button {
                     Task { await model.stopStack() }
+                } label: {
+                    Text("Stop").frame(width: stackButtonWidth)
                 }
                 .disabled(model.busy || !model.snapshot.tracked)
 
-                Button("Restart") {
+                Button {
                     Task { await model.restartStack() }
+                } label: {
+                    Text("Restart").frame(width: stackButtonWidth)
                 }
                 .disabled(model.busy || !model.env.installed)
 
-                Button("Kill all", role: .destructive) {
+                Button {
                     Task { await model.killAll() }
+                } label: {
+                    Text("Kill all").frame(width: stackButtonWidth)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(FlatPalette.red)
@@ -94,44 +104,50 @@ struct DashboardView: View {
                 Spacer()
             }
 
-            if model.snapshot.tracked { serviceGrid }
+            if model.snapshot.tracked { serviceRow }
 
-            Picker("Default interface", selection: Binding(
-                get: { model.env.uiName },
-                set: { name in
-                    if name != model.env.uiName {
-                        Task { await model.switchUI(name) }
-                    }
-                }
-            )) {
+            Picker("Default interface", selection: $model.uiName) {
                 Text("Fluidd").tag("fluidd")
                 Text("Mainsail").tag("mainsail")
             }
             .pickerStyle(.segmented)
+            .onChange(of: model.uiName) { name in
+                if name != model.env.uiName {
+                    Task { await model.switchUI(name) }
+                }
+            }
 
-            BrowserLink(label: model.env.uiName == "mainsail" ? "Mainsail" : "Fluidd",
-                        url: model.env.webURL)
+            BrowserLink(label: model.uiName == "mainsail" ? "Mainsail" : "Fluidd",
+                        url: model.env.uiURL(model.uiName))
             if model.snapshot.anyUp {
                 BrowserLink(label: "Moonraker API", url: model.env.moonrakerURL)
             }
         }
     }
 
-    private var serviceGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
-                  alignment: .leading, spacing: 6) {
-            ForEach(model.snapshot.services, id: \.name) { s in
-                HStack(spacing: 8) {
-                    FlatIcon(kind: Self.serviceIcon(s.name), size: 14,
+    private var serviceRow: some View {
+        HStack(spacing: 18) {
+            ForEach(model.snapshot.services.filter { $0.name != "caffeinate" },
+                    id: \.name) { s in
+                HStack(spacing: 6) {
+                    FlatIcon(kind: Self.serviceIcon(s.name), size: 13,
                              color: Self.serviceTint(s.name))
-                    Text(StackReader.pretty(s.name))
+                    Text(Self.shortName(s.name))
                         .font(.callout)
-                    Spacer()
                     Circle()
                         .fill(s.up ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 7, height: 7)
                 }
             }
+            Spacer()
+        }
+    }
+
+    private static func shortName(_ name: String) -> String {
+        switch name {
+        case "web_mainsail": return "Mainsail"
+        case "web_fluidd": return "Fluidd"
+        default: return StackReader.pretty(name)
         }
     }
 
@@ -265,7 +281,7 @@ struct DashboardView: View {
             if model.env.lanEnabled {
                 if let ip = Net.lanIP() {
                     BrowserLink(label: "LAN UI",
-                                url: "http://\(ip):\(model.env.uiPort(model.env.uiName))")
+                                url: "http://\(ip):\(model.env.uiPort(model.uiName))")
                     BrowserLink(label: "LAN API",
                                 url: "http://\(ip):\(model.env.moonrakerPort)")
                     Text("Restart the stack to apply.")

@@ -21,9 +21,6 @@ struct SettingsView: View {
     private var aboutSection: some View {
         Section("About") {
             LabeledContent("App version", value: appVersion)
-            LabeledContent("Klipper CLI",
-                           value: env.cliURL?.path ?? "not found")
-                .foregroundStyle(env.isCLIInstalled ? Color.primary : Color.orange)
             Button {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             } label: {
