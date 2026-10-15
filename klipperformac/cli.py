@@ -19,6 +19,15 @@ def _die(msg):
     sys.exit(1)
 
 
+def _safe_name(name, what="name"):
+    """Reject preset/history names that could escape their directory when
+    joined onto PRESETS/history."""
+    if not name or re.search(r"[/\\]|\.\.|^\.", name):
+        _die("Invalid {} '{}': no path separators, '..', or leading dot "
+             "allowed".format(what, name))
+    return name
+
+
 def cmd_setup(args):
     installer.setup(with_shaper=getattr(args, "with_shaper", False),
                     install_python=getattr(args, "install_python", False))
@@ -446,6 +455,7 @@ def cmd_presets(args):
         print("Restore with: klipperformac presets --restore NAME")
         return
     if args.restore:
+        _safe_name(args.restore, "saved-version name")
         src = _history_dir() / args.restore
         if not src.exists():
             cand = sorted(_history_dir().glob("*" + args.restore + "*"))
@@ -468,11 +478,13 @@ def cmd_presets(args):
     if args.save:
         if not paths.PRINTER_CFG.exists():
             _die("No printer.cfg to save")
+        _safe_name(args.save, "preset name")
         dst = paths.PRESETS / (args.save + ".cfg")
         shutil.copy2(paths.PRINTER_CFG, dst)
         print("Saved preset '{}' -> {}".format(args.save, dst))
         return
     if args.use:
+        _safe_name(args.use, "preset name")
         src = paths.PRESETS / (args.use + ".cfg")
         if not src.exists():
             avail = [p.stem for p in paths.PRESETS.glob("*.cfg")]
@@ -495,6 +507,7 @@ def cmd_presets(args):
         if not os.path.isfile(src):
             _die("File not found: " + src)
         name = args.import_name or os.path.splitext(os.path.basename(src))[0]
+        _safe_name(name, "preset name")
         dst = paths.PRESETS / (name + ".cfg")
         shutil.copy2(src, dst)
         print("Imported {} as preset '{}'".format(src, name))

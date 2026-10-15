@@ -23,8 +23,6 @@ def test_valid_names_work(stack):
     assert (stack.paths.PRESETS / "my-printer_v2.cfg").exists()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: presets --save does not "
-                   "validate the name; '../evil' escapes the presets dir")
 def test_save_dotdot_rejected(stack, tmp_path):
     stack.paths.PRINTER_CFG.write_text("[mcu]\n")
     with pytest.raises(SystemExit):
@@ -33,8 +31,6 @@ def test_save_dotdot_rejected(stack, tmp_path):
     assert not escaped.exists()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: Path(base) / absolute_name "
-                   "silently overrides the base directory")
 def test_save_absolute_rejected(stack, tmp_path):
     outside = tmp_path / "outside.cfg"
     stack.paths.PRINTER_CFG.write_text("[mcu]\n")
@@ -43,8 +39,6 @@ def test_save_absolute_rejected(stack, tmp_path):
     assert not outside.exists()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: presets --use with an "
-                   "absolute path copies ANY file onto printer.cfg")
 def test_use_absolute_rejected(stack, tmp_path):
     sneaky = tmp_path / "sneaky"          # extensionless: --use appends .cfg
     sneaky.with_suffix(".cfg").write_text("[mcu]\nserial: /dev/STOLEN\n")
@@ -54,9 +48,8 @@ def test_use_absolute_rejected(stack, tmp_path):
     assert "STOLEN" not in stack.paths.PRINTER_CFG.read_text()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: presets --restore with a "
-                   "path-traversal name restores ANY file")
 def test_restore_traversal_rejected(stack):
+    stack.home.mkdir(parents=True, exist_ok=True)
     marker = stack.home / "not-history.cfg"
     marker.write_text("[mcu]\nserial: /dev/FROM_OUTSIDE\n")
     stack.paths.PRINTER_CFG.write_text("[mcu]\nserial: /dev/good\n")
