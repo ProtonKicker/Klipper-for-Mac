@@ -7,3 +7,6 @@ KlipperMac/dist/*
 !KlipperMac/dist/Klipper-for-Mac.zip
 .build/
 .DS_Store
+
+.venv-test/
+.pytest_cache/
