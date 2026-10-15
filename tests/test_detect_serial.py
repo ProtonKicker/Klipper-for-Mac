@@ -41,8 +41,6 @@ def test_missing_file(stack, tmp_path):
     assert stack.detect.write_serial(tmp_path / "nope.cfg", "/dev/x") is False
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: [mcu] header as final line "
-                   "without newline -> 'serial:' gets glued onto it")
 def test_mcu_last_line_without_trailing_newline(stack, tmp_path):
     cfg = tmp_path / "printer.cfg"
     cfg.write_text("[fan]\npin: P1\n\n[mcu]")
@@ -51,8 +49,6 @@ def test_mcu_last_line_without_trailing_newline(stack, tmp_path):
     assert cp["mcu"]["serial"] == "/dev/NEW"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: device_path containing "
-                   "newlines injects arbitrary config lines")
 def test_multiline_device_rejected(stack, tmp_path):
     cfg = tmp_path / "printer.cfg"
     cfg.write_text("[mcu]\nserial: /dev/OLD\n")

@@ -51,8 +51,11 @@ def scan():
 
 def write_serial(cfg_path, device_path):
     """Set `serial:` inside the [mcu] section only. Adds the line if [mcu]
-    exists without it; refuses (returns False) if no [mcu] section exists."""
+    exists without it; refuses (returns False) if no [mcu] section exists or
+    the device path could inject config lines."""
     if not cfg_path.exists():
+        return False
+    if re.search(r"[\r\n\0]", device_path):
         return False
     lines = cfg_path.read_text().splitlines(True)
     in_mcu = False
@@ -65,7 +68,8 @@ def write_serial(cfg_path, device_path):
             in_mcu = stripped == "[mcu]"
             has_mcu = has_mcu or in_mcu
         if in_mcu and re.match(r"serial\s*:", stripped):
-            line = "serial: {}\n".format(device_path)
+            eol = "\r\n" if line.endswith("\r\n") else "\n"
+            line = "serial: {}{}".format(device_path, eol)
             in_mcu = False
             replaced = True
         out.append(line)
@@ -75,6 +79,9 @@ def write_serial(cfg_path, device_path):
         out2 = []
         inserted = False
         for line in out:
+            if not inserted and line.strip() == "[mcu]" and \
+                    not line.endswith(("\n", "\r")):
+                line = line + "\n"
             out2.append(line)
             if not inserted and line.strip() == "[mcu]":
                 out2.append("serial: {}\n".format(device_path))

@@ -216,6 +216,8 @@ def cmd_serial(args):
         return
     if not paths.PRINTER_CFG.exists():
         _die("No printer.cfg yet. Run: klipperformac setup")
+    if re.search(r"[\r\n\0]", target):
+        _die("Invalid device path: must not contain newlines")
     if detect.write_serial(paths.PRINTER_CFG, target):
         print("Wrote serial to " + str(paths.PRINTER_CFG))
     else:
