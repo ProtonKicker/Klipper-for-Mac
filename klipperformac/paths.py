@@ -54,10 +54,23 @@ def _resolve_data():
     return DEFAULT_DATA
 
 
-WEB_PORT = int(os.environ.get("KLIPPERFORMAC_WEB_PORT", "8080"))
-FLUIDD_PORT = int(os.environ.get("KLIPPERFORMAC_FLUIDD_PORT", "8081"))
-MOONRAKER_PORT = int(os.environ.get("KLIPPERFORMAC_MOONRAKER_PORT", "7125"))
-CAM_PORT = int(os.environ.get("KLIPPERFORMAC_CAM_PORT", "8082"))
+def _port(env, default):
+    raw = os.environ.get(env)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SystemExit("Invalid {} value: {!r} (expected a port number)".format(env, raw))
+    if not 1 <= value <= 65535:
+        raise SystemExit("Invalid {} value: {} (must be 1..65535)".format(env, value))
+    return value
+
+
+WEB_PORT = _port("KLIPPERFORMAC_WEB_PORT", 8080)
+FLUIDD_PORT = _port("KLIPPERFORMAC_FLUIDD_PORT", 8081)
+MOONRAKER_PORT = _port("KLIPPERFORMAC_MOONRAKER_PORT", 7125)
+CAM_PORT = _port("KLIPPERFORMAC_CAM_PORT", 8082)
 
 
 def set_data(path):
