@@ -19,9 +19,6 @@ def test_toggle_roundtrip_on_generated_conf(stack, moonraker_generated):
     assert stack.paths.MOONRAKER_CONF.read_text() == moonraker_generated
 
 
-@pytest.mark.xfail(strict=True, reason="BUG T1: apply_lan rewrites the "
-                   "FIRST ^host: line anywhere in the file, even inside an "
-                   "unrelated section")
 def test_only_server_host_rewritten(stack):
     stack.paths.MOONRAKER_CONF.write_text(
         "[webcam cam0]\nhost: printer-lan.local\n\n"

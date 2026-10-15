@@ -192,6 +192,19 @@ def set_webcam_enabled(enabled, name=WEBCAM_NAME):
     return True
 
 
+def _rewrite_server_host(text, want_host):
+    """Replace `host:` inside the [server] section only. Rewriting the first
+    ^host: anywhere would mangle unrelated user sections."""
+    m = re.search(r"(?im)^[ \t]*\[server\][ \t]*(?:\r?\n|$)", text)
+    if m is None:
+        return text
+    nxt = re.search(r"(?m)^[ \t]*\[", text[m.end():])
+    end = m.end() + (nxt.start() if nxt else len(text) - m.end())
+    body = re.sub(r"(?im)^[ \t]*host[ \t]*:[^\r\n]*$", "host: " + want_host,
+                  text[m.end():end], count=1)
+    return text[:m.end()] + body + text[end:]
+
+
 def apply_lan(enabled):
     """Sync the managed lines of an existing moonraker.conf with the LAN
     setting: [server] host + our CIDR entries in trusted_clients. Returns
@@ -200,20 +213,21 @@ def apply_lan(enabled):
         return False
     text = paths.MOONRAKER_CONF.read_text()
     want_host = "0.0.0.0" if enabled else "127.0.0.1"
-    updated = re.sub(r"(?m)^host: \S+.*$", "host: " + want_host,
-                     text, count=1)
+    updated = _rewrite_server_host(text, want_host)
 
     def _repl(m):
         items = [l for l in m.group(0).splitlines()[1:] if l.strip()]
         keep = [l for l in items if l.strip() not in LAN_CIDRS]
         if enabled:
-            keep += ["    " + c for c in LAN_CIDRS]
+            unit = re.match(r"[ \t]*", keep[0]).group(0) if keep else ""
+            unit = unit or "    "
+            keep += [unit + c for c in LAN_CIDRS]
         return "trusted_clients:\n" + "\n".join(keep) + "\n"
 
     updated = re.sub(r"trusted_clients:\n(?:[ \t]+\S[^\n]*\n)*", _repl,
                      updated, count=1)
     if updated != text:
-        paths.MOONRAKER_CONF.write_text(updated)
+        _write_conf(updated)
         return True
     return False
 
