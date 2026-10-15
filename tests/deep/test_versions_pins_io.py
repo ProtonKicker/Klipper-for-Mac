@@ -132,6 +132,28 @@ def test_unknown_extra_keys_are_preserved(stack):
     assert pins["ui"] == "mainsail"
 
 
+def test_read_side_pin_validation_does_not_eat_user_keys(stack):
+    """Integration guard: validating the pins must not delete what load_pins()
+    does not own.
+
+    lockfile.json is a plain JSON file a user (or another tool) may keep its own
+    keys in, and installer.setup() re-saves whatever load_pins() handed back --
+    so a key dropped here is a setting lost silently. Only PRODUCT_KEYS, the
+    values the product itself reads (as a git ref, a URL segment or a slice), may
+    be dropped for having the wrong type.
+    """
+    _write(stack, '{"ui": "mainsail", "custom": {"a": [1, null]}, '
+                  '"klipper": "v1.2.3", "moonraker": 42, "klipper_sha": {}}')
+    pins = stack.versions.load_pins()
+    assert pins["custom"] == {"a": [1, None]}, "an inert key was deleted"
+    assert pins["ui"] == "mainsail"
+    assert pins["klipper"] == "v1.2.3"
+    assert pins["moonraker"] == stack.versions.DEFAULT_PINS["moonraker"]
+    assert "klipper_sha" not in pins, "a non-string pin reached the caller"
+    stack.versions.save_pins(pins)
+    assert json.loads(stack.paths.LOCKFILE.read_text())["custom"] == {"a": [1, None]}
+
+
 def test_load_pins_does_not_write_anything(stack):
     stack.versions.save_pins(dict(stack.versions.DEFAULT_PINS))
     before = stack.paths.LOCKFILE.read_bytes()
@@ -237,9 +259,26 @@ def test_save_pins_into_read_only_dir_raises_os_error_not_silently(stack):
 @settings(deadline=None, max_examples=80,
           suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_save_load_matches_dict_merge_semantics(stack, pins):
+    """Round-trip keeps plain-merge semantics for every key load_pins() does not
+    validate.
+
+    Relabelled during integration: read-side validation (the fix for the BUG
+    DEEP "a bogus pin is handed straight to git") may now do exactly two things
+    to a stored value -- give it back, or, for the keys whose value must be a
+    usable release tag ('moonraker'/'mainsail'/'fluidd') or a known UI ('ui'),
+    fall back to the shipped default. It must never invent a third value, and
+    every other key (klipper, <comp>_sha, user noise) still round-trips exactly.
+    """
     stack.versions.save_pins(pins)
     loaded = stack.versions.load_pins()
-    assert loaded == dict(stack.versions.DEFAULT_PINS, **pins)
+    defaults = stack.versions.DEFAULT_PINS
+    for key, value in pins.items():
+        if key in stack.versions.TAG_COMPONENTS or key == "ui":
+            assert loaded[key] in (value, defaults[key]), key
+        else:
+            assert loaded[key] == value, key
+    for key in defaults:
+        assert key in loaded, key
 
 
 # --------------------------------------------------------------------------
@@ -247,33 +286,18 @@ def test_save_load_matches_dict_merge_semantics(stack, pins):
 # degrading to defaults or a clean CLI error)
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() has no try/except around open()/json.load() "
-    "(versions.py:30-32), so a truncated/empty/BOM/invalid-UTF-8 lockfile.json "
-    "raises JSONDecodeError/UnicodeDecodeError out of `klipperformac status`, "
-    "`update`, `ui` and `setup` — unlike paths.load_settings() and process.py "
-    "which both swallow exactly these errors and fall back"))
 @pytest.mark.parametrize("payload", BAD_JSON)
 def test_load_pins_survives_unparseable_json(stack, payload):
     _write(stack, payload)
     assert stack.versions.load_pins() == stack.versions.DEFAULT_PINS
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() does merged.update(pins) on whatever JSON was in the "
-    "file (versions.py:35-36); a top-level list/string/number/null raises "
-    "TypeError/ValueError instead of falling back to DEFAULT_PINS"))
 @pytest.mark.parametrize("payload", NON_OBJECT_JSON)
 def test_load_pins_survives_non_object_json(stack, payload):
     _write(stack, payload)
     assert stack.versions.load_pins() == stack.versions.DEFAULT_PINS
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() returns non-string values verbatim, and "
-    "check_updates() then calls _sort_key(pins[comp]) outside its try/except "
-    "(versions.py:103) -> AttributeError traceback. Pins must be validated to "
-    "non-empty strings (falling back to the default) at load time"))
 @pytest.mark.parametrize("payload", WRONG_TYPE_VALUES)
 def test_load_pins_only_returns_string_pins(stack, payload):
     _write(stack, payload)
@@ -282,12 +306,6 @@ def test_load_pins_only_returns_string_pins(stack, payload):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() treats LOCKFILE.exists() as 'readable' "
-    "(versions.py:30-31); a lockfile.json that is a directory (chmod 000 "
-    "behaves the same way) raises IsADirectoryError/PermissionError rather "
-    "than falling back to DEFAULT_PINS — a root-owned lockfile from a sudo'd "
-    "install bricks every CLI command"))
 def test_load_pins_survives_unreadable_lockfile(stack):
     stack.paths.LOCKFILE.parent.mkdir(parents=True, exist_ok=True)
     stack.paths.LOCKFILE.mkdir()
@@ -301,11 +319,6 @@ def test_load_pins_survives_unreadable_lockfile(stack):
         os.chmod(stack.paths.LOCKFILE, 0o644)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: save_pins() writes the object it is given without validating it "
-    "(versions.py:42-43), so it happily writes a JSON array lockfile that "
-    "its own load_pins() cannot read back — the write should be rejected or "
-    "coerced to a mapping"))
 def test_save_pins_refuses_to_poison_the_lockfile(stack):
     stack.versions.save_pins(dict(stack.versions.DEFAULT_PINS))
     good = stack.paths.LOCKFILE.read_text()
@@ -317,12 +330,6 @@ def test_save_pins_refuses_to_poison_the_lockfile(stack):
     assert stack.versions.load_pins() == stack.versions.DEFAULT_PINS
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: save_pins() truncates the live lockfile with open(path,'w') and "
-    "serialises into it (versions.py:42-44), so a failure part-way through "
-    "json.dump (unserialisable value, killed process, ENOSPC) leaves a half-written "
-    "lockfile and the previously good pins are lost — paths.save_settings() gets "
-    "this right with tmp + os.replace()"))
 def test_save_pins_is_atomic_when_serialisation_fails(stack):
     stack.versions.save_pins(dict(stack.versions.DEFAULT_PINS))
     before = stack.paths.LOCKFILE.read_text()

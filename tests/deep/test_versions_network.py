@@ -335,11 +335,6 @@ def test_tags_not_starting_with_v_or_a_digit_are_ignored(stack, canned):
 # BUG DEEP
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: check_updates() calls _sort_key(pins[comp]) OUTSIDE its try/except "
-    "(versions.py:103); a lockfile with a non-string pin value (null / number / "
-    "list / nested object - easy to type by hand) makes `klipperformac status`, "
-    "`update` and the TUI crash with an unhandled AttributeError traceback"))
 @pytest.mark.parametrize("payload", [
     '{"moonraker": null}',
     '{"mainsail": 2.19}',
@@ -368,11 +363,6 @@ def test_latest_tag_prefers_stable_over_prerelease_on_a_tie(stack, canned):
     assert stack.versions.latest_tag("mainsail") == "v2.0.0"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: latest_tag() indexes t[0] without guarding the empty string and "
-    "assumes every entry has 'name', so one malformed tag entry aborts the whole "
-    "component check (check_updates can only report a generic failure and the "
-    "valid tags in the same response are discarded)"))
 def test_latest_tag_skips_bad_entries_instead_of_failing(stack, canned):
     canned["payload"] = _tags("v9.9.9", "") + [{"commit": "no-name"}]
     assert stack.versions.latest_tag("moonraker") == "v9.9.9"

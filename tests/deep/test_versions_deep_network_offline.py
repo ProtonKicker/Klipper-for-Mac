@@ -401,15 +401,6 @@ def test_names_that_are_not_release_looking_are_never_offered(stack, transport, 
 # BUG DEEP
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: check_updates() compares _sort_key(pins[comp]) against the upstream "
-    "tags (versions.py:103) even when the pin is a 40-char commit sha, and "
-    "_sort_key() collapses any sha to (0, 0, 0). Commit pinning of "
-    "moonraker/mainsail/fluidd is documented (versions.py:14-17) and "
-    "`klipperformac update --pin moonraker=<sha>` is accepted by cli.py:279-282, so "
-    "every such install shows a permanent fake 'update available' in `status` and "
-    "the TUI, and `update --apply` silently moves the pin off the audited commit "
-    "onto a tag"))
 def test_a_commit_pin_is_never_reported_as_outdated(stack, transport):
     sha = stack.versions.DEFAULT_PINS["klipper"]
     transport.responder = _by_url({"Arksine/moonraker": ["v0.99.0"]})
@@ -429,19 +420,6 @@ def test_a_commit_pin_is_never_reported_as_outdated(stack, transport):
     pytest.param("v", id="bare-v"),
     pytest.param("v-v-v", id="no-digits-at-all"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: latest_tag() filters upstream tags on the FIRST character only "
-    "(versions.py:71-74) and check_updates() hands the raw upstream string to its "
-    "caller (versions.py:104), where cli.cmd_update --apply stores it in the pin "
-    "file. The filter therefore accepts the single-character names 'v' and 'V' as "
-    "'the most version-like tag upstream', and because _sort_key() ignores "
-    "everything after the digits, git tag names containing spaces, tabs and "
-    "non-ASCII score as real releases - 'v9.9.9 beta' becomes (9, 9, 0) and is "
-    "offered as an upgrade. That unusable value is then passed to "
-    "installer.checkout() -> `git clone --branch <ref>`, spliced by fetch_webui() "
-    "into a releases/download URL, and printed unsanitised by `status`. Candidates "
-    "must be validated (real dotted version, ref-safe, URL-path-safe) before being "
-    "returned or offered"))
 def test_only_usable_release_names_can_be_offered_as_an_update(stack, transport, tag):
     transport.responder = _by_url({"Arksine/moonraker": [tag]})
     stack.versions.save_pins({"moonraker": "v0.1.0"})
@@ -458,13 +436,6 @@ def test_only_usable_release_names_can_be_offered_as_an_update(stack, transport,
         assert new.isprintable() and " " not in new
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: the remote payload is trusted exactly like the local one - "
-    "remote_master_sha() returns data[0]['sha'] verbatim and check_updates() "
-    "slices it OUTSIDE its try/except (versions.py:95-96), so a response whose sha "
-    "field is a number or null raises TypeError ('int' object is not subscriptable) "
-    "straight out of `klipperformac status` / `update` / the TUI instead of being "
-    "reported as an update-check failure. _get_json() validates no schema at all"))
 def test_a_non_string_remote_sha_degrades_to_an_error_string(stack, transport):
     transport.responder = _by_url({}, commits=[{"sha": 123456}])
     stack.versions.save_pins({"klipper": "master", "klipper_sha": "a" * 40})
@@ -473,14 +444,6 @@ def test_a_non_string_remote_sha_degrades_to_an_error_string(stack, transport):
     assert all(isinstance(e, str) for e in errors)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: the update-check error strings are truncated (str(e)[:60] at "
-    "versions.py:93-102) but never sanitised, and str(HTTPError) embeds the "
-    "*server controlled* reason phrase. A proxy or captive portal that answers the "
-    "update check with an ANSI / CR / LF carrying reason therefore injects raw "
-    "escape sequences and fake extra lines into `klipperformac status` (cli.py:156 "
-    "prints '  [!] ' + e) and into the TUI message row. Control characters must be "
-    "stripped before a transport error is displayed"))
 def test_update_check_errors_never_carry_control_characters(stack, transport):
     hostile = "\x1b[2J\x1b[H pwned\r\n[!] fake line " + "x" * 200
     exc = urllib.error.HTTPError("https://api.github.com/repos/x/y/tags", 500,
@@ -493,13 +456,6 @@ def test_update_check_errors_never_carry_control_characters(stack, transport):
         assert all(ord(ch) >= 0x20 or ch == " " for ch in err), repr(err)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _get_json() slurps the whole response with an unbounded r.read() "
-    "(versions.py:51-52) while installer._download() enforces max_bytes=200MB for "
-    "exactly this reason (installer.py:181-192). A hostile or MITM'd endpoint can "
-    "answer the update check that `klipperformac status` runs on every invocation "
-    "with an unbounded body and exhaust memory. The body read must be size bounded "
-    "(chunked read + cap) before json.loads() sees it"))
 def test_get_json_reads_the_body_through_a_size_bounded_read(stack, transport):
     transport.responder = lambda url: b"[]"
     stack.versions._get_json("https://api.github.com/repos/x/y/tags")

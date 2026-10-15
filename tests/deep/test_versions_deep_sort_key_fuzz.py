@@ -193,12 +193,6 @@ def test_sort_key_is_a_pure_function_of_its_argument(stack):
     assert stack.versions.DEFAULT_PINS == shipped
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _sort_key() strips *every* leading 'v' with str.lstrip('v') "
-    "(versions.py:56) instead of removing the single 'v' prefix, so the garbage "
-    "tag 'vv1.2.3' (and 'vvvvv2.19.0', 'v\U0001f600v1.2.3') scores exactly like "
-    "the real release 'v1.2.3' and latest_tag()/check_updates() will offer a "
-    "double-v typo tag as an upgrade that `git clone --branch` then rejects"))
 def test_sort_key_does_not_score_double_v_garbage_as_a_release(stack):
     key = sk(stack)
     assert key("vv1.2.3") != key("v1.2.3")

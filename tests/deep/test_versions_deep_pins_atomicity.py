@@ -164,14 +164,6 @@ def test_string_keyed_pins_always_round_trip(stack, pins):
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("kind", ["existing-target", "dangling-target"])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: save_pins() serialises with open(paths.LOCKFILE, 'w') "
-    "(versions.py:42), which FOLLOWS symlinks, so a lockfile.json replaced by a "
-    "symlink makes every `klipperformac ui`, `update --pin`, setup and TUI write "
-    "land in an arbitrary file outside KLIPPERFORMAC_HOME: an existing victim "
-    "file is silently truncated and overwritten, a dangling link CREATES its "
-    "target. paths.save_settings() is immune because it writes a tmp file and "
-    "os.replace()s it; save_pins must do the same (and refuse/replace a symlink)"))
 def test_save_pins_does_not_write_through_a_symlinked_lockfile(stack, tmp_path, kind):
     outside = tmp_path / "outside-home"
     outside.mkdir()
@@ -202,14 +194,6 @@ def test_save_pins_does_not_write_through_a_symlinked_lockfile(stack, tmp_path, 
 # BUG DEEP: the write path trusts whatever it is given
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: save_pins() validates nothing about the mapping it writes "
-    "(versions.py:42-44). Integer-only keys are silently coerced to strings - "
-    'save_pins({1: "a"}) produces {"1": "a"} and load_pins() hands back a pin set '
-    "whose key types no longer match what was saved - and with MIXED key types "
-    "json.dump(sort_keys=True) raises TypeError *after* the live lockfile was "
-    "truncated, leaving the single character '{' behind: the good pins are gone "
-    "and load_pins() can no longer parse the file"))
 def test_save_pins_rejects_non_string_keys_before_touching_the_lockfile(stack):
     stack.versions.save_pins(dict(stack.versions.DEFAULT_PINS))
     good = stack.paths.LOCKFILE.read_text()
@@ -237,14 +221,6 @@ def test_save_pins_creates_a_lockfile_that_is_not_world_writable(stack):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: save_pins() lets the process umask decide the lockfile mode "
-    "(plain open(paths.LOCKFILE, 'w') at versions.py:42 - no O_EXCL/0o600 mode, "
-    "no chmod, no tmp+replace), so in a shell that ran `umask 0` the pin store is "
-    "created 0666 - world WRITABLE. Any other account on the Mac can then rewrite "
-    "the klipper/moonraker/mainsail/fluidd refs and steer the next "
-    "`klipperformac up` / `update --apply` at attacker-chosen upstream sources. "
-    "Pins are a supply-chain input and must be 0600/0644 regardless of umask"))
 def test_save_pins_ignores_a_permissive_umask(stack):
     old_mask = os.umask(0o000)
     try:
@@ -256,15 +232,6 @@ def test_save_pins_ignores_a_permissive_umask(stack):
         oct(mode))
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() merges the file over DEFAULT_PINS with no value "
-    "validation (versions.py:35-36), so string-but-unusable pins are accepted: "
-    "an empty tag (from `klipperformac update --pin moonraker=`, cli.py:279-282) "
-    "or one containing a newline/tab/space is stored verbatim, and `ui` may be "
-    "any string at all - paths.ui_port() then routes the mainsail UI onto the "
-    "fluidd port (paths.py:157-159) instead of cli.py's 'mainsail or fluidd' "
-    "check ever running. Pin values must be checked at load time "
-    "(non-empty, ref/URL safe, ui in REPOS) with a fallback to the default"))
 @pytest.mark.parametrize("payload, key, expected", [
     pytest.param('{"moonraker": ""}', "moonraker", "v0.11.0", id="empty-tag"),
     pytest.param('{"moonraker": "   "}', "moonraker", "v0.11.0", id="blank-tag"),
