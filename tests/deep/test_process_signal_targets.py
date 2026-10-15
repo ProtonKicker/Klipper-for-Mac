@@ -203,9 +203,10 @@ def proc(stack, monkeypatch):
 
     ``alive()`` forges the process table with command lines for *this* throwaway
     home (what start() would really spawn here); ``scan_with()`` forges a
-    ``ps -eo`` listing in the default-install layout, because
-    _scan_service_pids() only recognises command lines carrying
-    ``/.klipperformac/`` -- a separate battery covers a relocated home.
+    ``ps -eo`` listing of this install's own strays, because
+    _scan_service_pids() only recognises command lines carrying *this*
+    install's paths -- DEFAULT_HOME rows in the batteries below are a foreign
+    install's, and are expected to be left alone.
     """
     ps = FakePs()
     system = FakeOS(on_kill=ps.handle_signal)
@@ -232,7 +233,7 @@ def proc(stack, monkeypatch):
 
     def scan_with(*names, **kw):
         first = kw.get("first_pid", 700)
-        lines = ["%6d %s" % (first + offset, cmdline_at(DEFAULT_HOME, name))
+        lines = ["%6d %s" % (first + offset, cmdline_at(str(stack.home), name))
                  for offset, name in enumerate(names)]
         ps.scan = ("\n".join(lines) + "\n").encode()
         return [first + offset for offset in range(len(names))]
@@ -291,14 +292,26 @@ def test_a_service_that_is_already_gone_is_only_ever_sigtermed(proc):
 
 
 def test_signal_errors_never_escape_the_signal_helper(proc):
-    """ESRCH/EPERM are tolerable; they must not abort a shutdown."""
+    """ESRCH/EPERM are tolerable; they must not abort a shutdown.
+
+    Read together with test_kill_all_reports_only_the_processes_it_actually_
+    killed, which is the other half of the same contract: kill_all() used to
+    return every pid it *attempted*, and this battery pinned ("moonraker",
+    4322) for a pid os.kill refused with EPERM. A refused signal is not a
+    killed process -- `klipperformac killall`/`uninstall` would tell the user a
+    stranger's pid is down while it keeps holding the ports -- so the honest
+    report is the empty list, and the shutdown still has to run to completion.
+    """
     proc.write_state(klipper=4321)
     proc.system.dead.add(4321)                    # os.kill -> ProcessLookupError
     assert proc.p.stop() is True                  # no raise, state cleared
 
     proc.write_state(moonraker=4322)
+    proc.ps.add(4322, cmdline_at(str(proc.home), "moonraker"))
     proc.system.foreign.add(4322)                 # os.kill -> PermissionError
-    assert proc.p.kill_all() == [("moonraker", 4322)]
+    assert proc.p.kill_all() == []                # nothing claimed as killed
+    assert (4322, signal.SIGKILL) in proc.system.signals   # it was attempted
+    assert not proc.paths.STATE.exists()          # and the run finished
 
 
 def test_state_keys_that_are_not_services_are_never_signalled(proc):
@@ -366,11 +379,6 @@ def test_only_pids_listed_in_the_state_file_are_ever_signalled(proc, pids):
 # BUGS
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: stop() filters its own pids with "
-                          "`str(p) in _alive_pids()` while _alive_pids() returns "
-                          "raw pids, so `stragglers` is always empty and the "
-                          "SIGKILL escalation can never happen (process.py:245)")
 def test_stop_escalates_a_service_that_ignores_sigterm_to_sigkill(proc):
     """A hung klipper that traps SIGTERM must be killed once the timeout is up.
 
@@ -386,13 +394,6 @@ def test_stop_escalates_a_service_that_ignores_sigterm_to_sigkill(proc):
         % proc.system.signals)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: because stop() never builds a non-empty "
-                          "`stragglers` list (process.py:245) it returns True and "
-                          "unlinks run/state.json even though the stack is still "
-                          "alive, so `klipperformac down` lies and 7125/8080/8081 "
-                          "plus the serial port stay squatted with no tracked way "
-                          "to stop them (process.py:245-267)")
 def test_stop_reports_failure_when_a_service_refuses_to_die(proc):
     proc.write_state(klipper=4321)
     proc.ps.add(4321, cmdline_at(DEFAULT_HOME, "klipper"), policy="immune")
@@ -403,12 +404,6 @@ def test_stop_reports_failure_when_a_service_refuses_to_die(proc):
         "knows about pid 4321")
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: stop() SIGTERMs every pid in state.json "
-                          "without the cmdline re-validation running() performs, "
-                          "so a pid recycled by an unrelated app after a crash is "
-                          "killed on the next `down` (process.py:231-239 vs "
-                          "process.py:112-114)")
 def test_stop_revalidates_the_cmdline_before_signalling_a_tracked_pid(proc):
     """PID reuse must not turn `klipperformac down` into a kill of innocent apps.
 
@@ -427,11 +422,6 @@ def test_stop_revalidates_the_cmdline_before_signalling_a_tracked_pid(proc):
         "command line still carries the service marker")
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: kill_all() SIGKILLs raw state.json pids with "
-                          "no cmdline re-validation either, so a recycled pid is "
-                          "force-killed with no evidence it is ours at all "
-                          "(process.py:276-284)")
 def test_kill_all_does_not_sigkill_a_recycled_pid(proc):
     proc.write_state(klipper=5150)
     proc.ps.add(5150,
@@ -445,13 +435,6 @@ BAD_PID_TYPES = ["5150", "abc", 5150.0, 51.5, [5150], {"pid": 5150}, 10 ** 100,
 
 
 @pytest.mark.parametrize("pid", BAD_PID_TYPES)
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _signal() catches only OSError, so a "
-                          "state.json whose pid is not a plain int raises "
-                          "TypeError/OverflowError out of stop() and kill_all() "
-                          "(process.py:300-304); `klipperformac down`/`killall` "
-                          "become unusable and the stack is only recoverable by "
-                          "hand-deleting run/state.json")
 def test_a_foreign_pid_type_does_not_crash_the_shutdown_paths(proc, pid):
     """A garbage pid field must read as "not our process", not as a traceback.
 
@@ -474,13 +457,6 @@ IMPOSSIBLE_PIDS = [-1, -4321, True, 999999999, 2 ** 31 - 1]
 
 
 @pytest.mark.parametrize("pid", IMPOSSIBLE_PIDS)
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: stop()/kill_all() signal any truthy value "
-                          "found under a service key, including negative and "
-                          "out-of-range pids; os.kill(-1, SIGTERM) is a broadcast "
-                          "to every process the user may signal, not a no-op, and "
-                          "a JSON true pid reaches launchd (process.py:231-239, "
-                          "process.py:276-284)")
 def test_a_non_positive_or_out_of_range_pid_is_never_signalled(proc, pid):
     """pid <= 0 addresses a process *group*, and absurd pids are not processes."""
     proc.write_state(klipper=pid)
@@ -491,12 +467,6 @@ def test_a_non_positive_or_out_of_range_pid_is_never_signalled(proc, pid):
         "able to signal a process group or a system process" % (pid,))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: kill_all() returns every pid it *attempted* "
-                          "to signal as killed, even when os.kill raised "
-                          "EPERM/ESRCH (the errors _signal swallows), so "
-                          "`klipperformac killall` and `uninstall` report killing "
-                          "processes that are still running (process.py:283-297)")
 def test_kill_all_reports_only_the_processes_it_actually_killed(proc):
     proc.write_state(moonraker=1, klipper=4321, web_fluidd=99999)
     proc.ps.add(4321, cmdline_at(DEFAULT_HOME, "klipper"))

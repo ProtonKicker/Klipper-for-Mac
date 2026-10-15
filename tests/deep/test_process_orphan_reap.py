@@ -24,9 +24,11 @@ BOOT = "1791932927"
 SYSCTL_OK = ("{ sec = %s, usec = 560431 } Tue Oct 13 16:08:47 2026\n"
              % BOOT).encode()
 MAXPID = 99999
-# The default install layout. _scan_service_pids() recognises command lines by
-# this literal string (process.py:146), so a `ps -eo` row written in this shape
-# is what a real user's machine would produce.
+# Someone ELSE's default-layout install (another account on this Mac, or a copy
+# on another machine's shape). _scan_service_pids() recognises a service by the
+# argv of THIS install (paths.APP_HOME / paths.DATA), so a row written under a
+# foreign home is exactly what a stray of *another* instance looks like, and the
+# rows that must be found as this install's own strays are forged at scan.home.
 DEFAULT_HOME = "/Users/peter/.klipperformac"
 OTHER_HOME = "/Users/guest/.klipperformac"
 
@@ -211,7 +213,7 @@ def test_untracked_services_of_a_default_install_are_found(scan):
                                    "web_fluidd")):
         pid = 7000 + offset
         want[pid] = name
-        rows.append((pid, cmdline_at(DEFAULT_HOME, name)))
+        rows.append((pid, cmdline_at(str(scan.home), name)))
     scan.ps.scan = ps_eo(*rows)
     assert set(scan.p._scan_service_pids()) == set(want)
 
@@ -219,8 +221,8 @@ def test_untracked_services_of_a_default_install_are_found(scan):
 def test_the_reaper_never_signals_the_process_running_it(scan):
     """`ps -eo` always contains the CLI itself; self-signalling would abort the
     very command that is reaping."""
-    scan.ps.scan = ps_eo((os.getpid(), cmdline_at(DEFAULT_HOME, "klipper")),
-                         (7101, cmdline_at(DEFAULT_HOME, "moonraker")))
+    scan.ps.scan = ps_eo((os.getpid(), cmdline_at(str(scan.home), "klipper")),
+                         (7101, cmdline_at(str(scan.home), "moonraker")))
     assert scan.p._scan_service_pids() == [7101]
 
 
@@ -265,10 +267,10 @@ def test_reap_does_nothing_at_all_when_no_strays_are_found(scan):
 
 def test_reap_escalates_stubborn_strays_to_sigkill(scan):
     strays = [7501, 7502]
-    scan.ps.scan = ps_eo((7501, cmdline_at(DEFAULT_HOME, "moonraker")),
-                         (7502, cmdline_at(DEFAULT_HOME, "klipper")))
-    scan.ps.add(7501, cmdline_at(DEFAULT_HOME, "moonraker"), policy="term")
-    scan.ps.add(7502, cmdline_at(DEFAULT_HOME, "klipper"), policy="kill")
+    scan.ps.scan = ps_eo((7501, cmdline_at(str(scan.home), "moonraker")),
+                         (7502, cmdline_at(str(scan.home), "klipper")))
+    scan.ps.add(7501, cmdline_at(str(scan.home), "moonraker"), policy="term")
+    scan.ps.add(7502, cmdline_at(str(scan.home), "klipper"), policy="kill")
     scan.p._reap_orphans()
     assert (7501, signal.SIGTERM) in scan.system.signals
     assert (7502, signal.SIGTERM) in scan.system.signals
@@ -281,7 +283,7 @@ def test_reap_escalates_stubborn_strays_to_sigkill(scan):
 def test_reap_does_not_wait_forever_on_a_pid_that_vanishes(scan):
     """A stray that dies between the scan and the liveness check must be left
     alone rather than SIGKILLed (SIGKILL to a recycled pid is a live hazard)."""
-    scan.ps.scan = ps_eo((7601, cmdline_at(DEFAULT_HOME, "web_mainsail")))
+    scan.ps.scan = ps_eo((7601, cmdline_at(str(scan.home), "web_mainsail")))
     scan.p._reap_orphans()                       # not in the -p table at all
     assert scan.system.signals == [(7601, signal.SIGTERM)]
     assert scan.clock.slept == pytest.approx(0.2)
@@ -311,15 +313,6 @@ def test_the_scan_never_invents_a_pid_it_cannot_justify(scan, rows):
 # BUGS
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _scan_service_pids() recognises services by "
-                          "the literal string '/.klipperformac/' (process.py:146) "
-                          "instead of paths.APP_HOME/paths.DATA, so an install "
-                          "with a relocated KLIPPERFORMAC_HOME (supported by "
-                          "paths.py:10 and by the SwiftUI app's Environment.swift) "
-                          "never sees its own strays: _reap_orphans() is a no-op, "
-                          "so a crashed proxy/klipper keeps 7125/8080/8081 and the "
-                          "serial port and every later `up` fails to bind")
 def test_orphans_of_a_relocated_app_home_are_reaped(scan):
     """`klipperformac up` must clear its own leftovers wherever it is installed.
 
@@ -334,12 +327,6 @@ def test_orphans_of_a_relocated_app_home_are_reaped(scan):
         "this install's own orphans are invisible to its own reaper: %r" % found)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the same literal-string gate makes the scan "
-                          "match *anyone's* ~/.klipperformac processes, so a "
-                          "second install (another account, or a beta home) has "
-                          "its stack SIGTERM/SIGKILLed by this one's "
-                          "_reap_orphans()/kill_all() (process.py:146-153)")
 def test_reaping_never_touches_a_different_install(scan):
     """Two installs on one Mac: `peter`'s reaper must leave `guest`'s stack up.
 
@@ -366,22 +353,20 @@ def test_reaping_never_touches_a_different_install(scan):
         % scan.system.signals)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the moonraker marker is the bare word "
-                          "'moonraker' (process.py:26) and the scan accepts any "
-                          "command line that merely mentions a path under the "
-                          "home, so `tail -f ~/.klipperformac/data/logs/"
-                          "moonraker.log`, an editor on moonraker.conf or another "
-                          "klipperformac command is SIGTERMed by `up` and "
-                          "SIGKILLed by `killall` (process.py:146-153)")
 def test_reaping_leaves_user_tools_that_mention_moonraker_alone(scan):
-    """`klipperformac up` must not kill the user's terminal doing `tail -f`."""
+    """`klipperformac up` must not kill the user's terminal doing `tail -f`.
+
+    Forged inside THIS install's home, so the only thing that can spare them is
+    the argv shape: none of these is the `-m moonraker` invocation start()
+    spawns, whatever words the command line happens to mention.
+    """
+    home = str(scan.home)
     innocent = [
-        (8300, "/usr/bin/tail -f %s/data/logs/moonraker.log" % DEFAULT_HOME),
-        (8301, "/usr/bin/vim %s/data/config/moonraker.conf" % DEFAULT_HOME),
+        (8300, "/usr/bin/tail -f %s/data/logs/moonraker.log" % home),
+        (8301, "/usr/bin/vim %s/data/config/moonraker.conf" % home),
         (8302, "%s/venv/bin/python %s/bin/klipperformac logs moonraker"
-         % (DEFAULT_HOME, DEFAULT_HOME)),
-        (8303, "/bin/cat %s/data/web/mainsail/moonraker.js" % DEFAULT_HOME),
+         % (home, home)),
+        (8303, "/bin/cat %s/data/web/mainsail/moonraker.js" % home),
     ]
     scan.ps.scan = ps_eo(*innocent)
     found = scan.p._scan_service_pids()

@@ -66,6 +66,12 @@ class FakeSubprocess:
         self.sysctl_code = sysctl_code
         self.argv = []                    # every argv handed to subprocess.run
 
+    def drop(self, pid, sig=None):
+        """A signalled process leaves the table: `ps` stops listing it, which
+        is what lets stop()'s TERM->KILL escalation be told apart from the
+        plain TERM path (the sibling batteries fake this the same way)."""
+        self.table.pop(str(pid), None)
+
     def run(self, cmd, *args, **kwargs):
         cmd = [str(c) for c in cmd]
         self.argv.append(cmd)
@@ -88,7 +94,9 @@ class FakeSubprocess:
 
 
 class FakeOS:
-    """Records the signals process.py *would* send; no real process is touched."""
+    """Records the signals process.py *would* send; no real process is touched.
+    `on_kill` lets the forged process table lose the row, the way a process that
+    really dies stops showing up in `ps`."""
 
     def __init__(self, on_kill=None):
         self.calls = []
@@ -115,7 +123,7 @@ class FakeProc:
 def proc(stack, monkeypatch):
     """process.py with sysctl/ps/time faked, plus state-file helpers."""
     fake = FakeSubprocess()
-    kills = FakeOS()
+    kills = FakeOS(on_kill=fake.drop)
     monkeypatch.setattr(stack.process, "subprocess", fake)
     monkeypatch.setattr(stack.process, "time", Clock())
     monkeypatch.setattr(stack.process, "os", kills)
@@ -333,21 +341,16 @@ NON_DICT_JSON = ["[1, 2, 3]", '"klipper"', "12345", "null", "true", "NaN",
 
 
 @pytest.mark.parametrize("raw", NON_DICT_JSON)
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _load() assumes json.load returned a dict; "
-                          "any valid non-object state.json raises AttributeError "
-                          "out of _load()/running()/stop()/kill_all() "
-                          "(process.py:64), so the stack can only be recovered "
-                          "by manually deleting run/state.json")
 def test_valid_json_that_is_not_a_dict_self_heals(proc, raw):
     """_load() must not assume the parsed document is a dict.
 
-    BUG DEEP: state.json holding any valid non-object JSON raises
-    AttributeError out of _load()/running()/stop()/kill_all() -- every entry
-    point, including the `klipperformac killall` escape hatch -- so the stack
-    becomes unmanageable without a manual rm of the state file. cam.py's
-    running() guards exactly this way (`pid = state.get("pid") if
-    isinstance(state, dict) else None`, cam.py:388); process.py does not.
+    Was BUG DEEP (fixed in klipperformac/process.py): state.json holding any
+    valid non-object JSON raised AttributeError out of
+    _load()/running()/stop()/kill_all() -- every entry point, including the
+    `klipperformac killall` escape hatch -- so the stack became unmanageable
+    without a manual rm of the state file. cam.py guards exactly this way
+    (`pid = state.get("pid") if isinstance(state, dict) else None`); process.py
+    now does the same.
     """
     proc.write(raw)
     errors = []
@@ -361,22 +364,18 @@ def test_valid_json_that_is_not_a_dict_self_heals(proc, raw):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: start() spawns all five children before "
-                          "persisting state (process.py:192-223); when the "
-                          "state.json write fails it raises a raw OSError and "
-                          "leaves a live, untracked stack holding the serial "
-                          "port and 7125/8080/8081")
 def test_start_does_not_leak_an_untracked_stack_when_state_is_unwritable(
         proc, monkeypatch):
     """If the state file cannot be written, the children must not be spawned.
 
-    BUG DEEP: start() launches five processes and only persists them at the
-    very end (process.py:192-223). When that write fails -- read-only data
-    volume, permission-denied run/, disk full -- start() raises a raw OSError
-    *after* the children are alive: no state.json exists, so `down` and
-    `status` report "not running", and the orphans keep the serial port and
-    7125/8080/8081 squatted with no tracked way to stop them.
+    Was BUG DEEP (fixed in klipperformac/process.py): start() launched five
+    processes and only persisted them at the very end. When that write failed
+    -- read-only data volume, permission-denied run/, disk full -- it raised a
+    raw OSError *after* the children were alive: no state.json existed, so
+    `down` and `status` reported "not running" and the orphans kept the serial
+    port and 7125/8080/8081 squatted with no tracked way to stop them. start()
+    now proves the record is writable (_can_persist()) before spawning a single
+    process and says so as a one-line [!] instead of leaving an untracked stack.
     """
     spawned = []
 

@@ -483,14 +483,6 @@ def test_running_asks_ps_once_for_the_whole_stack(reads):
 # BUGS
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: a single pid value ps cannot use ('abc', "
-                          "43.7, 999999999) aborts the whole batched `ps -p` "
-                          "query, so _live_cmds() returns {} and EVERY service "
-                          "reads as down (process.py:88-101); status prints the "
-                          "stack as stopped, down refuses to act, and up then "
-                          "clears the state and starts a second stack on top of "
-                          "the live one")
 def test_one_unusable_pid_does_not_make_the_whole_stack_look_dead(reads):
     """The batch query may not let one bad token speak for the good ones."""
     reads.write_state(klipper=4321, moonraker=999999999)
@@ -501,24 +493,12 @@ def test_one_unusable_pid_does_not_make_the_whole_stack_look_dead(reads):
     assert state["moonraker"] is False
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the same batch poisoning happens for a "
-                          "non-numeric pid field, which is exactly what a "
-                          "truncated or hand-edited state.json contains "
-                          "(process.py:88-101)")
 def test_a_non_numeric_pid_does_not_blind_the_read_of_the_other_services(reads):
     reads.write_state(klipper=4321, moonraker="moonraker")
     reads.alive(klipper=4321)
     assert reads.p.running()["klipper"] is True
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: when the boot time cannot be read -- sysctl "
-                          "missing from PATH, non-zero exit, a transient fork "
-                          "failure -- _load() deletes run/state.json instead of "
-                          "just answering 'unknown' (process.py:63-65), so a "
-                          "live printing stack becomes invisible to status/down "
-                          "and the next `up` reaps (kills) it mid-print")
 def test_a_transient_boot_time_failure_does_not_erase_the_state_file(reads):
     reads.write_state(klipper=4321)
     reads.alive(klipper=4321)
@@ -535,15 +515,6 @@ def test_a_transient_boot_time_failure_does_not_erase_the_state_file(reads):
         "the state file must still describe the running stack after recovery")
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _boot_time() greps the unanchored pattern "
-                          "'sec = (\\d+)', which also matches inside 'usec = ', so "
-                          "a sysctl answer whose sec field is missing or garbled "
-                          "yields the microsecond value as the boot time "
-                          "(process.py:49); _load() then compares that number "
-                          "against state.json, calls it a different boot and "
-                          "deletes a live stack's record instead of reporting "
-                          "'unknown'")
 def test_boot_time_is_not_read_out_of_the_usec_field(reads):
     reads.ps.sysctl = b"kern.boottime: { sec = , usec = 123456 } ?"
     reads.p._boot_cache[:] = [0.0, None]
@@ -552,14 +523,6 @@ def test_boot_time_is_not_read_out_of_the_usec_field(reads):
         % reads.p._boot_time())
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _save() persists boot_time=null when "
-                          "kern.boottime is unreadable at start() time "
-                          "(process.py:79); _load() then rejects that document "
-                          "on every later read (process.py:64) and deletes it, "
-                          "so the just-started stack is permanently untracked -- "
-                          "status says stopped, down says 'was not running', and "
-                          "up starts a duplicate stack that cannot bind")
 def test_a_state_saved_while_the_boot_time_was_unreadable_is_still_usable(reads):
     reads.ps.sysctl = b"kern.boottime: unknown\n"     # no `sec =` in the output
     reads.p._boot_cache[:] = [0.0, None]

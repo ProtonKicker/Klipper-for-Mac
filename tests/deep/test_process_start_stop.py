@@ -25,9 +25,9 @@ BOOT = "1791932927"
 SYSCTL_OK = ("{ sec = %s, usec = 560431 } Tue Oct 13 16:08:47 2026\n"
              % BOOT).encode()
 MAXPID = 99999
-# The default install layout: _scan_service_pids() only recognises command
-# lines carrying this literal string, so strays are forged in this shape (a
-# separate battery covers what happens to a relocated app home).
+# A *foreign* install's layout: _scan_service_pids() only recognises command
+# lines carrying this install's own paths, so a stray of the stack under test is
+# forged at txn.home, and a DEFAULT_HOME row must be left alone.
 DEFAULT_HOME = "/Users/peter/.klipperformac"
 
 
@@ -343,7 +343,7 @@ def test_start_self_heals_a_tracked_but_dead_stack(txn):
 
 def test_start_reaps_strays_before_spawning(txn):
     """Order matters: a stray proxy still holds 8080 when the fresh one binds."""
-    stray_cmd = cmdline_at(DEFAULT_HOME, "web_mainsail")
+    stray_cmd = cmdline_at(str(txn.home), "web_mainsail")
     txn.ps.scan = (" 8801 %s\n" % stray_cmd).encode()
     txn.ps.add(8801, stray_cmd)
     txn.p.start()
@@ -390,14 +390,6 @@ def test_start_stop_cycles_are_idempotent(txn, cycles):
 # BUGS
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: same root cause as the poisoned batched "
-                          "read -- one pid value ps cannot use (999999999, 'abc', "
-                          "43.7) empties the whole `ps -p` answer (process.py:88-"
-                          "101), so running() calls a live stack dead and start() "
-                          "then clears state.json and spawns a second klipper/"
-                          "moonraker/proxy set that can never bind 7125/8080/8081 "
-                          "while the first one keeps printing (process.py:176-181)")
 def test_start_refuses_even_when_one_state_pid_is_unusable(txn):
     txn.write_state(klipper=4321, moonraker=999999999)
     txn.alive(klipper=4321)
@@ -408,16 +400,6 @@ def test_start_refuses_even_when_one_state_pid_is_unusable(txn):
     assert txn.ps.spawned == []
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: start() takes the proxy bind address from "
-                          "bool(settings['lan']) (process.py:208 through "
-                          "paths.lan_enabled, paths.py:155), so any non-empty "
-                          "string in that field -- 'false', 'no', '0' -- puts the "
-                          "UIs and the Moonraker API on 0.0.0.0 against the "
-                          "user's stated choice, breaking AGENTS.md 'never enable "
-                          "LAN/external network access by default'; the SwiftUI "
-                          "reader disagrees and shows the switch as off "
-                          "(Environment.swift:68 `as? Bool ?? false`)")
 def test_a_non_boolean_lan_setting_does_not_expose_the_stack(txn):
     txn.paths.save_settings({"lan": "false"})
     txn.p.start()
@@ -430,15 +412,6 @@ def test_a_non_boolean_lan_setting_does_not_expose_the_stack(txn):
             "network: %s" % ("false", argv))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _save() truncates run/state.json in place "
-                          "before writing (process.py:82-83), unlike "
-                          "paths.save_settings() which writes a temp file and "
-                          "renames it (paths.py:31-33); a failed write -- disk "
-                          "full, EIO, a kill half-way -- leaves the only record "
-                          "of a live stack empty or half-written, so status says "
-                          "'stopped', down does nothing, and up reaps/kills the "
-                          "printing stack instead of tracking it")
 def test_a_failed_state_write_leaves_the_previous_record_intact(txn):
     txn.p._save({"klipper": FakeProc(4321), "moonraker": FakeProc(4322)})
     before = txn.paths.STATE.read_text()
