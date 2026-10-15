@@ -233,27 +233,23 @@ def header_block(response_bytes):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: _proxy() formats any relay exception into the *status line* it
-# sends the browser (send_error's "message" argument). For a malformed upstream
-# status line the exception text still carries the upstream's trailing CRLF, so
-# the proxy emits e.g.
+# FIXED (deep-hunt): _proxy() formatted any relay exception into the *status
+# line* it sends the browser (send_error's "message" argument). For a malformed
+# upstream status line the exception text still carried the upstream's trailing
+# CRLF, so the proxy emitted e.g.
 #     HTTP/1.0 502 proxy error: HTTP/1.1 1000 Nope\r\n\r\n
-# The empty line terminates the header block: Server/Date/Content-Type/
-# Content-Length are demoted into the body and the browser receives a 502 with
-# no headers at all. An untrusted reason phrase must never be copied into the
-# status line unescaped (RFC 9110 4.1: reason-phrase excludes control bytes).
+# and that empty line terminated the header block: Server/Date/Content-Type/
+# Content-Length were demoted into the body and the browser received a 502 with
+# no headers at all. proxy._relay_failed() now answers with a fixed single-line
+# reason plus a classified explanation, and never copies upstream bytes into
+# anything the browser parses as HTTP.
+# Guard: this test must keep passing for every malformed status line.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bad_line", [
     b"HTTP/1.1 1000 Nope\r\nContent-Length: 2\r\n\r\nhi",
     b"HTTP/1.1 XXX YZ\r\nSet-Cookie: pwned=1\r\nContent-Length: 0\r\n\r\n",
     b"garbage-not-a-status-line\r\n\r\n",
 ])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: _proxy() copies the upstream's raw error "
-                          "text (including its CRLF) into the status line of "
-                          "its own 502, so the response header block is "
-                          "terminated early and Content-Type/Content-Length "
-                          "leak into the body")
 def test_502_for_a_malformed_upstream_keeps_an_intact_header_block(
         proxy_server, upstream, bad_line):
     upstream.script["/printer/malformed"] = bad_line
@@ -273,18 +269,14 @@ def test_502_for_a_malformed_upstream_keeps_an_intact_header_block(
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: _proxy() closes the upstream connection only on the success path
-# (proxy.py:54); there is no try/finally. Any failure after HTTPConnection()
+# FIXED (deep-hunt): _proxy() closed the upstream connection only on the
+# success path; there was no try/finally. Any failure after HTTPConnection()
 # was constructed -- refused connect mid-flight, BadStatusLine, IncompleteRead,
-# a browser that vanished while the body was being written -- leaves the socket
-# to the garbage collector, so every relay error momentarily burns an fd and a
-# TIME_WAIT pair instead of closing cleanly.
+# a browser that vanished while the body was being written -- left the socket
+# to the garbage collector, so every relay error momentarily burned an fd and a
+# TIME_WAIT pair. proxy._proxy() now closes it in a finally block.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy._proxy() has no try/finally around "
-                          "the upstream HTTPConnection: relay failures never "
-                          "call conn.close(), leaking the socket (fd / "
-                          "ResourceWarning) on every Moonraker error")
 def test_upstream_connection_is_closed_when_the_relay_fails(proxymod,
                                                             monkeypatch):
     opened = []
@@ -433,20 +425,17 @@ def test_client_host_header_is_replaced_by_the_upstream_origin(proxy_server,
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: the request-side filter in _proxy() drops only "host" and
-# "connection" (proxy.py:41-42) even though the module already carries a full
-# HOP_BY_HOP table (proxy.py:21) that it applies to *responses*. So a browser's
-# "TE: trailers", "Keep-Alive" or "Proxy-Authorization" is relayed to Moonraker
-# in clear text, and RFC 9112 9.6 (a proxy MUST NOT forward hop-by-hop request
-# fields) is violated in one direction while being enforced in the other.
+# FIXED (deep-hunt): the request-side filter in _proxy() dropped only "host"
+# and "connection" even though the module already carried a full HOP_BY_HOP
+# table that it applied to *responses*. A browser's "TE: trailers",
+# "Keep-Alive" or "Proxy-Authorization" was relayed to Moonraker in clear text,
+# and RFC 9112 9.6 (a proxy MUST NOT forward hop-by-hop request fields) was
+# violated in one direction while being enforced in the other.
+# proxy._forward_headers() now uses the same table both ways.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("hop", ["TE", "Keep-Alive", "Proxy-Authorization",
                                  "Trailer"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy._proxy() relays client hop-by-hop "
-                          "request headers (TE/Keep-Alive/Proxy-Authorization/"
-                          "Trailer) to Moonraker instead of filtering them with "
-                          "the module's own HOP_BY_HOP table")
 def test_client_hop_by_hop_request_headers_are_not_relayed(proxy_server,
                                                            upstream, hop):
     _s, _b, _h, _hl = call(proxy_server.port, "GET", "/printer/info",

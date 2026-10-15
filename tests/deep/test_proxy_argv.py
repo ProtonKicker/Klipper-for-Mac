@@ -7,6 +7,7 @@ makes any attempt to touch the live stack ports (7125/8080/8081) fail loudly.
 import http.client
 import importlib
 import json
+import os
 import socket
 import threading
 import time
@@ -105,18 +106,16 @@ def _argv(port="0", directory="/tmp", upstream="0", bind=None):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: main() performs no argv validation. Every malformed invocation
-# surfaces as a raw interpreter traceback (ValueError / OverflowError /
-# IndexError / socket.gaierror) instead of a usage error with a clean exit
-# code, e.g. `python -m klipperformac.proxy 808o <dir> 7125`.
+# FIXED (deep-hunt): main() performed no argv validation. Every malformed
+# invocation surfaced as a raw interpreter traceback (ValueError /
+# OverflowError / IndexError / socket.gaierror) instead of a usage error with a
+# clean exit code, e.g. `python -m klipperformac.proxy 808o <dir> 7125`.
+# main() now rejects every form below with SystemExit before it binds.
+# Guard: these tests must keep passing.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bad", ["abc", "8080.5", "", "   ", "1e3", "0x1f90",
                                  "nan", "inf", "-", "8,080", "١٢٣", "+8080-",
                                  "५", "8080 8081"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.main() parses argv with a bare int(); "
-                          "a non-numeric port raises a ValueError traceback "
-                          "instead of a clean SystemExit usage error")
 def test_main_non_numeric_port_must_be_clean_error(nobind, bad):
     with pytest.raises(SystemExit):
         proxy_mod.main(_argv(port=bad))
@@ -125,19 +124,12 @@ def test_main_non_numeric_port_must_be_clean_error(nobind, bad):
 
 @pytest.mark.parametrize("bad", ["-1", "-8080", "65536", "999999",
                                  "99999999999999999999", "70000"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: out-of-range ports are never validated; "
-                          "main() either dies with OverflowError from "
-                          "socket.bind() or silently accepts the value")
 def test_main_port_out_of_range_must_be_clean_error(nobind, bad):
     with pytest.raises(SystemExit):
         proxy_mod.main(_argv(port=bad))
 
 
 @pytest.mark.parametrize("bad", ["junk", "7125.5", "", "abc", "-1", "65536"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the upstream port gets the same unvalidated "
-                          "int() treatment as the listen port")
 def test_main_bad_upstream_port_must_be_clean_error(nobind, bad):
     with pytest.raises(SystemExit):
         proxy_mod.main(_argv(upstream=bad))
@@ -145,9 +137,6 @@ def test_main_bad_upstream_port_must_be_clean_error(nobind, bad):
 
 @pytest.mark.parametrize("argv", [["prog"], ["prog", "8080"],
                                   ["prog", "8080", "/tmp"], []])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: missing required argv produces an IndexError "
-                          "traceback instead of a usage message")
 def test_main_missing_arguments_must_be_clean_error(nobind, argv):
     with pytest.raises(SystemExit):
         proxy_mod.main(argv)
@@ -155,25 +144,38 @@ def test_main_missing_arguments_must_be_clean_error(nobind, argv):
 
 @pytest.mark.parametrize("bad", ["not-an-host.invalid", "999.999.999.999",
                                  "1.2.3.4.5", "8080"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the bind address (argv[4]) is handed "
-                          "straight to socket.bind(); an invalid one yields a "
-                          "raw gaierror/OSError traceback")
 def test_main_bad_bind_must_be_clean_error(nobind, bad):
     with pytest.raises(SystemExit):
         proxy_mod.main(_argv(bind=bad))
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: an empty doc root argv[2] is accepted "
-                          "silently, and translate_path then resolves requested "
-                          "paths relative to the server's CWD (the repo root in "
-                          "production), exposing arbitrary files outside the UI "
-                          "directory")
-def test_main_blank_docroot_must_be_clean_error(nobind, proxymod, monkeypatch):
+# ---------------------------------------------------------------------------
+# FIXED (deep-hunt) + characterisation: an empty doc root argv[2] used to be
+# accepted silently and translate_path then resolved every request relative to
+# the server's CWD (the repo root in production), exposing files outside the UI
+# directory.
+#
+# main() now refuses it with a usage error BEFORE binding, which is the
+# fail-closed order AGENTS.md asks for (the listener is the side effect). The
+# original version of this test also read the handler factory back out of
+# `nobind[0]`, i.e. it required a server to have been constructed *and* refused
+# -- those two halves cannot both hold once validation happens before bind, so
+# the second half is asserted the only way it can be: with an accepted
+# invocation, the factory must hand UIPandler an absolute doc root, never None
+# and never the "" that would fall back to CWD.
+# ---------------------------------------------------------------------------
+def test_main_blank_docroot_must_be_clean_error(nobind, proxymod, tmp_path,
+                                                monkeypatch):
     with pytest.raises(SystemExit):
         proxy_mod.main(_argv(directory=""))
-    # If main() ever learns to validate, the handler must never fall back to CWD.
+    # Fail-closed: refusing to start means no listener was ever constructed.
+    assert not nobind, "main() built a server despite a blank document root"
+
+    # The handler must never fall back to CWD: whatever token a wrapper passed,
+    # it is resolved to an absolute directory before anything is served.
+    docroot = tmp_path / "web" / "mainsail"
+    docroot.mkdir(parents=True)
+    relative = os.path.relpath(str(docroot), os.getcwd())
     seen = {}
 
     def spy(self, *a, **kw):
@@ -181,10 +183,12 @@ def test_main_blank_docroot_must_be_clean_error(nobind, proxymod, monkeypatch):
         raise _Abort()
 
     monkeypatch.setattr(proxymod.UIPandler, "__init__", spy)
+    proxy_mod.main(_argv(directory=relative))
     with pytest.raises(_Abort):
-        nobind[0]["handler"](object(), ("127.0.0.1", 5), object())
-    assert seen.get("directory") not in (None, ""), \
+        nobind[-1]["handler"](object(), ("127.0.0.1", 5), object())
+    assert seen.get("directory") not in (None, "", relative, os.getcwd()), \
         "doc root must be resolved to an absolute path before serving"
+    assert seen.get("directory") == str(docroot)
 
 
 # ---------------------------------------------------------------------------

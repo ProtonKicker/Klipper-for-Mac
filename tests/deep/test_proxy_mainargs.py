@@ -123,8 +123,11 @@ def docroot(stack):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: main() takes the port token straight through int(), which is a
-# Python *literal* parser, not an HTTP port parser.
+# FIXED (deep-hunt): main() took the port tokens straight through int(), which
+# is a Python *literal* parser, not an HTTP port parser. proxy.PORT_TOKEN now
+# admits only canonical ASCII decimal ("0" or [1-9][0-9]{0,4}) and range-checks
+# 0..65535, both before any UIPandler class state is touched.
+# Guard: these two tests must keep passing.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("token,secret_port", [
     ("1_0", 10),
@@ -138,12 +141,6 @@ def docroot(stack):
     ("+4321", 4321),
     ("4321 ", 4321),
 ])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.main() accepts non-canonical integer "
-                          "tokens (underscores, unicode digits, leading zeros, "
-                          "sign, surrounding whitespace) as port numbers, so a "
-                          "mangled wrapper token binds a port nobody asked for "
-                          "instead of exiting with a usage error")
 def test_main_listen_port_must_be_canonical_ascii_digits(nobind, token,
                                                          secret_port):
     with pytest.raises(SystemExit):
@@ -154,11 +151,6 @@ def test_main_listen_port_must_be_canonical_ascii_digits(nobind, token,
 
 @pytest.mark.parametrize("token", ["1_0", "١٢٣", " 7125 ", "+7125", "0007125",
                                    "7125\n"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: the Moonraker upstream port (argv[3]) gets "
-                          "the same unvalidated int() treatment as the listen "
-                          "port, so a mangled token silently points the UIs at "
-                          "the wrong upstream")
 def test_main_upstream_port_must_be_canonical_ascii_digits(nobind, proxymod,
                                                            token):
     with pytest.raises(SystemExit):
@@ -174,10 +166,6 @@ def test_main_upstream_port_must_be_canonical_ascii_digits(nobind, proxymod,
     st.from_regex(r"\A[0-9]{1,5}\Z", fullmatch=True),
     st.from_regex(r"\A[-+ 0-9_١٢٣６７８]{1,6}\Z", fullmatch=True),
 ))
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: main() has no port-token validation -- any "
-                          "string int() happens to swallow becomes a bound port, "
-                          "including Python-only literal forms")
 def test_property_only_canonical_decimal_tokens_are_accepted(nobind, token):
     try:
         proxy_mod.main(argv(port=token))
@@ -191,18 +179,15 @@ def test_property_only_canonical_decimal_tokens_are_accepted(nobind, token):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: argv[4] is handed to socket.bind() verbatim. "" and "0" are not
-# errors -- they resolve to INADDR_ANY -- so a wrapper that expands an empty
-# $BIND silently publishes Mainsail/Fluidd on every interface, which AGENTS.md
-# forbids as a default. (The explicit "0.0.0.0" that process.py passes when the
-# user opted into LAN is legitimate and is NOT asserted against here.)
+# FIXED (deep-hunt): argv[4] used to be handed to socket.bind() verbatim. ""
+# and "0" are not errors -- they resolve to INADDR_ANY -- so a wrapper that
+# expanded an empty $BIND silently published Mainsail/Fluidd on every
+# interface, which AGENTS.md forbids as a default. proxy._bind_token() now
+# accepts numeric addresses only (no DNS either), so an ambiguous token is a
+# usage error; the LAN opt-in stays the explicit "0.0.0.0" process.py passes.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("token", ["", "0"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.main() accepts an empty/zero bind "
-                          "token, which bind() resolves to INADDR_ANY and "
-                          "exposes the web UI on the LAN instead of the "
-                          "loopback default required by AGENTS.md")
 def test_main_ambiguous_bind_token_must_not_wildcard(nobind, token):
     # Evidence first, without binding anything: prove the token is a wildcard.
     resolved = socket.getaddrinfo(token, 0, socket.AF_INET, socket.SOCK_STREAM,
@@ -248,15 +233,13 @@ def test_server_class_is_restart_safe():
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: main() has no error handling around bind(). A perfectly canonical
-# port that is simply unavailable -- the ordinary desktop case of something else
-# already on 8080 -- produces an interpreter traceback out of socketserver
-# instead of "port is already in use".
+# FIXED (deep-hunt): main() had no error handling around bind(). A perfectly
+# canonical port that is simply unavailable -- the ordinary desktop case of
+# something else already on 8080 -- produced an interpreter traceback out of
+# socketserver instead of "port is already in use". main() now translates the
+# bind OSError into a SystemExit.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.main() lets socket.bind() OSError "
-                          "(EADDRINUSE) escape as a raw traceback instead of a "
-                          "clean bind error with a non-zero exit")
 def test_main_port_in_use_must_be_a_clean_error(proxymod, docroot):
     occupied = socket.socket()
     occupied.bind(("127.0.0.1", 0))
@@ -270,16 +253,14 @@ def test_main_port_in_use_must_be_a_clean_error(proxymod, docroot):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: a doc root containing a NUL byte is accepted by main(); every static
-# request then dies inside isdir()/open() with "ValueError: embedded null byte",
-# socketserver kills the handler thread and the browser gets no HTTP response at
-# all -- a blank UI with nothing diagnosable in the log.
+# FIXED (deep-hunt): a doc root containing a NUL byte was accepted by main();
+# every static request then died inside isdir()/open() with "ValueError:
+# embedded null byte", socketserver killed the handler thread and the browser
+# got no HTTP response at all -- a blank UI with nothing diagnosable in the log
+# (UIPandler silences handler logging). proxy._docroot() now screens the token
+# and refuses to start before the listener exists.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.main() does not reject a doc root "
-                          "with an embedded NUL; each static request then "
-                          "crashes the handler thread (ValueError) and the "
-                          "client receives no HTTP response")
 def test_main_docroot_with_nul_must_be_a_clean_error(proxymod, docroot):
     """main() must refuse to start, not start and then die on every request."""
     captured = []

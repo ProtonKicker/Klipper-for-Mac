@@ -5,11 +5,12 @@ real (fake) upstream, also 127.0.0.1/ephemeral. Nothing in this file may touch
 the live stack ports; an autouse guard enforces that on the proxy module's own
 socket helpers. Every server is shut down in a finally block.
 
-Four behaviours are asserted as *should be*, and are marked
-`xfail(strict=True)` because the product does not do them yet: the negative
+Four behaviours used to be asserted as *should be* and were marked
+`xfail(strict=True)` because the product did not do them yet: the negative
 Content-Length wedge, the coalesced first WebSocket frame, HTTP/1.1 pipelining
-/keep-alive, and the 5-slot accept backlog. Everything else passes today;
-delete a marker when its bug is fixed and the test will start guarding the fix.
+and the 5-slot accept backlog. All four are fixed in proxy.py now, so their
+markers are gone and they guard the fix; the WebSocket one also carries a
+characterisation note about what the fake upstream can actually observe.
 """
 import http.client
 import importlib
@@ -334,14 +335,13 @@ def test_dead_upstream_gives_502_not_a_traceback(proxymod, docroot):
         httpd.server_close()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy._body() (proxy.py:35) does "
-                          "rfile.read(int(n)) with no validation, so a negative "
-                          "Content-Length becomes read(-1) = 'read until EOF' and "
-                          "the handler thread never answers (silent wedge; a "
-                          "handful of such requests starve the 5-slot accept "
-                          "loop). Non-numeric values are fine - int() raises and "
-                          "_proxy() turns that into a 502")
+# ---------------------------------------------------------------------------
+# FIXED (deep-hunt): proxy._request_body() now parses Content-Length as a
+# strict non-negative decimal and answers 400 before reading anything, so a
+# negative value can no longer become read(-1) = "read until EOF" and wedge the
+# handler thread (a silent wedge that starves the accept loop).
+# Guard: this test must keep passing.
+# ---------------------------------------------------------------------------
 def test_negative_content_length_is_answered(proxy_server, upstream):
     """A -N Content-Length must never make the proxy read the whole stream."""
     out = raw_roundtrip(proxy_server.port,
@@ -416,15 +416,22 @@ def test_websocket_frame_sent_after_the_handshake_relays_both_ways(proxy_server,
     assert b"WS:PING-PART-TWO" in out, out[:300]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy._proxy_ws() (proxy.py:71) tunnels "
-                          "from the raw socket self.connection and ignores what "
-                          "BaseHTTPRequestHandler already buffered in self.rfile, "
-                          "so a first WS frame coalesced into the same write as "
-                          "the handshake is silently dropped and the tunnel "
-                          "never starts (handshake + frame in one segment is "
-                          "normal for small early frames: curl, python clients, "
-                          "a fast reconnect)")
+# ---------------------------------------------------------------------------
+# FIXED (deep-hunt): proxy._proxy_ws() tunnelled from the raw socket
+# self.connection and ignored what the reader had already buffered, so a first
+# frame coalesced into the same write as the handshake was silently dropped and
+# the tunnel never started. proxy.py keeps its own read-ahead (_ClientReader)
+# and releases those bytes to the upstream once the handshake answer has been
+# relayed.
+#
+# Characterisation note: FakeUpstream._read_head() attributes every byte after
+# the "\r\n\r\n" boundary to whichever side of it it happened to arrive on, so
+# the frame can only ever show up in ONE of the two channels below -- as the
+# recorded trailing body if the proxy writes it in the same segment as the
+# handshake, or as the echoed "WS:<frame>" if the proxy (as it now does) waits
+# for the 101 first so a handshake failure can never leak client frames. The
+# echo is the end-to-end proof, and a proxy that drops the frame fails here.
+# ---------------------------------------------------------------------------
 def test_websocket_frame_coalesced_with_the_handshake_is_relayed(proxy_server,
                                                                 upstream):
     """A client that writes the handshake and its first frame in one go (or has
@@ -437,8 +444,10 @@ def test_websocket_frame_coalesced_with_the_handshake_is_relayed(proxy_server,
     assert b"101 Switching Protocols" in out.split(b"\r\n")[0], out[:80]
     bodies = [b for _m, t, _h, b in upstream.requests if t == "/websocket"]
     assert bodies, "the upgrade never reached the upstream"
-    assert b"HELLO-FRAME" in bodies[-1], \
-        "the coalesced frame never reached the upstream: %r" % (bodies,)
+    reached = b"HELLO-FRAME" in bodies[-1] or b"WS:HELLO-FRAME" in out
+    assert reached, \
+        "the coalesced frame never reached the upstream: %r / %r" % (bodies,
+                                                                     out[:200])
     assert b"WS:HELLO-FRAME" in out, out[:200]
 
 
@@ -464,14 +473,15 @@ def test_websocket_with_dead_upstream_is_502(proxymod, docroot):
 
 
 # --- keep-alive / pipelining framing ---------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: UIPandler keeps SimpleHTTPRequestHandler's "
-                          "protocol_version = 'HTTP/1.0' (proxy.py:26), so "
-                          "handle() never loops: it answers the first request and "
-                          "closes, silently discarding the pipelined request "
-                          "bytes it had already buffered. No keep-alive at all, "
-                          "so every API poll re-connects - which is also how the "
-                          "5-slot accept backlog gets hit")
+# ---------------------------------------------------------------------------
+# FIXED (deep-hunt): UIPandler kept SimpleHTTPRequestHandler's
+# protocol_version = 'HTTP/1.0', so the stdlib handle() loop answered the first
+# request, closed, and silently discarded the pipelined request bytes it had
+# already buffered. proxy.handle() now drains requests that are already in hand
+# (still answering HTTP/1.0 and still closing the connection, so an idle
+# keep-alive client cannot pin a worker thread).
+# Guard: this test must keep passing.
+# ---------------------------------------------------------------------------
 def test_pipelined_requests_are_answered_in_order(proxy_server, upstream):
     out = raw_roundtrip(
         proxy_server.port,
@@ -552,15 +562,15 @@ def test_concurrent_clients_do_not_interfere(proxy_server, upstream):
                 pass
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy.Server (proxy.py:131) never raises "
-                          "socketserver.TCPServer.request_queue_size, so the "
-                          "listener's accept backlog is 5 and a burst of "
-                          "simultaneous connections is answered with 'Connection "
-                          "reset by peer' / broken pipes. Because the handler "
-                          "answers HTTP/1.0 (no keep-alive) every single API poll "
-                          "of a Mainsail/Fluidd page load is a brand-new "
-                          "connection, so a normal page load is the burst")
+# ---------------------------------------------------------------------------
+# FIXED (deep-hunt): proxy.Server never raised
+# socketserver.TCPServer.request_queue_size, so the listener's accept backlog
+# was 5 and a burst of simultaneous connections was answered with 'Connection
+# reset by peer' / broken pipes. Loading a Mainsail/Fluidd page is exactly such
+# a burst, because the handler answers HTTP/1.0 and every API poll is therefore
+# a brand-new connection. Server now sets request_queue_size = 128.
+# Guard: this test must keep passing.
+# ---------------------------------------------------------------------------
 def test_simultaneous_connects_are_not_reset(proxy_server, upstream):
     """Every client in a same-instant burst must get its own correct answer."""
     n = 32

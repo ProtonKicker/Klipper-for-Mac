@@ -375,18 +375,15 @@ def test_upstream_error_status_is_not_rewritten(proxymod, recorder):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: Content-Length is read with headers.get() (FIRST value) but
-# forwarded from a dict built out of headers.items() (LAST value), so a client
-# sending two conflicting Content-Length headers makes the proxy relay a
-# declared length that does not match the body it forwards: upstream framing
-# desync / request smuggling. Ambiguous lengths must be rejected (400) or
-# normalised to the value that was actually read.
+# FIXED (deep-hunt): Content-Length was read with headers.get() (FIRST value)
+# but forwarded from a dict built out of headers.items() (LAST value), so a
+# client sending two conflicting Content-Length headers made the proxy relay a
+# declared length that did not match the body it forwarded: upstream framing
+# desync / request smuggling. proxy._request_body() now cuts the body at the
+# first strict decimal value and _forward_headers() re-writes Content-Length
+# from the bytes actually read, so the two can never disagree.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: duplicate conflicting Content-Length is "
-                          "forwarded as the last value while the body is cut at "
-                          "the first value, desynchronising the upstream "
-                          "connection (smuggling vector)")
 def test_ambiguous_content_length_is_not_relayed_inconsistent(proxymod,
                                                              recorder):
     proxymod.UIPandler.upstream_port = 4321
@@ -403,17 +400,14 @@ def test_ambiguous_content_length_is_not_relayed_inconsistent(proxymod,
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: a chunked request body is never read. _body() only honours
-# Content-Length, so a chunked POST is relayed with "Transfer-Encoding:
-# chunked" and an empty body: the chunks stay in the proxy's own buffer (where
-# they are parsed as the next pipelined request) and the upstream waits for a
-# body until the 15 s timeout. Browser uploads that use chunked encoding fail.
+# FIXED (deep-hunt): a chunked request body was never read. _body() only
+# honoured Content-Length, so a chunked POST was relayed with "Transfer-
+# Encoding: chunked" and an empty body: the chunks stayed in the proxy's own
+# buffer (where they were parsed as the next pipelined request) and the
+# upstream waited for a body until its timeout. proxy._read_chunked() now
+# de-chunks the body and the hop-by-hop TE header is filtered on the way out.
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: proxy does not de-chunk (or reject) "
-                          "Transfer-Encoding: chunked request bodies -- the "
-                          "payload is never forwarded while the chunked header "
-                          "is")
 def test_chunked_request_body_is_forwarded(proxymod, recorder):
     proxymod.UIPandler.upstream_port = 4321
     chunks = (b"POST /api/x HTTP/1.1\r\nHost: x\r\n"
@@ -518,15 +512,13 @@ def test_get_with_upgrade_header_uses_the_websocket_tunnel(proxymod, recorder,
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: HEAD on an API path reports "Content-Length: 0" because the proxy
-# drops the upstream's Content-Length and substitutes len(body). A HEAD
-# response must carry the size the GET would report (RFC 9110 9.3.2), so the
-# UIs cannot use HEAD for size/existence checks through the proxy.
+# FIXED (deep-hunt): HEAD on an API path reported "Content-Length: 0" because
+# the proxy dropped the upstream's Content-Length and substituted len(body),
+# and a HEAD response carries no body. RFC 9110 9.3.2 wants the size the GET
+# would report, which is what proxy._relay_response() now forwards for HEAD
+# (and it still omits any length for bodyless statuses).
+# Guard: this test must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: HEAD responses through the proxy report "
-                          "Content-Length: 0 instead of the upstream's declared "
-                          "size")
 def test_head_relays_upstream_declared_content_length(proxymod, recorder):
     proxymod.UIPandler.upstream_port = 4321
     recorder.response = RecordedResponse(

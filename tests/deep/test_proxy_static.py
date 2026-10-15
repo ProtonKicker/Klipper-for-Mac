@@ -231,20 +231,17 @@ def test_server_survives_all_hostile_targets(server, tree):
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: a URL-encoded NUL (or a lone surrogate from an invalid %ED
-# sequence) survives translate_path and blows up inside open()/os.stat with
-# ValueError/UnicodeEncodeError. The handler emits no HTTP response at all --
-# the client just sees the connection closed -- and the traceback goes to the
-# parent's stderr/log.
+# FIXED (deep-hunt): a URL-encoded NUL (or a lone surrogate from an invalid %ED
+# sequence) used to survive translate_path and blow up inside open()/os.stat
+# with ValueError/UnicodeEncodeError. The handler emitted no HTTP response at
+# all -- the client just saw the connection closed -- and the traceback went to
+# the parent's stderr. UIPandler._static_request_ok() now screens the
+# translated path (os.fsencode + realpath) and answers 400 instead.
+# Guard: these two tests must keep passing.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("target", [b"/%00", b"/index.html%00",
                                     b"/index.html%00.png", b"/assets%00/app.js",
                                     b"/%00/etc/passwd"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: UIPandler does not reject NUL bytes in the "
-                          "request path; open() raises ValueError, the request "
-                          "thread dies and the client gets no HTTP response "
-                          "instead of 400")
 def test_encoded_nul_gets_an_http_error_status(server, target):
     body = raw_get(target, server)
     assert body is not None, "connection closed without any HTTP response"
@@ -254,10 +251,6 @@ def test_encoded_nul_gets_an_http_error_status(server, target):
 
 @pytest.mark.parametrize("target", [b"/%ed%ba%80", b"/%ed%b0%80x",
                                     b"/%ed%a0%80", b"/assets/%ed%bf%bf/x"])
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: percent-escapes that decode to lone "
-                          "surrogates reach os.stat() and raise "
-                          "UnicodeEncodeError; no HTTP response is produced")
 def test_surrogate_escape_gets_an_http_error_status(server, target):
     body = raw_get(target, server)
     assert body is not None, "connection closed without any HTTP response"
@@ -278,16 +271,14 @@ def test_malformed_but_safe_percent_encodings_get_http_404(server, tree, target)
 
 
 # ---------------------------------------------------------------------------
-# BUG DEEP: translate_path() collapses ".." but never resolves symlinks, so a
-# symlink inside the doc root (web installs legitimately contain them, and the
-# doc root is user-writable) reads any file the Klipper-for-Mac user can open.
+# FIXED (deep-hunt): translate_path() collapsed ".." but never resolved
+# symlinks, so a symlink inside the doc root (web installs legitimately contain
+# them, and the doc root is user-writable) read any file the Klipper-for-Mac
+# user can open. UIPandler._static_request_ok() now compares os.path.realpath()
+# of the translated path against the real doc root and answers 403; links that
+# stay inside the tree keep working (test_proxy_containment.py).
+# Guard: these two tests must keep passing.
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: no realpath containment check in "
-                          "UIPandler.translate_path/send_head; a symlink inside "
-                          "the doc root serves files outside it (any local "
-                          "process or browser can read ~/.ssh, KLIPPERFORMAC_DATA "
-                          "secrets, etc.)")
 def test_file_symlink_stays_inside_docroot(server, tree):
     link = tree["docroot"] / "linked.txt"
     os.symlink(str(tree["outside"] / "secret.txt"), str(link))
@@ -299,11 +290,6 @@ def test_file_symlink_stays_inside_docroot(server, tree):
         link.unlink()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="BUG DEEP: a directory symlink inside the doc root "
-                          "is walked, so /<link>/<any-path> serves arbitrary "
-                          "files -- containment must be checked on the resolved "
-                          "realpath, not the lexical path")
 def test_directory_symlink_stays_inside_docroot(server, tree):
     link = tree["docroot"] / "dlink"
     os.symlink(str(tree["outside"]), str(link))
