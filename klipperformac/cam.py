@@ -377,6 +377,29 @@ def save_prefs(**kwargs):
     return paths.save_cam_settings(**kwargs)
 
 
+# The stored camera name is free text: a hand-edited settings.json can hold a
+# value JSON reads back happily but the OS cannot encode (a lone surrogate),
+# which would crash the spawn with a UnicodeEncodeError traceback.
+BAD_DEVICE_NAME = ("The camera name in your settings has characters this Mac "
+                   "cannot use, so it was not handed to the camera helper.")
+BAD_DEVICE_FIX = ('Pick the camera again: klipperformac cam config --device '
+                  '"name"   (list them: klipperformac cam list)')
+
+
+def _device_argv(p):
+    """["--device", NAME] when a camera name is stored, [] when it is not, and
+    None when the stored name cannot be passed to another process at all."""
+    device = p.get("device")
+    if not device:
+        return []
+    text = str(device)
+    try:
+        os.fsencode(text)          # what exec() does to every argv element
+    except ValueError:             # UnicodeEncodeError: nothing we can spawn
+        return None
+    return ["--device", text]
+
+
 def running():
     """Camera state dict (pid, started, port, width...) or None. A dead or
     borrowed pid unlinks the state file so the next start() is clean."""
@@ -524,6 +547,12 @@ def start():
             "then turn the camera on again.",
             "Not offered there? Reset the camera prompt with:",
             "  tccutil reset Camera " + IDENTIFIER]
+    p = prefs()
+    device = _device_argv(p)
+    if device is None:
+        # Checked before anything is reaped or spawned: a name we cannot pass
+        # on is the user's to fix, not a reason to kill a working camera.
+        return False, [BAD_DEVICE_NAME, BAD_DEVICE_FIX]
     port = paths.CAM_PORT
     _reap_orphans(port)
     if not _port_free(port):
@@ -532,19 +561,19 @@ def start():
             "stream.".format(port),
             "Quit that app, or pick another port: export "
             "KLIPPERFORMAC_CAM_PORT=8083"]
-    p = prefs()
     args = [str(helper), "--stream", "--port", str(port)]
     for key in ("width", "height", "fps", "quality"):
         args += ["--" + key, str(p[key])]
-    if p.get("device"):
-        args += ["--device", str(p["device"])]
+    args += device
     paths.ensure_dirs()
     paths.CAM_LOG.parent.mkdir(parents=True, exist_ok=True)
     log = None
     try:
         log = open(paths.CAM_LOG, "ab")
         proc = _popen(args, stdout=log, stderr=log)
-    except OSError as e:
+    except (OSError, ValueError) as e:
+        # ValueError too: exec refuses an argv element with a NUL byte, and a
+        # refused spawn is still just "could not start the camera".
         return False, ["Could not start the camera: " + str(e),
                        "Rebuild the helper if this keeps happening: "
                        "klipperformac cam build"]
@@ -654,7 +683,8 @@ def _uptime(started):
     try:
         secs = int(time.time() - time.mktime(
             time.strptime(started, "%Y-%m-%dT%H:%M:%S")))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: a pre-1970 'started' has no time_t here.
         return "?"
     secs = max(secs, 0)
     if secs < 60:
@@ -747,18 +777,21 @@ def snapshot(dest=None):
     # shows. The helper gives up on its own after ~timeout+20s (it has to wait
     # for a permission click), so keep our own deadline longer than that.
     p = prefs()
+    device = _device_argv(p)
+    if device is None:
+        return False, [BAD_DEVICE_NAME, BAD_DEVICE_FIX]
     args = [str(helper), "--snapshot", str(dest), "--timeout", "10",
             "--width", str(p["width"]), "--height", str(p["height"]),
             "--quality", str(p["quality"])]
-    if p.get("device"):
-        args += ["--device", str(p["device"])]
+    args += device
     try:
         res = subprocess.run(args, capture_output=True, timeout=45)
     except subprocess.TimeoutExpired:
         return False, ["Taking a snapshot took too long (the camera may be "
                        "busy or asleep).",
                        "If macOS asked for permission, click OK and try again."]
-    except OSError as e:
+    except (OSError, ValueError) as e:
+        # ValueError too: exec refuses an argv element with a NUL byte.
         return False, ["Could not run the camera helper: " + str(e)]
     if res.returncode != 0 and not dest.exists():
         err = (res.stderr.decode(errors="replace").strip() or
@@ -880,7 +913,8 @@ def _check_prefs():
                         ("width", 160, 4096), ("height", 120, 4096)):
         try:
             val = int(p.get(key))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError too: int(float('inf')) is not a number of pixels.
             bad.append("{}={!r} (needs a number)".format(key, p.get(key)))
             continue
         if not lo <= val <= hi:

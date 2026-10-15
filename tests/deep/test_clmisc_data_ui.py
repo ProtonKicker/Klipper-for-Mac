@@ -11,7 +11,9 @@ Safety contract these tests enforce (and obey):
   * no process is started or stopped: process.running/stop/start are stubbed.
   * no browser is launched: webbrowser.open is stubbed and recorded.
 
-``xfail(strict=True)`` marks encode product bugs that are still present.
+The bugs this battery found are fixed in ``klipperformac/cli.py``; the tests
+that encoded them (``xfail(strict=True)``, "BUG DEEP: ...") keep their
+assertions and now pass.
 """
 import argparse
 import json
@@ -314,11 +316,6 @@ def test_any_sandboxed_target_name_moves_the_contents_fully(stack, name):
     assert tree(old) == {}
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: relocate_data() lets mkdir's "
-                   "OSError escape, so a destination the filesystem cannot name "
-                   "(supplementary-plane characters -> Errno 92 'Illegal byte "
-                   "sequence') kills `klipperformac data --set` with a raw traceback "
-                   "instead of a one-line error")
 @given(name=st.text(min_size=1, max_size=30).filter(
     lambda n: "\x00" not in n and ".." not in n and "/" not in n
     and n.strip() == n and n not in (".", "")))
@@ -372,11 +369,6 @@ def test_relocate_refuses_home_with_trailing_slashes(stack):
         assert stack.paths.DATA == old
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: relocate_data() expanduser()s "
-                   "but never resolves a relative `data --set` target, so "
-                   "settings.json stores 'reldir' and every later command reads a "
-                   "data folder relative to whatever cwd it happens to be started "
-                   "from (printer.cfg 'disappears')")
 def test_relocate_relative_target_is_absolutised_or_refused(stack, tmp_path,
                                                             monkeypatch):
     old = seed_data(stack.paths)
@@ -393,9 +385,6 @@ def test_relocate_relative_target_is_absolutised_or_refused(stack, tmp_path,
     assert tree(old) == before, "source must not be emptied into a cwd-relative dir"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: relocate_data() accepts a "
-                   "whitespace-only target ('data --set \"  \")' and creates a "
-                   "folder literally named '   '; blank values must be rejected")
 def test_relocate_whitespace_target_is_refused(stack, tmp_path, monkeypatch):
     old = seed_data(stack.paths)
     before = tree(old)
@@ -411,12 +400,6 @@ def test_relocate_whitespace_target_is_refused(stack, tmp_path, monkeypatch):
     assert list(cwd.iterdir()) == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: relocate_data() moves items "
-                   "before it validates, so a destination inside the current data "
-                   "folder ('data --set <DATA>/backup') half-moves config/ and "
-                   "logs/ into the new subdir and then dies with shutil.Error "
-                   "'Cannot move a directory into itself' - printer.cfg is then "
-                   "invisible to every command")
 def test_relocate_target_inside_the_data_folder_is_refused(stack, capfd):
     old = seed_data(stack.paths)
     before = tree(old)
@@ -432,10 +415,6 @@ def test_relocate_target_inside_the_data_folder_is_refused(stack, capfd):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: relocate_data() does not wrap "
-                   "shutil.move, so relocating into a non-writable folder raises a "
-                   "raw PermissionError traceback (AGENTS.md: no traceback for a "
-                   "user-facing path problem)")
 def test_relocate_into_read_only_folder_is_a_clean_error(stack, capfd):
     old = seed_data(stack.paths)
     before = tree(old)
@@ -453,9 +432,6 @@ def test_relocate_into_read_only_folder_is_a_clean_error(stack, capfd):
         os.chmod(str(target), stat.S_IRWXU)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: `data --set` with a path whose "
-                   "parent is a regular file raises NotADirectoryError out of mkdir "
-                   "instead of a clean error")
 def test_relocate_through_a_file_parent_is_a_clean_error(stack, capfd):
     seed_data(stack.paths)
     blocker = stack.data.parent / "blocker"
@@ -467,9 +443,6 @@ def test_relocate_through_a_file_parent_is_a_clean_error(stack, capfd):
     assert stack.paths.load_settings() == {}
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: `data --set` with an "
-                   "over-long path component (> NAME_MAX) escapes mkdir's OSError "
-                   "as a traceback")
 def test_relocate_with_an_over_long_name_is_a_clean_error(stack, capfd):
     seed_data(stack.paths)
     old = stack.paths.DATA

@@ -19,6 +19,18 @@ def _die(msg):
     sys.exit(1)
 
 
+def _save_settings(settings):
+    """paths.save_settings() with the filesystem friction turned into one
+    clean line: settings.json is shared with the SwiftUI app, so a blocked
+    write (read-only home, root-owned prefs after one sudo run, a directory in
+    its place) must never reach the user as a traceback."""
+    try:
+        paths.save_settings(settings)
+    except OSError as e:
+        _die("Could not write {} (your settings are unchanged): {}".format(
+            paths.SETTINGS, getattr(e, "strerror", None) or e))
+
+
 def _safe_name(name, what="name"):
     """Reject preset/history names that could escape their directory when
     joined onto PRESETS/history."""
@@ -165,7 +177,7 @@ def cmd_lan(args):
         enabled = args.state == "on"
         settings = paths.load_settings()
         settings["lan"] = enabled
-        paths.save_settings(settings)
+        _save_settings(settings)
         changed = configgen.apply_lan(enabled)
         print("LAN access {}.".format("OPEN — other devices can reach the "
                                       "printer" if enabled
@@ -187,12 +199,15 @@ def cmd_lan(args):
 
 def cmd_logs(args):
     log = paths.KLIPPY_LOG if args.service == "klipper" else paths.MOONRAKER_LOG
-    if not log.exists():
+    if not log.is_file():
         _die("No log yet: " + str(log))
     tail = ["tail", "-n", str(args.lines), str(log)]
     if args.follow:
         tail.insert(1, "-f")
-    subprocess.call(tail)
+    code = subprocess.call(tail)
+    if code:
+        # A failed `logs` must not look like a success to a script or to CI.
+        sys.exit(1 if code < 0 else code)
 
 
 def cmd_serial(args):
@@ -225,8 +240,20 @@ def cmd_serial(args):
 
 
 def relocate_data(new):
-    """Move the data folder, record it in settings, fix config paths."""
+    """Move the data folder, record it in settings, fix config paths.
+
+    Everything is validated BEFORE the first file moves: a half-moved tree
+    would hide printer.cfg from every later command."""
+    typed = str(new)
     new = Path(new).expanduser()
+    if not typed.strip():
+        return ("Refusing to use a blank name as the data folder. Give a full "
+                "path, e.g. /Volumes/BigDrive/klipper-data.")
+    if not new.is_absolute():
+        return ("Refusing to use the relative path '{}' as the data folder: "
+                "the stack is started from a different folder than this "
+                "terminal, so give a full path (starting with / or ~)."
+                .format(typed))
     if new.exists():
         new = new.resolve()
     old = paths.DATA
@@ -235,25 +262,41 @@ def relocate_data(new):
         return "Data folder already set to: {}".format(new)
     if new == Path.home() or new.parent == new:
         return "Refusing to use {} as the data folder.".format(new)
+    if os.path.realpath(str(new)).startswith(
+            os.path.realpath(str(old)) + os.sep):
+        _die("Invalid data folder {}: it is inside the current data folder "
+             "{}. Move the folder you want to use out of it first."
+             .format(new, old))
+    try:
+        new.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError) as e:
+        _die("Invalid data folder {}: {}".format(
+            new, getattr(e, "strerror", None) or e))
     was_running = process.running() is not None
     if was_running:
         process.stop()
-    new.mkdir(parents=True, exist_ok=True)
     moved = 0
-    if old.exists():
-        for p in sorted(old.iterdir()):
-            dest = new / p.name
-            if dest.exists():
-                print("[!] " + str(dest) + " already exists — left "
-                      + str(p) + " in place")
-                continue
-            shutil.move(str(p), str(dest))
-            moved += 1
+    try:
+        if old.exists():
+            for p in sorted(old.iterdir()):
+                dest = new / p.name
+                if dest.exists():
+                    print("[!] " + str(dest) + " already exists — left "
+                          + str(p) + " in place")
+                    continue
+                shutil.move(str(p), str(dest))
+                moved += 1
+    except (OSError, ValueError, shutil.Error) as e:
+        if was_running:
+            process.start()
+        _die("Could not move the data folder to {}: {} (some items may have "
+             "moved; the data folder is still {} and nothing was recorded)"
+             .format(new, getattr(e, "strerror", None) or e, old))
     paths.set_data(new)
     paths.ensure_dirs()
     settings = paths.load_settings()
     settings["data"] = str(new)
-    paths.save_settings(settings)
+    _save_settings(settings)
     configgen.sync_data_paths()
     if was_running:
         process.start()
@@ -536,7 +579,13 @@ def _klippy_console(cmd, timeout=6):
     pty_path = os.environ.get("KLIPPERFORMAC_CONSOLE", "/tmp/printer")
     if not _os.path.exists(pty_path):
         _die("No Klipper console at {} (is the stack up?)".format(pty_path))
-    fd = _os.open(pty_path, _os.O_RDWR | _os.O_NONBLOCK)
+    try:
+        fd = _os.open(pty_path, _os.O_RDWR | _os.O_NONBLOCK)
+    except OSError as e:
+        # A directory, an unreadable node or a unix socket is not a console:
+        # same hint as "not there", never a traceback.
+        _die("No Klipper console at {} ({}) (is the stack up?)".format(
+            pty_path, getattr(e, "strerror", None) or e))
     lines = []
     try:
         _os.write(fd, (cmd + "\n").encode())
@@ -549,9 +598,14 @@ def _klippy_console(cmd, timeout=6):
                     break
                 continue
             try:
-                buf += _os.read(fd, 4096).decode(errors="replace")
+                chunk = _os.read(fd, 4096)
             except OSError:
                 break
+            if not chunk:
+                # EOF: the console peer is gone and select() would report the
+                # fd ready forever (busy CPU until the deadline).
+                break
+            buf += chunk.decode(errors="replace")
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
                 line = line.strip()
@@ -579,9 +633,20 @@ def cmd_gcode(args):
                 out = r.read().decode()
         except Exception as e:
             _die("Moonraker not reachable (is it up?): " + str(e))
-        print(_json.dumps(_json.loads(out), indent=2)[:1500])
+        try:
+            answer = _json.loads(out)
+        except ValueError:
+            # Whitespace flattened: a response body must never forge a CLI line.
+            _die("Moonraker's answer on port {} is not JSON (is another "
+                 "service using that port?): {}".format(
+                     paths.MOONRAKER_PORT,
+                     " ".join(out[:120].split()) or "(empty response)"))
+        print(_json.dumps(answer, indent=2)[:1500])
         return
     script = " ".join(args.script)
+    if not script.strip():
+        _die("Nothing to send. Usage: klipperformac gcode G1 X10 F600  "
+             "(or: klipperformac gcode STATUS / --status)")
     if script.strip().upper() in ("STATUS", "RESTART", "FIRMWARE_RESTART", "HELP",
                                   "QUERY_ENDSTOPS"):
         _klippy_console(script)
@@ -624,7 +689,12 @@ def cmd_cam(args):
                          "(got {})".format(flag, lo, hi, value))
             kw[flag] = value
         if kw:
-            merged = cam.save_prefs(**kw)
+            try:
+                merged = cam.save_prefs(**kw)
+            except OSError as e:
+                _die("Could not write {} (your camera settings are "
+                     "unchanged): {}".format(
+                         paths.SETTINGS, getattr(e, "strerror", None) or e))
             ok = True
             lines = ["Saved camera settings: " + ", ".join(
                 "{}={}".format(k, kw[k]) for k in sorted(kw)),
@@ -646,8 +716,17 @@ def cmd_selftest(args):
     env = dict(os.environ)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = repo_root
-    subprocess.call([str(paths.VENV_PY), "-m", "klipperformac.tests.selftest"],
-                    env=env)
+    try:
+        code = subprocess.call([str(paths.VENV_PY), "-m",
+                                "klipperformac.tests.selftest"], env=env)
+    except OSError as e:
+        # No venv yet, or venv/bin/python without the exec bit or replaced by
+        # a directory: one clean line naming the interpreter, never a traceback.
+        _die("Could not run the selftest with {}: {} (run: klipperformac "
+             "setup)".format(paths.VENV_PY, getattr(e, "strerror", None) or e))
+    if code:
+        # The child says what failed; its status is the answer AGENTS.md gates on.
+        sys.exit(1 if code < 0 else code)
 
 
 def cmd_tui(args):
@@ -703,8 +782,13 @@ def cmd_doctor(args):
         ok = False
     else:
         print("[ok] shaper: " + st_shaper["detail"])
-    cam_configured = bool(paths.cam_settings()) or cam.running() is not None \
-        or configgen.webcam_state()[0]
+    try:
+        cam_configured = bool(paths.cam_settings()) or cam.running() is not None \
+            or configgen.webcam_state()[0]
+    except Exception:
+        # An unreadable moonraker.conf is an unknown camera config, not a
+        # reason for `doctor` to die before printing a single camera line.
+        cam_configured = False
     for cam_ok, cam_msg in cam.doctor():
         if cam_ok:
             print("[ok] camera: " + cam_msg)

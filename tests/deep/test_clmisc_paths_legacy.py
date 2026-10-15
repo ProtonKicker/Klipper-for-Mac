@@ -22,7 +22,9 @@ HARD SAFETY RULES honoured by this file:
     no legacy branch can fire against the real home afterwards).
   * nothing here touches ports, /dev/cu.*, or spawns a process.
 
-``xfail(strict=True)`` marks encode product bugs that are still present.
+The bugs this battery found are fixed in ``klipperformac/paths.py``; the tests
+that encoded them (``xfail(strict=True)``, "BUG DEEP: ...") keep their
+assertions and now pass.
 """
 import importlib
 import json
@@ -323,10 +325,6 @@ def test_legacy_documents_only_needs_to_exist_once(isolated_paths):
 # settings.json "data" values that are not strings / not usable
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("value", [123, 1.5, True, ["a", "b"], [1], {"p": "/x"}])
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: paths._resolve_data() does "
-                   "Path(saved) on whatever settings.json holds, so a non-string "
-                   "'data' value raises TypeError while importing paths - every "
-                   "klipperformac command dies with a traceback before main()")
 def test_nonstring_data_setting_is_not_a_fatal_crash(isolated_paths, value):
     home = isolated_paths["home"]
     app = home / ".klipperformac"
@@ -338,10 +336,6 @@ def test_nonstring_data_setting_is_not_a_fatal_crash(isolated_paths, value):
     assert isinstance(p.DATA, type(home))
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: a relative 'data' value in "
-                   "settings.json is used verbatim, so DATA/PRINTER_CFG/KLIPPY_LOG "
-                   "become cwd-relative and every command reads/writes a different "
-                   "tree depending on where it was launched from")
 def test_relative_data_setting_is_rejected_or_absolutised(isolated_paths, tmp_path):
     home = isolated_paths["home"]
     app = home / ".klipperformac"
@@ -362,7 +356,7 @@ def test_relative_data_setting_is_rejected_or_absolutised(isolated_paths, tmp_pa
 
 def test_blankish_data_setting_values_do_not_break_import(isolated_paths):
     """"", null and false are falsy -> fall back to the default; whitespace-only
-    is the interesting one and is covered by the xfail below."""
+    is the interesting one and is covered by the test below."""
     home = isolated_paths["home"]
     app = home / ".klipperformac"
     app.mkdir()
@@ -372,9 +366,6 @@ def test_blankish_data_setting_values_do_not_break_import(isolated_paths):
         assert p.DATA == app / "data", "value %r" % (value,)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: settings.json data='   ' is "
-                   "truthy, so DATA becomes a folder literally named '   "
-                   "(relative)'; _resolve_data must reject blank/whitespace paths")
 def test_whitespace_only_data_setting_is_not_accepted(isolated_paths):
     home = isolated_paths["home"]
     app = home / ".klipperformac"
@@ -417,10 +408,6 @@ def test_settings_json_as_a_directory_is_survivable(isolated_paths):
     assert p.DATA == app / "data"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: when the resolved data path is "
-                   "occupied by a regular file, paths.ensure_dirs() raises a raw "
-                   "FileExistsError out of every command that calls it (`up`, "
-                   "`presets`, status via the CLI) instead of a clean error")
 def test_data_path_occupied_by_a_file_is_not_fatal(isolated_paths):
     """A regular file where the data folder belongs (crashed install, leftover)
     must not make every command raise FileExistsError out of ensure_dirs()."""
@@ -537,10 +524,6 @@ def test_maklipper_readonly_home_leaves_everything_in_place(isolated_paths):
     assert (mk / "venv" / "bin" / "activate").read_text() == ".maklipper\n"
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: the ~/.maklipper migration "
-                   "renames ANY path named .maklipper - including a plain file - "
-                   "into ~/.klipperformac, after which ensure_dirs() raises a raw "
-                   "FileExistsError and no command runs")
 def test_stray_maklipper_file_is_not_hijacked_as_the_app_home(isolated_paths):
     home = isolated_paths["home"]
     (home / ".maklipper").write_text("not a folder at all\n")
@@ -575,12 +558,6 @@ def test_sandboxed_import_never_resolves_into_the_real_home(isolated_paths):
     assert (p.DATA / "marker").is_file()
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: the two legacy migrations are "
-                   "order-dependent - _resolve_data() renames ~/KlipperData into "
-                   "~/.klipperformac/data first, which makes APP_HOME exist, so the "
-                   "~/.maklipper home (venv, klipper checkout, settings.json) is "
-                   "silently never migrated and the user is told 'Not set up yet' "
-                   "while their old install squats in ~/.maklipper")
 def test_both_legacy_layouts_migrate_together(isolated_paths):
     """A user coming from maklipper with a ~/KlipperData folder gets both moves,
     or neither - never half a migration with no message."""

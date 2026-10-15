@@ -223,12 +223,6 @@ def test_huge_settings_file_is_still_processed(stack):
     assert json.loads(stack.paths.SETTINGS.read_text())["cam"]["quality"] == 55
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: paths.load_settings() only guards OSError/ValueError, so a "
-    "settings.json whose JSON root is not an object (list/string/number/null) "
-    "makes cam_settings()/save_cam_settings() raise AttributeError - cam status/"
-    "on/off/config/list/snapshot, the TUI and cmd_doctor's cam_configured line "
-    "all die with a traceback instead of falling back to {}"))
 def test_non_object_settings_root_falls_back_to_empty(stack):
     for root in ("[1, 2]", '"just a string"', "7", "null", "true", "[]"):
         write_settings(stack, root)
@@ -295,11 +289,6 @@ def test_doctor_gives_a_prefs_verdict_for_absurd_values(stack, value):
 
 
 @pytest.mark.parametrize("value", ["Infinity", "-Infinity"])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cam._check_prefs catches only (TypeError, ValueError), so a "
-    "float('Infinity') stored in settings.json leaks OverflowError out of "
-    "int(); doctor prints an internal 'camera check failed' trace instead of "
-    "the 'camera preferences look wrong: quality=...' verdict it is meant to"))
 def test_doctor_survives_infinity_pref(stack, value):
     write_settings(stack, '{"cam": {"quality": %s}}' % value)
     reports = [m for ok, m in stack.cam.doctor() if "preference" in m]

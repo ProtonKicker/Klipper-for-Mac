@@ -302,11 +302,6 @@ def test_status_rejects_an_out_of_range_port(state):
     assert "99999999999" not in lines
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cam._uptime() catches only (TypeError, ValueError); a "
-    "pre-1970 'started' in run/cam.json makes time.mktime raise OverflowError, "
-    "crashing 'klipperformac cam status' - the self-heal promise the rest of "
-    "the state reader keeps"))
 def test_status_survives_an_absurd_started_timestamp(state):
     write_state(state, good_state(started="1000-01-01T00:00:00"))
     lines = "\n".join(state.cam.status())

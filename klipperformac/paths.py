@@ -20,26 +20,53 @@ LEGACY_DOCUMENTS = "~/Documents/Klipper for Mac"
 
 
 def load_settings():
+    """settings.json as a dict. Anything unreadable - and any JSON root that is
+    not an object (the file is shared with the SwiftUI app) - reads as "no
+    settings" instead of raising, so no command can be stopped by a junk file."""
     try:
-        return json.loads(SETTINGS.read_text())
+        data = json.loads(SETTINGS.read_text())
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_settings(settings):
+    """Write settings.json write-then-replace. A blocked write (read-only home,
+    prefs file replaced by a directory, root-owned sidecar) raises OSError with
+    the live prefs untouched and no stray temp file left behind; the caller
+    turns that into one clean line for the user."""
     APP_HOME.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n")
-    tmp.replace(SETTINGS)
+    try:
+        tmp.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n")
+        tmp.replace(SETTINGS)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _usable_data(value):
+    """The settings.json "data" value if it can be trusted, else None.
+    settings.json is written by the SwiftUI app too, so a junk value (a number,
+    a list, a blank or a relative path) must never decide where printer.cfg
+    lives: a relative one would make the whole install depend on the folder a
+    command happens to be started from."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else None
 
 
 def _resolve_data():
     env = os.environ.get("KLIPPERFORMAC_DATA")
     if env:
         return Path(env).expanduser()
-    saved = load_settings().get("data")
+    saved = _usable_data(load_settings().get("data"))
     if saved:
-        return Path(saved).expanduser()
+        return saved
     docs = Path(LEGACY_DOCUMENTS).expanduser()
     if docs.exists():
         return docs
@@ -97,12 +124,14 @@ def set_data(path):
     TIMELAPSE = DATA / "timelapse"
 
 
-set_data(_resolve_data())
-
 # One-time migration from the pre-rename home (package was called "maklipper").
+# This runs BEFORE the data folder is resolved on purpose: resolving the data
+# first can create ~/.klipperformac (a ~/KlipperData rename), which would make
+# the old home look already migrated and strand it there. Only a real folder is
+# migrated - a stray ~/.maklipper file is nobody's application home.
 if not os.environ.get("KLIPPERFORMAC_HOME"):
     _legacy = Path("~/.maklipper").expanduser()
-    if _legacy.exists() and not APP_HOME.exists():
+    if _legacy.is_dir() and not APP_HOME.exists():
         try:
             _legacy.rename(APP_HOME)
             # A moved venv keeps old absolute paths in shebangs/activate.
@@ -118,6 +147,8 @@ if not os.environ.get("KLIPPERFORMAC_HOME"):
                             _t.replace(".maklipper", ".klipperformac"))
         except OSError:
             pass
+
+set_data(_resolve_data())
 
 KLIPPER = APP_HOME / "klipper"
 MOONRAKER = APP_HOME / "moonraker"
@@ -176,4 +207,12 @@ def web_url():
 
 def ensure_dirs():
     for d in (APP_HOME, DATA, CONFIG, PRESETS, RUN, LOGS, WEB):
-        d.mkdir(parents=True, exist_ok=True)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except FileExistsError:
+            # exist_ok only covers the folder case: a regular file sitting on
+            # one of these paths is a one-line problem, never a traceback.
+            raise SystemExit(
+                "data folder path is a file: {} (move or delete that file, or "
+                "point at another folder: klipperformac data --set PATH)"
+                .format(d))

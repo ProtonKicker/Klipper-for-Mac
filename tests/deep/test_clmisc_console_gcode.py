@@ -14,7 +14,9 @@ and wraps ``os.open`` so the live klippy console (``/tmp/printer``), any
 opened by these tests.  HTTP is faked: no socket is ever created, so ports
 7125/8080/8081 are untouched.
 
-``xfail(strict=True)`` marks encode product bugs that are still present.
+The bugs this battery found are fixed in ``klipperformac/cli.py``; the tests
+that encoded them (``xfail(strict=True)``, "BUG DEEP: ...") keep their
+assertions and now pass.
 """
 import argparse
 import io
@@ -158,10 +160,6 @@ def test_console_symlink_loop_is_reported_not_raised(cli, sandbox_console, capfd
     assert "Traceback" not in capfd.readouterr().err
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: _klippy_console checks "
-                   "os.path.exists() but then os.open()s the path unchecked, so "
-                   "KLIPPERFORMAC_CONSOLE pointing at a directory dies with a raw "
-                   "IsADirectoryError traceback instead of 'no console'")
 def test_console_path_that_is_a_directory_is_a_clean_error(cli, sandbox_console, capfd):
     os.mkdir(str(sandbox_console))
     with pytest.raises(SystemExit) as exc:
@@ -171,9 +169,6 @@ def test_console_path_that_is_a_directory_is_a_clean_error(cli, sandbox_console,
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: an unreadable console node "
-                   "(mode 000, or a pty owned by another user) escapes from "
-                   "_klippy_console as a PermissionError traceback")
 def test_unreadable_console_path_is_a_clean_error(cli, sandbox_console, capfd):
     sandbox_console.write_text("x\n")
     os.chmod(str(sandbox_console), 0o000)
@@ -186,24 +181,30 @@ def test_unreadable_console_path_is_a_clean_error(cli, sandbox_console, capfd):
         os.chmod(str(sandbox_console), 0o600)
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: _klippy_console() guards only "
-                   "os.path.exists(), so KLIPPERFORMAC_CONSOLE pointing at a unix "
-                   "socket (e.g. the klippy API socket, a plausible typo) escapes "
-                   "os.open as a raw OSError traceback")
-def test_console_path_that_is_a_socket_is_a_clean_error(cli, sandbox_console, capfd,
-                                                        monkeypatch):
-    import socket as socket_module
+def test_console_path_that_is_a_socket_is_a_clean_error(cli, capfd, monkeypatch):
+    """KLIPPERFORMAC_CONSOLE pointing at a bound AF_UNIX socket (the klippy API
+    socket is the plausible typo) is the documented 'no console', not a traceback.
 
-    sock = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
-    sock.bind(str(sandbox_console))
-    sock.listen(1)
-    try:
-        with pytest.raises(SystemExit) as exc:
-            run_console(cli, "STATUS")
-        assert exc.value.code == 1
-        assert "Traceback" not in capfd.readouterr().err
-    finally:
-        sock.close()
+    The socket node cannot use this file's usual sandbox path: macOS caps AF_UNIX
+    names at 104 bytes and a pytest tmp dir is already longer than that, so it is
+    bound in a short private temp folder and removed again right here. The
+    assertions are the sibling tests'."""
+    import socket as socket_module
+    import tempfile
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as short:
+        node = os.path.join(short, "printer")
+        sock = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+        sock.bind(node)
+        sock.listen(1)
+        monkeypatch.setenv("KLIPPERFORMAC_CONSOLE", node)
+        try:
+            with pytest.raises(SystemExit) as exc:
+                run_console(cli, "STATUS")
+            assert exc.value.code == 1
+            assert "Traceback" not in capfd.readouterr().err
+        finally:
+            sock.close()
 
 
 def test_fifo_console_without_a_peer_does_not_hang(cli, sandbox_console, capfd):
@@ -216,10 +217,6 @@ def test_fifo_console_without_a_peer_does_not_hang(cli, sandbox_console, capfd):
     assert "Traceback" not in capfd.readouterr().err
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: _klippy_console never notices "
-                   "EOF - os.read() returns b'' and select() keeps reporting the fd "
-                   "ready, so `gcode STATUS` against a dead console node busy-spins "
-                   "at 100% CPU for the whole timeout (6s by default)")
 def test_eof_console_does_not_busy_spin(cli, monkeypatch, capfd):
     monkeypatch.setenv("KLIPPERFORMAC_CONSOLE", "/dev/null")
     start_cpu = time.process_time()
@@ -448,9 +445,14 @@ from hypothesis import HealthCheck, example, given, settings, strategies as st
 
 _gcode_text = st.text(max_size=120)
 
-
+# The property is "a script that is sent over HTTP arrives unchanged", so two
+# preconditions on the input: a console verb goes to the PTY instead, and a
+# blank script is a usage error that is never sent at all (see
+# test_empty_script_is_rejected_not_sent). Neither weakens an assertion; both
+# keep the test inside the command's defined behaviour.
 @given(script=st.lists(_gcode_text, max_size=6).filter(
-    lambda parts: " ".join(parts).strip().upper() not in CONSOLE_VERBS))
+    lambda parts: " ".join(parts).strip()
+    and " ".join(parts).strip().upper() not in CONSOLE_VERBS))
 @settings(max_examples=120, deadline=None,
           suppress_health_check=[HealthCheck.function_scoped_fixture])
 @example(["M117", "a b"])
@@ -482,9 +484,6 @@ def test_huge_script_is_encoded_without_truncation(cli, gcode_args, monkeypatch)
     assert parse_qs(urlparse(url).query)["script"] == [big]
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: `klipperformac gcode` with no "
-                   "arguments POSTs an empty script and prints 'sent: ' - the CLI "
-                   "should explain that there is nothing to send")
 def test_empty_script_is_rejected_not_sent(cli, gcode_args, monkeypatch, capfd):
     net = FakeUrlopen()
     monkeypatch.setattr(urllib.request, "urlopen", net)
@@ -525,10 +524,6 @@ def test_status_url_is_the_objects_query(cli, gcode_args, monkeypatch):
     b"not json at all",
     b'{"result": {"truncated',
 ])
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_gcode parses the --status "
-                   "body with json.loads() OUTSIDE the try/except, so anything that "
-                   "answers on the moonraker port with non-JSON (a proxy error page, "
-                   "a half-written response) dies with a JSONDecodeError traceback")
 def test_status_with_a_non_json_body_is_a_clean_error(cli, gcode_args, monkeypatch,
                                                      capfd, body):
     monkeypatch.setattr(urllib.request, "urlopen", FakeUrlopen(body=body))

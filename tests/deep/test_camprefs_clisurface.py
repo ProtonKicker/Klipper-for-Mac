@@ -288,16 +288,6 @@ def test_doctor_cli_is_fine_with_strange_but_decodable_confs(doctor_cli,
 
 
 @pytest.mark.parametrize("label, blob", UNDECODABLE)
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cli.cmd_doctor() computes cam_configured with an unguarded "
-    "`or configgen.webcam_state()[0]`, so on a fresh install (no cam prefs "
-    "saved, camera off - the short-circuit that normally hides it) a "
-    "moonraker.conf that is not UTF-8 (TextEdit saving it as UTF-16, one stray "
-    "byte from a Windows share, an unreadable file) makes `klipperformac "
-    "doctor` die with a raw UnicodeDecodeError traceback and print nothing, "
-    "instead of the '[!] ' line the same function prints for every other "
-    "problem. cam.status(), cam.doctor() and cam.register_webcam() all catch "
-    "it; only the CLI line does not"))
 def test_doctor_cli_survives_an_undecodable_moonraker_conf(doctor_cli, capsys,
                                                            label, blob):
     put_conf(doctor_cli, blob)
@@ -307,12 +297,6 @@ def test_doctor_cli_survives_an_undecodable_moonraker_conf(doctor_cli, capsys,
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="chmod is a no-op for root")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: same unguarded `configgen.webcam_state()[0]` in "
-    "cli.cmd_doctor() as the sibling test: a moonraker.conf the user cannot "
-    "read (chmod, restored backup, iCloud file that is not downloaded yet) "
-    "tracebacks `klipperformac doctor` with PermissionError instead of "
-    "reporting the camera as unknown"))
 def test_doctor_cli_survives_an_unreadable_conf(doctor_cli, capsys):
     put_conf(doctor_cli, b"[server]\nhost: 127.0.0.1\n")
     os.chmod(str(doctor_cli.paths.MOONRAKER_CONF), 0o000)
@@ -324,11 +308,6 @@ def test_doctor_cli_survives_an_unreadable_conf(doctor_cli, capsys):
     assert "camera" in out
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cli.cmd_doctor()'s cam_configured expression also calls "
-    "paths.cam_settings() unguarded, so a ~/.klipperformac/settings.json whose "
-    "root is not an object tracebacks `klipperformac doctor` (same root cause "
-    "as the filed cam_settings() non-object bug, different victim)"))
 def test_doctor_cli_survives_a_prefs_file_whose_root_is_a_list(doctor_cli,
                                                                 capsys):
     doctor_cli.home.mkdir(parents=True, exist_ok=True)
@@ -427,13 +406,6 @@ def test_start_uses_every_saved_pref_verbatim(live_helper):
     assert "-c" not in argv and "/bin/sh" not in argv
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cam.start() puts the stored device name into argv unsanitised "
-    "and guards the spawn with `except OSError` only, so a device value that "
-    "Python's json reads back happily but the OS cannot encode (a lone "
-    "surrogate: {\"device\": \"\\ud800\"} in settings.json) kills "
-    "`klipperformac cam on` with a UnicodeEncodeError traceback - while "
-    "_check_prefs prints a clean verdict for every other kind of junk pref"))
 def test_cam_on_survives_a_device_name_the_os_cannot_encode(live_helper):
     live_helper.home.mkdir(parents=True, exist_ok=True)
     live_helper.paths.SETTINGS.write_text('{"cam": {"device": "\\ud800"}}')
@@ -443,11 +415,6 @@ def test_cam_on_survives_a_device_name_the_os_cannot_encode(live_helper):
     assert all(isinstance(l, str) and l for l in lines)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: same unguarded-spawn family as cam on: cam.snapshot() catches "
-    "only TimeoutExpired and OSError around subprocess.run, so a device name "
-    "the OS cannot encode raises UnicodeEncodeError out of `klipperformac cam "
-    "snapshot` instead of returning (False, lines)"))
 def test_cam_snapshot_survives_an_unencodable_device_name(live_helper):
     live_helper.home.mkdir(parents=True, exist_ok=True)
     live_helper.paths.SETTINGS.write_text('{"cam": {"device": "\\udfff"}}')

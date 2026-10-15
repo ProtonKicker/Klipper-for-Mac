@@ -225,15 +225,6 @@ def test_dangling_parent_symlink_for_settings_does_not_confuse_reads(stack,
 # ------------------------------------- the same blocked homes on the write path
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: paths.save_settings() (used by cam.save_prefs, i.e. every "
-    "`klipperformac cam config ...` and the tail of `cam on`) has no error "
-    "handling at all, so an unwritable ~/.klipperformac - a root-owned "
-    "settings.json after one sudo run, a read-only home, a directory in the "
-    "place of the prefs or of the settings.json.tmp sidecar - makes the CLI die "
-    "with a raw PermissionError/IsADirectoryError traceback instead of the "
-    "one-line error every other cam path prints (compare cam._save_state, "
-    "cam.build_helper and cli._die)"))
 @NEEDS_PERM
 @pytest.mark.parametrize("layout", [
     "read-only home", "settings.json is a directory",

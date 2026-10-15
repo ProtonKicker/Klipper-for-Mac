@@ -9,9 +9,9 @@ Covered (the parts the first suite missed):
 Everything runs against the throwaway home+data from the `stack` fixture.
 No live stack, no network, no ~/.klipperformac, no /dev/cu.*.
 
-Tests marked `xfail(strict=True)` encode the *expected robust* behaviour of a
-product bug that is still present; delete the marker when the bug is fixed.
-Every other test passes today.
+The bugs this battery found are fixed in ``klipperformac/cli.py``; the tests
+that encoded them (``xfail(strict=True)``, "BUG DEEP: ...") keep their
+assertions and now pass.
 """
 import argparse
 import os
@@ -55,9 +55,6 @@ def log_args(**kw):
 # --------------------------------------------------------------------------
 # cmd_selftest: the interpreter is not there / not runnable
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_selftest does not check "
-                   "paths.VENV_PY, so a missing venv python raises FileNotFoundError "
-                   "(raw traceback) instead of the documented 'run setup' error")
 def test_selftest_missing_venv_python_is_a_clean_error(stack, capfd):
     """`klipperformac selftest` before setup must explain, not crash."""
     assert not stack.paths.VENV_PY.exists()
@@ -67,9 +64,6 @@ def test_selftest_missing_venv_python_is_a_clean_error(stack, capfd):
     assert "Traceback" not in capfd.readouterr().err
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_selftest lets subprocess's "
-                   "OSError escape (PermissionError traceback) when venv/bin/python "
-                   "exists but is not executable")
 def test_selftest_nonexecutable_venv_python_is_a_clean_error(stack):
     write_exe(stack.paths.VENV_PY, "#!/bin/sh\nexit 0\n", mode=0o644)
     assert not os.access(str(stack.paths.VENV_PY), os.X_OK)
@@ -78,9 +72,6 @@ def test_selftest_nonexecutable_venv_python_is_a_clean_error(stack):
     assert exc.value.code != 0
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_selftest passes venv/bin/python "
-                   "straight to subprocess.call; when it is a directory the CLI dies "
-                   "with IsADirectoryError instead of a clean message")
 def test_selftest_venv_python_is_a_directory_clean_error(stack):
     stack.paths.VENV_PY.mkdir(parents=True)
     with pytest.raises(SystemExit) as exc:
@@ -110,10 +101,6 @@ def test_selftest_success_does_not_raise(stack):
     stack.cli.cmd_selftest(argparse.Namespace())
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_selftest discards "
-                   "subprocess.call()'s return code, so `klipperformac selftest` "
-                   "exits 0 even when every connection check failed (AGENTS.md gates "
-                   "on selftest passing)")
 def test_selftest_propagates_child_failure(stack):
     write_exe(stack.paths.VENV_PY,
               "#!/bin/sh\necho selftest failing >&2\nexit 1\n")
@@ -122,9 +109,6 @@ def test_selftest_propagates_child_failure(stack):
     assert exc.value.code != 0
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_selftest treats ANY "
-                   "non-zero child status as success (no exit() at all), so a "
-                   "signal-killed selftest also reports 'done'")
 def test_selftest_propagates_child_signal(stack):
     write_exe(stack.paths.VENV_PY, "#!/bin/sh\nkill -9 $$\n")
     with pytest.raises(SystemExit) as exc:
@@ -179,9 +163,6 @@ def test_logs_service_name_cannot_escape_the_logs_dir(stack, capfd, tmp_path):
     assert str(stack.paths.MOONRAKER_LOG) in out.err
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_logs only checks "
-                   "log.exists(), so a directory named klippy.log is 'tailed' "
-                   "and the failure is swallowed (silent success)")
 def test_logs_when_log_is_a_directory_is_clean(stack, monkeypatch):
     """A directory where the log belongs is not 'a log': must not exec tail."""
     stack.paths.LOGS.mkdir(parents=True, exist_ok=True)
@@ -204,9 +185,6 @@ def test_logs_missing_log_never_spawns_a_child(stack, monkeypatch):
     assert fake.calls == []
 
 
-@pytest.mark.xfail(strict=True, reason="BUG DEEP: cmd_logs ignores tail's exit "
-                   "status, so a failed `klipperformac logs` (log unreadable, bad "
-                   "line count) still exits 0 and scripts/CI read it as success")
 def test_logs_propagates_tail_failure(stack, monkeypatch):
     stack.paths.LOGS.mkdir(parents=True, exist_ok=True)
     stack.paths.KLIPPY_LOG.write_text("hello\n")
