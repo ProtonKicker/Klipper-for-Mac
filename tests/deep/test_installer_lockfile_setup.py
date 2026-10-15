@@ -8,8 +8,12 @@ drives that flow with every external collaborator faked -- `installer._run`,
 `shaper.ensure_shaper` -- so setup() is exercised as pure logic: no git, no pip,
 no venv, no download, no live stack, no ~/.klipperformac.
 
-`xfail(strict=True)` marks encode the expected-robust behaviour of product bugs
-that are still present; everything else passes today.
+Every test here runs against the current product code (no `xfail` marks left):
+the pin-validation and pristine-gating bugs found in this area are fixed in
+klipperformac/installer.py, and the corrupt/non-object lockfile recovery is
+fixed in klipperformac/versions.py. One relabelled case
+(test_setup_git_failures_do_not_write_a_lying_ref_marker) documents why its
+expected exception changed when a failed fetch became a CLI user error.
 """
 import json
 import os
@@ -313,15 +317,6 @@ CORRUPT = [
 
 
 @pytest.mark.parametrize("payload", CORRUPT)
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: setup()'s very first act is `pins = load_pins()`, and load_pins "
-    "treats LOCKFILE.exists() as 'parseable' (versions.py:30-32, reached from "
-    "installer.py:288), so a truncated or half-written lockfile.json makes "
-    "`klipperformac setup` die with a json.JSONDecodeError / UnicodeDecodeError "
-    "traceback. Half-written is not hypothetical: save_pins() truncates the file "
-    "in place (no tmp+rename), so a kill or a power loss during the previous "
-    "setup is enough. The user then has to find and delete "
-    "~/.klipperformac/lockfile.json by hand."))
 def test_setup_recovers_from_a_corrupt_lockfile(harness, payload):
     harness.lock(payload)
     pins = harness.run_setup()
@@ -341,14 +336,6 @@ NON_OBJECT = [
 
 
 @pytest.mark.parametrize("payload", NON_OBJECT)
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: load_pins() does `merged.update(json.load(f))` with no "
-    "isinstance check (versions.py:32-35), so a lockfile.json holding a valid "
-    "non-object JSON raises TypeError/ValueError out of setup() "
-    "(installer.py:288) and blocks every command that reads pins -- setup, "
-    "update, status -- until the file is deleted by hand. (An empty array is "
-    "harmless and is deliberately not in this list: it round-trips to the "
-    "default pins.)"))
 def test_setup_recovers_from_a_non_object_lockfile(harness, payload):
     harness.lock(payload)
     pins = harness.run_setup()
@@ -376,14 +363,6 @@ BAD_PIN_VALUES = [
 
 
 @pytest.mark.parametrize("value", BAD_PIN_VALUES)
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: nothing validates the pins read out of lockfile.json before "
-    "setup() uses them as a `git clone --branch` argument and as a URL path "
-    "segment (installer.py:111-121 called from installer.py:296, and "
-    "installer.py:211-212). A non-string pin crashes with TypeError, a blank "
-    "one crashes git, and setup() has already re-saved the garbage with "
-    "save_pins(), so every later run fails the same way. Bogus pins must be "
-    "rejected up front or repaired to DEFAULT_PINS."))
 def test_setup_refuses_or_repairs_a_bogus_pin_value(harness, value):
     harness.lock({"klipper": value})
     try:
@@ -452,10 +431,19 @@ def test_setup_with_a_pinned_sha_fetches_the_commit_not_a_branch(
 
 def test_setup_git_failures_do_not_write_a_lying_ref_marker(
         real_checkout_harness, monkeypatch):
-    """A marker says 'this exact ref is on disk'; it must not survive a failure."""
+    """A marker says 'this exact ref is on disk'; it must not survive a failure.
+
+    Relabelled when the fetch failure became a CLI user error: checkout() now
+    stages the clone outside the checkout and raises SystemExit, so a failed
+    `git clone`/`git fetch` reaches cmd_setup as a one-line error instead of a
+    subprocess.CalledProcessError traceback (see
+    test_a_failed_fetch_must_not_destroy_the_existing_checkout for the tree
+    that must survive). The marker assertion -- the point of this test -- is
+    unchanged.
+    """
     monkeypatch.setattr(real_checkout_harness.stack.installer, "_run",
                         RunStub(fail_on=("clone", "fetch")))
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(SystemExit):
         real_checkout_harness.run_setup()
     for comp in ("klipper", "moonraker"):
         marker = real_checkout_harness.stack.installer._ref_marker(comp)
@@ -465,13 +453,6 @@ def test_setup_git_failures_do_not_write_a_lying_ref_marker(
 # --------------------------------------------------------------------------
 # verify_pristine's verdict must gate setup's success
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: when verify_pristine() reports a modified upstream checkout, "
-    "setup() only prints '[!] <comp> checkout is not pristine' and then returns "
-    "normally (installer.py:314-319), so `klipperformac setup` exits 0 and the "
-    "SwiftUI front end -- or any scripted install -- records a *successful* "
-    "install of a tampered Klipper. The project's whole premise is an "
-    "unmodified upstream, so a failed attestation must fail setup."))
 def test_setup_fails_when_upstream_is_not_pristine(harness):
     harness.pristine_result = [("klipper", " M klippy/klippy.py")]
     with pytest.raises(SystemExit) as exc:

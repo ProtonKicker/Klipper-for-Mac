@@ -6,9 +6,10 @@ throwaway staging dir. Nothing here reaches the network (urllib is stubbed or
 never called), the live stack, or ~/.klipperformac: the `stack` fixture binds
 klipperformac.installer to a throwaway KLIPPERFORMAC_HOME/KLIPPERFORMAC_DATA.
 
-Tests marked `xfail(strict=True)` encode the *expected robust* behaviour of a
-product bug that is still present (see the reason strings); every other test
-passes against the current product code.
+Tests here all pass against the current product code: the archive-robustness
+and swap bugs found in this area are fixed in klipperformac/installer.py, and
+one case whose expectation no input can ever produce is kept as a
+characterization test (see its docstring).
 """
 import io
 import json
@@ -400,15 +401,8 @@ def test_exotic_unicode_member_names_never_escape(stack, name):
 
 
 # --------------------------------------------------------------------------
-# BUGS: robustness of the guard on malformed (but non-escaping) archives
+# robustness of the guard on malformed (but non-escaping) archives
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _safe_extract() rejects benign '.'/'./' directory members "
-    "(installer.py:200-201): realpath() strips the trailing separator, so "
-    "target+'.' resolves to target itself and fails the "
-    "startswith(target+os.sep) test. A perfectly normal `zip -r .` archive - "
-    "the shape of a user's own offline web-bundle - aborts the whole fetch "
-    "with 'Unsafe zip path: .' even though every member stays inside."))
 def test_benign_dot_directory_entries_are_not_rejected(stack, tmp_path):
     target = tmp_path / "stage"
     target.mkdir()
@@ -423,34 +417,52 @@ def test_benign_dot_directory_entries_are_not_rejected(stack, tmp_path):
     assert (target / "assets").is_dir()
 
 
-@pytest.mark.parametrize("name", [
-    pytest.param("x\x00y", id="embedded-nul"),
-    pytest.param("L" * 400, id="name-too-long"),
-])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _safe_extract() audits member name P and then calls "
-    "extractall(), which writes a *different* path Q: an embedded NUL is "
-    "silently written as the truncated name 'x', and a 400-char name dies "
-    "with a raw OSError(ENAMETOOLONG) instead of the SystemExit every other "
-    "hostile member gets (installer.py:199-203). Either write exactly the "
-    "audited path or refuse the archive as a user error."))
-def test_hostile_names_fail_as_clean_user_errors(stack, tmp_path, name):
+def test_overlong_member_name_fails_as_clean_user_error(stack, tmp_path):
+    """Was the 'name-too-long' case of the xfail'd
+    test_hostile_names_fail_as_clean_user_errors: a 400-char member passed the
+    guard (it stays inside) and then died in extractall() with a raw
+    OSError(ENAMETOOLONG) instead of the SystemExit every other hostile member
+    gets. It is now refused the way an escaping path is."""
     target = tmp_path / "stage"
     target.mkdir()
+    name = "L" * 400
     zp = write_zip(tmp_path / "n.zip", [("index.html", b"<html>"),
                                         (name, b"B")])
     with zipfile.ZipFile(str(zp)) as z:
         with pytest.raises(SystemExit) as exc:
             stack.installer._safe_extract(z, target)
     assert "Unsafe zip path" in str(exc.value)
+    assert snapshot_tree(target) == set()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: an archive holding both 'panel' (file) and 'panel/inside.js' "
-    "(child) passes the zip-slip guard - every name stays inside - and then "
-    "dies in extractall() with a raw NotADirectoryError (installer.py:203). A "
-    "malformed archive must surface as a user error, the way an unsafe path "
-    "does."))
+def test_embedded_nul_member_name_is_the_name_that_was_audited(stack, tmp_path):
+    """Characterization (relabelled from the 'embedded-nul' case of that same
+    xfail, which asked for a SystemExit no product code can ever raise).
+
+    The filed complaint was 'validation inspects path P, extraction writes path
+    Q'. That split cannot happen: stdlib zipfile terminates a member name at the
+    first null byte while *writing* the archive (and again while reading the
+    headers), so a name like 'x\\x00y' reaches the guard already truncated to
+    'x'. The guard therefore audits exactly the name extractall() writes, and
+    'x' is inside the target -- no escape, no traceback. The assertion that the
+    bug's own text asks for ('stay inside, and the audited name is what landed
+    on disk') is what this documents; installer._safe_extract still refuses a
+    NUL outright should a future reader ever hand one over."""
+    target = tmp_path / "stage"
+    target.mkdir()
+    canary = make_canary(target)
+    zp = write_zip(tmp_path / "n.zip", [("index.html", b"<html>"),
+                                        ("x\x00y", b"B")])
+    with zipfile.ZipFile(str(zp)) as z:
+        audited = [m.filename for m in z.infolist()]
+        assert not any("\x00" in n for n in audited), audited
+        stack.installer._safe_extract(z, target)
+    written = [str(p.relative_to(target)) for p in target.rglob("*")]
+    assert sorted(written) == ["index.html", "x"], written
+    assert stays_inside(target, [target / n for n in written]) is None
+    assert snapshot_tree(canary) == {"do-not-touch"}
+
+
 def test_file_then_dir_collision_is_a_clean_error(stack, tmp_path):
     target = tmp_path / "stage"
     target.mkdir()
@@ -465,10 +477,6 @@ def test_file_then_dir_collision_is_a_clean_error(stack, tmp_path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _safe_extract() has no error handling around extractall(): an "
-    "unwritable staging dir escapes as a raw PermissionError traceback instead "
-    "of installer.py's SystemExit user-error convention (installer.py:203)."))
 def test_unwritable_target_reports_a_user_error(stack, tmp_path):
     target = tmp_path / "stage"
     target.mkdir()
@@ -617,12 +625,6 @@ def test_both_uis_coexist_under_one_data_dir(stack, monkeypatch):
                             ("assets/big.js", b"B" * 400)])[:30],
                  id="cut-central-directory"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: fetch_webui() opens the downloaded archive with a bare "
-    "`zipfile.ZipFile(zip_path)` (installer.py:217); a non-archive payload (a "
-    "CDN's HTML error page, a truncated body) escapes as zipfile.BadZipFile, so "
-    "`klipperformac setup` prints a raw traceback instead of 'the downloaded "
-    "archive is not a valid zip file'."))
 def test_corrupt_archive_is_reported_as_a_user_error(stack, monkeypatch,
                                                      payload):
     f = FakeFetch(stack, monkeypatch, lambda url: payload)
@@ -631,12 +633,6 @@ def test_corrupt_archive_is_reported_as_a_user_error(stack, monkeypatch,
     assert not f.marker().exists()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: a filename field that is not valid UTF-8 while the archive's "
-    "UTF-8 flag is set makes ZipFile's central-directory parse raise "
-    "UnicodeDecodeError (a ValueError, not BadZipFile) out of fetch_webui "
-    "(installer.py:217). setup() crashes on a corrupt/hostile archive instead "
-    "of reporting the download as invalid."))
 def test_invalid_utf8_member_name_is_reported_as_a_user_error(
         stack, monkeypatch, tmp_path):
     raw = zip_bytes([("é" * 8, b"payload"), ("index.html", b"<html>")])
@@ -717,10 +713,34 @@ def test_fetch_webui_does_not_leave_temp_zips_behind(stack, monkeypatch,
         return fd, name
     monkeypatch.setattr(stack.installer.tempfile, "mkstemp", spy_mkstemp)
     f = FakeFetch(stack, monkeypatch, lambda url: b"")   # BadZipFile later
-    with pytest.raises(Exception):
+    # The corrupt payload now leaves as a SystemExit user error (a CLI error
+    # the user can read) rather than as an Exception, so both channels count
+    # here: what this test pins is that neither of them leaks the staging zip.
+    with pytest.raises((Exception, SystemExit)):
         f.run("v1.0.0")
     assert made, "the spy never saw a staging zip"
     assert [p for p in zipdir.iterdir()] == []
+
+
+def test_fetch_webui_does_not_leak_file_descriptors(stack, monkeypatch):
+    """Regression (filed as 'fetch_webui leaks one fd per download'): the
+    mkstemp() descriptor was handed straight to Path(...[1]) and never closed,
+    so every download pinned an extra open file until the process ran out of
+    descriptors (EMFILE) on repeated `update --apply` runs."""
+    fd_dir = Path("/dev/fd")
+    if not fd_dir.is_dir():
+        pytest.skip("no /dev/fd to count descriptors against")
+
+    def open_fds():
+        return {p.name for p in fd_dir.iterdir()}
+
+    f = FakeFetch(stack, monkeypatch, ui_zip_bytes)
+    baseline = open_fds()
+    for tag in ("v1.0.0", "v2.0.0", "v3.0.0", "v4.0.0", "v5.0.0"):
+        f.marker().unlink(missing_ok=True)
+        f.run(tag)
+    leaked = open_fds() - baseline
+    assert not leaked, "descriptors left open by fetch_webui: %s" % sorted(leaked)
 
 
 def test_ref_marker_lives_outside_the_extracted_ui(stack, monkeypatch):
@@ -752,15 +772,6 @@ def test_fetch_webui_reports_a_failure_when_the_web_dir_cannot_be_written(
 # --------------------------------------------------------------------------
 # fetch_webui: the swap must be reversible
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: fetch_webui() moves the installed UI aside with "
-    "`os.rename(dest, old)` and then renames the staged tree into place "
-    "(installer.py:232-240) with no rollback. If that second rename fails -- "
-    "ENOSPC, EBUSY/EPERM on a volume where the folder is open, a crash between "
-    "the two calls -- data/web/fluidd no longer exists while the previous, "
-    "perfectly good UI sits in data/web/fluidd.old: the proxy serves nothing, "
-    "`klipperformac up/open` shows a broken install, and no code path ever "
-    "moves .old back. checkout() has the same 'destroy first' shape."))
 def test_a_failed_swap_restores_the_previous_ui(stack, monkeypatch):
     f = FakeFetch(stack, monkeypatch, ui_zip_bytes)
     f.run("v1.0.0")
@@ -786,15 +797,6 @@ def test_a_failed_swap_restores_the_previous_ui(stack, monkeypatch):
     assert (f.dest / "index.html").read_bytes() == before
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: fetch_webui() never checks whether the UI directory is a "
-    "symlink, unlike checkout(), which refuses to replace one "
-    "(installer.py:106-107). A data/web/fluidd that is a link to somewhere else "
-    "is renamed away, replaced by the freshly staged tree, and the link is then "
-    "abandoned in data/web/fluidd.old (installer.py:233-240) -- the user's own "
-    "pointer is silently destroyed/kept aside, and the web root the proxy serves "
-    "is no longer the one they configured. Installing over a symlinked "
-    "destination must be refused the way a symlinked checkout is."))
 def test_a_symlinked_ui_dir_is_refused(stack, monkeypatch, tmp_path):
     victim = tmp_path / "victim-web-root"
     victim.mkdir()

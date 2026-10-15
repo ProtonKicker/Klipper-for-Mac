@@ -11,8 +11,10 @@ few tests that do run a subprocess run `sys.executable -c ...` or `git init`
 inside pytest's tmp_path -- never a service, never a serial port, never
 ~/.klipperformac.
 
-`xfail(strict=True)` marks encode the expected-robust behaviour of product bugs
-that are still present; everything else passes today.
+Every expectation here is enforced today (no `xfail` marks left in this file):
+the installer bugs found in this area -- destroy-before-fetch, git's exit status
+being ignored, '' interpreters and unvalidated pins -- are fixed in
+klipperformac/installer.py.
 """
 import ast
 import os
@@ -333,14 +335,6 @@ def test_check_prereqs_non_strict_returns_problems_without_raising(
     assert len(stack.installer.check_prereqs(strict=False)) == 3
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: find_python() decides 'is this interpreter usable' from the "
-    "first probe and then returns the *second* probe's stdout verbatim "
-    "(installer.py:65-66). When `python -c 'import sys; print(sys.executable)'` "
-    "fails it returns the empty string -- not None -- so check_prereqs() "
-    "(which tests `is None`) calls that a usable interpreter and create_venv() "
-    "tries to exec '' and dies with a raw PermissionError instead of the "
-    "documented 'No suitable Python found' SystemExit."))
 def test_interpreter_that_answers_the_version_probe_but_not_the_executable_one(
         stack, monkeypatch, tmp_path):
     lying = write_exe(tmp_path / "lying-python",
@@ -355,14 +349,6 @@ def test_interpreter_that_answers_the_version_probe_but_not_the_executable_one(
     assert stack.installer.check_prereqs(strict=False) != []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: same root cause -- create_venv() only guards against "
-    "`find_python() is None`, so an '' interpreter slips through "
-    "(installer.py:144-147) and `python -m venv` is invoked as ['', '-m', "
-    "'venv', ...]: with the real subprocess layer that is a PermissionError "
-    "traceback, and with any wrapper that swallows it setup continues and "
-    "ensure_runtime_shims() is pointed at a venv that was never created. Either "
-    "way the documented 'No suitable Python found' SystemExit never fires."))
 def test_create_venv_with_an_unresolvable_interpreter_is_a_user_error(
         stack, monkeypatch):
     monkeypatch.setattr(stack.installer, "find_python", lambda: "")
@@ -423,12 +409,6 @@ def test_create_venv_does_not_run_pip_or_the_network(stack, monkeypatch, rec):
     assert not rec.find("https://")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: create_venv() runs `python -m venv` with check=True and no "
-    "error handling (installer.py:147), so the ordinary failures -- a full "
-    "disk, a read-only home, a venv module that cannot bootstrap -- escape as "
-    "subprocess.CalledProcessError and `klipperformac setup` shows a traceback "
-    "with no hint about the fix."))
 def test_venv_creation_failure_is_a_user_error(stack, monkeypatch):
     monkeypatch.setattr(stack.installer, "find_python", lambda: "/py/3.12")
     r = RunRecorder(default_rc=1, default_stderr=b"ensurepip failed")
@@ -498,11 +478,6 @@ def test_install_requirements_without_a_requirements_file(stack, rec):
     assert "requirements file" in str(exc.value)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: install_requirements() lets pip's CalledProcessError escape "
-    "(installer.py:164-167). A resolver conflict aborts setup with a raw "
-    "traceback *after* the ref markers were written and the venv created, so "
-    "the half-installed state looks complete to the next `doctor` run."))
 def test_pip_failure_is_a_user_error(stack, monkeypatch):
     _mk_req(stack, "klipper", "scripts/klippy-requirements.txt")
     _mk_req(stack, "moonraker", "scripts/moonraker-requirements.txt")
@@ -674,13 +649,6 @@ def test_checkout_rejects_an_unknown_component(stack, rec):
     pytest.param(SHA.upper(), id="uppercase-sha"),
     pytest.param("0" * 39 + "A", id="mixed-case-sha"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: checkout() recognises the raw-SHA fast path with "
-    "re.fullmatch(r'[0-9a-f]{40}', ref) (installer.py:111), so a valid but "
-    "upper-case commit id -- the way GitHub's UI prints it and the way a user "
-    "copies it into lockfile.json -- is treated as a branch name: "
-    "`git clone --branch 461C4E...` fails and, because the old checkout was "
-    "already rmtree'd, setup() destroys a working install."))
 def test_full_commit_sha_is_recognised_case_insensitively(stack, rec, ref):
     stack.installer.checkout("klipper", ref)
     assert rec.find("clone") == [], "an upper-case SHA must not use --branch"
@@ -694,12 +662,6 @@ def test_full_commit_sha_is_recognised_case_insensitively(stack, rec, ref):
     pytest.param({"tag": "v1"}, id="json-object"),
     pytest.param(True, id="json-bool"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: checkout() takes the pin straight out of lockfile.json with no "
-    "type check; a non-string value raises TypeError inside re.fullmatch "
-    "(installer.py:111) -- after the pristine checkout has been deleted -- so "
-    "`klipperformac setup`/`update --apply` crashes with a traceback and, per "
-    "the rmtree bug below, leaves no Klipper at all."))
 def test_non_string_pin_is_rejected_as_a_user_error(stack, rec, ref):
     with pytest.raises(SystemExit):
         stack.installer.checkout("klipper", ref)
@@ -711,12 +673,6 @@ def test_non_string_pin_is_rejected_as_a_user_error(stack, rec, ref):
     pytest.param("   ", id="whitespace-only"),
     pytest.param("\n", id="newline-only"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: a blank ref in lockfile.json is handed to git as `--branch ''` "
-    "(installer.py:120) and the destination is deleted before the ref is "
-    "validated, so a bogus pin costs the user their working pristine checkout. "
-    "The ref must be validated (non-empty, no control characters, a legal git "
-    "refname) before anything is removed."))
 def test_blank_pin_is_rejected_before_any_destructive_step(stack, rec, ref):
     dest = stack.installer.DESTS["klipper"]
     dest.mkdir(parents=True)
@@ -727,13 +683,6 @@ def test_blank_pin_is_rejected_before_any_destructive_step(stack, rec, ref):
     assert (dest / "keepme.py").exists()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: checkout() deletes the existing component checkout up front "
-    "(installer.py:108-109) and only then tries to re-create it, with no "
-    "rollback. Any fetch failure -- airplane mode, a yanked tag, GitHub "
-    "unreachable, git exiting non-zero -- leaves ~/.klipperformac/klipper "
-    "gone: a user who ran `update --apply` without network loses a printer "
-    "that worked, and setup() then aborts on a raw CalledProcessError."))
 def test_a_failed_fetch_must_not_destroy_the_existing_checkout(
         stack, monkeypatch):
     dest = stack.installer.DESTS["klipper"]
@@ -755,16 +704,27 @@ def test_a_failed_fetch_must_not_destroy_the_existing_checkout(
     assert (dest / "keepme.py").exists(), "working checkout was destroyed"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: checkout() returns whatever `git rev-parse HEAD` printed and "
-    "_head_sha() swallows every failure into '' (installer.py:77-82, 124). "
-    "setup() then persists klipper_sha='' into lockfile.json and prints "
-    "'klipper @ <ref> ()' as if the install were verified, and `update` can no "
-    "longer tell which commit is installed."))
 def test_checkout_must_report_a_real_sha_or_fail(stack, rec):
+    """Characterization (relabelled from an xfail of the same name).
+
+    The contract -- "checkout() must return a 40-hex id or fail" -- still holds
+    exactly as filed, but the original body could never be satisfied: the only
+    fake git in play is scripted to answer `rev-parse HEAD` with exit 128 and
+    an empty stdout, so no implementation can *return* a 40-hex id here. What
+    checkout() must do instead is take the documented second branch and fail
+    loudly, because setup() persists the result as klipper_sha and
+    versions.check_updates() silently stops comparing against upstream master
+    when that value is empty.
+    """
     rec.script = [("rev-parse HEAD", cp(128, b"", b"fatal: bad revision"))]
-    sha = stack.installer.checkout("klipper", "v1.2.3")
-    assert sha and len(sha) == 40
+    with pytest.raises(SystemExit) as exc:
+        stack.installer.checkout("klipper", "v1.2.3")
+    assert "rev-parse" in str(exc.value)
+    # and when git does answer, the installed commit is reported in full
+    rec.script = []
+    rec.default_stdout = (SHA + "\n").encode()
+    sha = stack.installer.checkout("klipper", SHA)
+    assert sha == SHA and len(sha) == 40
 
 
 def test_head_sha_of_a_missing_directory_is_empty_not_a_crash(stack):
@@ -809,14 +769,6 @@ def test_verify_pristine_ignores_a_component_with_no_checkout(stack):
 
 
 @needs_git
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: verify_pristine() ignores git's exit status "
-    "(`_run([...], capture_output=True).stdout` with no check, "
-    "installer.py:135-138). When git fails -- 'detected dubious ownership', a "
-    "corrupted index, a spawn error -- stdout is empty and the component is "
-    "reported PRISTINE. `klipperformac doctor` then prints '[ok] upstream "
-    "checkouts pristine' and setup() prints 'verified pristine' for a checkout "
-    "it never inspected, which defeats the whole promise of this project."))
 def test_verify_pristine_must_fail_loudly_when_git_errors(stack):
     dest = stack.installer.DESTS["klipper"]
     (dest / ".git").mkdir(parents=True)      # exists, but is not a repository
@@ -825,11 +777,6 @@ def test_verify_pristine_must_fail_loudly_when_git_errors(stack):
         "a checkout git cannot inspect must not be reported pristine")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: verify_pristine(component) silently returns [] for a component "
-    "name it does not know (installer.py:129-134), so a typo -- or a component "
-    "renamed in a future release -- is indistinguishable from 'everything is "
-    "pristine'."))
 def test_verify_pristine_rejects_an_unknown_component(stack):
     with pytest.raises((SystemExit, KeyError, ValueError)):
         stack.installer.verify_pristine("klpiper")
@@ -864,14 +811,6 @@ def test_untracked_c_helper_is_invisible_to_git_status(stack):
 
 
 @needs_git
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _exclude_build_artifacts() decides what is 'already there' with "
-    "a raw substring test (`p not in existing`, installer.py:92) and appends "
-    "with open(..., 'a'). A .git/info/exclude whose last line has no trailing "
-    "newline -- a hand-edited file, or one delivered inside an archive -- "
-    "glues the first pattern onto that line, so 'c_helper.so' is never "
-    "excluded, `git status --porcelain` turns dirty, and setup/doctor accuse a "
-    "perfectly pristine upstream checkout of being modified."))
 def test_patterns_survive_a_no_trailing_newline_exclude_file(stack):
     dest = init_repo(stack.installer.DESTS["klipper"])
     excl = dest / ".git" / "info" / "exclude"
@@ -885,12 +824,6 @@ def test_patterns_survive_a_no_trailing_newline_exclude_file(stack):
 
 
 @needs_git
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: the substring presence test in _exclude_build_artifacts() "
-    "(installer.py:92) cannot tell a live pattern from a comment that merely "
-    "mentions it ('# do not commit klippy.log'), so the pattern is never "
-    "appended, the artifact shows up in `git status --porcelain`, and setup/"
-    "doctor report a pristine checkout as modified."))
 def test_commented_mention_does_not_suppress_the_pattern(stack):
     dest = init_repo(stack.installer.DESTS["klipper"])
     excl = dest / ".git" / "info" / "exclude"
@@ -954,15 +887,6 @@ def test_setup_is_never_run_for_real_by_this_file(stack):
 
 
 @needs_git
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: checkout()'s symlink guard only runs on the re-clone path "
-    "(installer.py:106-107), but the early-return above it tests `dest.exists()`, "
-    "which follows the link (installer.py:103-105). A ~/.klipperformac/klipper "
-    "that is a symlink to a tampered tree therefore passes the 'already at the "
-    "pinned ref' check: setup() skips the fetch, _head_sha() reads the symlinked "
-    "repo, and verify_pristine() inspects it too -- but the tree klippy runs is "
-    "not the one install.sh believes it created. The guard must apply to the "
-    "cache hit as well."))
 def test_a_symlinked_checkout_is_refused_even_when_the_marker_matches(
         stack, rec, tmp_path):
     victim = tmp_path / "planted"

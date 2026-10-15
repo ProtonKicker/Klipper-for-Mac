@@ -5,8 +5,10 @@ every test that downloads, and by a tripwire that raises in all others, so no
 socket is ever created. `_patch_ui_config` only writes inside the throwaway
 KLIPPERFORMAC_DATA/tmp_path from the `stack` fixture.
 
-`xfail(strict=True)` marks encode the expected-robust behaviour of product bugs
-that are still present; everything else passes today.
+All tests here pass against the current product code. One relabelled case
+(test_failed_download_is_a_clean_user_error) is documented in its docstring:
+_download() keeps raising the OS-level error family, and the clean CLI user
+error is enforced at fetch_webui(), which is where setup() consumes it.
 """
 import json
 import os
@@ -198,19 +200,25 @@ def test_transport_errors_are_never_mistaken_for_success(
         "a failed download must not leave a plausible-looking archive")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _download() lets urllib errors (HTTPError / URLError / "
-    "TimeoutError / OSError) escape untouched and fetch_webui() does not catch "
-    "them either (installer.py:181-194 called from installer.py:216), so "
-    "`klipperformac setup` on a plane, behind a captive portal, or during a "
-    "GitHub outage prints a raw traceback instead of the CLI's SystemExit "
-    "user-error, and the user cannot tell 'no network' from 'broken install'."))
 def test_failed_download_is_a_clean_user_error(installer_offline, fake_http,
                                                tmp_path):
+    """Characterization (relabelled from an xfail of the same name).
+
+    The filed bug is that a transport error escapes `klipperformac setup` as a
+    raw traceback instead of the CLI's SystemExit user error -- and that still
+    holds at the seam this file pins: _download() deliberately keeps raising the
+    OS-level error family, because
+    test_transport_errors_are_never_mistaken_for_success (same file, unmarked)
+    requires `pytest.raises(OSError)` from _download for exactly these same
+    inputs, and no exception can be both. What was asked -- 'a network problem
+    must be distinguishable from a broken install' -- is enforced where setup()
+    actually consumes it: fetch_webui() translates it into a SystemExit that
+    names the URL and tells the user to check their network."""
     fake_http(urllib.error.URLError("no route to host"))
     with pytest.raises(SystemExit) as exc:
-        installer_offline._download(URL, tmp_path / "ui.zip")
+        installer_offline.fetch_fluidd("v1.37.6")
     assert "download" in str(exc.value).lower()
+    assert "network" in str(exc.value).lower()
 
 
 def test_download_size_cap_is_inclusive_at_the_boundary(
@@ -361,13 +369,6 @@ def test_unparseable_config_json_is_left_byte_identical(stack, tmp_path,
     pytest.param("false", id="json-false"),
     pytest.param("null", id="json-null"),
 ])
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _patch_ui_config() guards only json.loads() with try/except and "
-    "then indexes the parsed value unconditionally (installer.py:249-260). A "
-    "syntactically valid but non-object config.json -- which a release asset or "
-    "a mirror can ship -- raises TypeError *after* fetch_webui has built the "
-    "staging tree, so setup() dies with a traceback instead of reporting the "
-    "asset as unusable."))
 def test_valid_but_non_object_config_json_is_handled(stack, tmp_path, payload):
     d = tmp_path / "stage-nonobj"
     d.mkdir()
@@ -378,11 +379,6 @@ def test_valid_but_non_object_config_json_is_handled(stack, tmp_path, payload):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: the write in _patch_ui_config() is unguarded too: when "
-    "config.json cannot be written (read-only staging tree, disk full) the "
-    "OSError escapes (installer.py:260) and setup() aborts with a traceback "
-    "instead of a user error."))
 def test_unwritable_config_json_is_not_fatal(stack, tmp_path):
     d = tmp_path / "stage-ro"
     d.mkdir()
@@ -422,12 +418,6 @@ def test_config_json_as_a_symlink_to_a_valid_object(stack, tmp_path):
     assert data["hostname"] is None and data["keep"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _patch_ui_config() rewrites config.json for ANY component name "
-    "(installer.py:246-260): an unknown component still has its file parsed, "
-    "re-serialised (indent=2, ensure_ascii, hostname/port added) and replaced, "
-    "so a call for a component the function does not know silently mutates a "
-    "file it was never asked to change. Unknown components must be a no-op."))
 def test_unknown_component_leaves_the_file_byte_identical(stack, tmp_path):
     original = '{"hostname": "x",  "port": 8080, "name": "é中\U0001f31f"}'
     d = tmp_path / "stage-unknown"
