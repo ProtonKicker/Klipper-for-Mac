@@ -75,7 +75,7 @@ class FakeSubprocess:
     def run(self, cmd, *args, **kwargs):
         cmd = [str(c) for c in cmd]
         self.argv.append(cmd)
-        if cmd[0] == "sysctl":
+        if cmd[0].endswith("sysctl"):
             if self.sysctl_code and kwargs.get("check"):
                 raise subprocess.CalledProcessError(self.sysctl_code, cmd)
             return Completed(self.sysctl, self.sysctl_code)

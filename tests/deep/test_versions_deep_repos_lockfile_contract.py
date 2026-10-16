@@ -94,7 +94,7 @@ def test_every_shipped_pin_is_a_usable_git_ref_and_url_segment(stack):
 
 def test_tag_checked_pins_are_the_only_ones_sort_key_can_compare(stack):
     """check_updates() compares _sort_key(pin) upstream tags, so those pins must
-    be real dotted versions; a sha there would score (0, 0, 0) forever."""
+    be real dotted versions; a sha there would score the below-all sentinel forever."""
     versions = stack.versions
     pins = versions.load_pins()
     for comp in TAG_CHECKED:
@@ -102,7 +102,7 @@ def test_tag_checked_pins_are_the_only_ones_sort_key_can_compare(stack):
         assert key != (0, 0, 0), comp
         assert len(key) >= 3, comp
     klipper_key = versions._sort_key(pins["klipper"])
-    assert klipper_key == (0, 0, 0), "the shipped klipper pin is a commit sha"
+    assert klipper_key == (-1, -1, -1), "the shipped klipper pin is a commit sha"
 
 
 def test_api_template_is_the_only_url_for_tags_and_needs_one_argument(stack):
@@ -184,7 +184,7 @@ def test_pins_written_by_the_product_are_read_back_by_the_product(stack):
     back = stack.versions.load_pins()
     assert back == installed
     assert back["klipper_sha"] == "a" * 40
-    assert stack.versions._sort_key(back["klipper_sha"]) == (0, 0, 0)
+    assert stack.versions._sort_key(back["klipper_sha"]) == (-1, -1, -1)
 
 
 @given(extra=st.dictionaries(st.text(min_size=1, max_size=12),

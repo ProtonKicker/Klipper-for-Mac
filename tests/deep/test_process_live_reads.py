@@ -93,7 +93,7 @@ class FakePs:
     def run(self, cmd, *args, **kwargs):
         argv = [str(c) for c in cmd]
         self.calls.append(argv)
-        if argv[0] == "sysctl":
+        if argv[0].endswith("sysctl"):
             if self.sysctl_error:
                 raise self.sysctl_error
             if self.sysctl_rc and kwargs.get("check"):
@@ -118,7 +118,7 @@ class FakePs:
         return [c for c in self.calls if c[0] == "ps" and "-p" in c]
 
     def sysctl_calls(self):
-        return [c for c in self.calls if c[0] == "sysctl"]
+        return [c for c in self.calls if c[0].endswith("sysctl")]
 
 
 class FakeOS:
@@ -205,7 +205,7 @@ def reads(stack, monkeypatch):
         def run(cmd, *a, **kw):
             argv = [str(c) for c in cmd]
             ps.calls.append(argv)
-            if argv[0] == "sysctl":
+            if argv[0].endswith("sysctl"):
                 return real_run(cmd, *a, **kw)
             if argv[0] == "ps" and "-p" in argv:
                 return Completed(data, 0)

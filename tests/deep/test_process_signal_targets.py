@@ -105,7 +105,7 @@ class FakePs:
     def run(self, cmd, *args, **kwargs):
         argv = [str(c) for c in cmd]
         self.calls.append(argv)
-        if argv[0] == "sysctl":
+        if argv[0].endswith("sysctl"):
             if self.sysctl_rc and kwargs.get("check"):
                 raise subprocess.CalledProcessError(self.sysctl_rc, argv)
             return Completed(self.sysctl, self.sysctl_rc)

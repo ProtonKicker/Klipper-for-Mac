@@ -61,11 +61,19 @@ def _boot_time():
     now = time.monotonic()
     if now - _boot_cache[0] < 5.0:
         return _boot_cache[1]
-    try:
-        out = subprocess.run(
-            ["sysctl", "-n", "kern.boottime"], capture_output=True,
-            check=True).stdout.decode()
-    except Exception:
+    out = None
+    argv = ("-n", "kern.boottime")
+    # Absolute first: macOS keeps sysctl in /usr/sbin, which stripped-PATH
+    # environments (launchd agents, cron, CI) often omit; plain name as a
+    # portable fallback.
+    for binary in ("/usr/sbin/sysctl", "sysctl"):
+        try:
+            out = subprocess.run([binary] + list(argv), capture_output=True,
+                                 check=True).stdout.decode()
+            break
+        except Exception:
+            continue
+    if out is None:
         bt = None
     else:
         # \b anchors the field: without it the pattern also fires inside
