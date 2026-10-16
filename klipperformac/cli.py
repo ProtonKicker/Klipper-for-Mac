@@ -435,11 +435,108 @@ def cmd_logs(args):
         sys.exit(1 if code < 0 else code)
 
 
+def _identity_map():
+    """{device_path: identity dict} for the USB boards attached right now, {} on
+    any failure.
+
+    detect.identity() is macOS' answer to Linux' /dev/serial/by-id: macOS
+    renumbers /dev/cu.usbmodemNNNNN on every replug, but VID:PID + the USB
+    serial number + locationID come from the IOKit registry and do not move.
+    Nothing here opens a port (klippy holds its own with a flock), and one call
+    runs one `ioreg`, so the whole listing costs ~0.5 s, not N * 0.5 s.
+    """
+    fn = getattr(detect, "all_identities", None)
+    if not callable(fn):
+        return {}
+    try:
+        rows = fn() or []
+    except Exception:
+        return {}
+    return {r["path"]: r for r in rows
+            if isinstance(r, dict) and r.get("path")}
+
+
+def _identity_tail(ident, claim):
+    """The extra columns of one `serial` row: VID:PID= SER= LOC= -> [mcu].
+
+    A port with no identity behind it (a Bluetooth RFCOMM tunnel, a virtual
+    serial, a Mac where ioreg was unreadable) prints exactly the old line -
+    path plus driver hint - because `serial` output is parsed by scripts and
+    the identity layer is an addition, never a requirement.
+    """
+    bits = []
+    if ident:
+        if ident.get("vid_pid"):
+            bits.append("VID:PID=" + str(ident["vid_pid"]).lower())
+        if ident.get("serial"):
+            bits.append("SER=" + str(ident["serial"]))
+        if ident.get("location"):
+            bits.append("LOC=" + str(ident["location"]))
+    if claim:
+        bits.append("-> " + claim)
+    return "  ".join(bits)
+
+
+def _configured_mcus():
+    """[(section, serial)] from printer.cfg, and {path: "[mcu]"} for them.
+
+    flash.configured_serials()/claimed_by_section() own this parsing (they are
+    section-aware and degrade gracefully), so `serial` and `flash detect` can
+    never disagree about who claims which node - one read of printer.cfg, and
+    nothing is ever written here.
+    """
+    try:
+        from . import flash
+        rows = flash.configured_serials()
+        return rows, flash.claimed_by_section(rows)
+    except Exception:
+        return [], {}
+
+
+def _serial_notes(ports, rows, claims):
+    """Read-only advice about printer.cfg vs what is actually attached.
+
+    Three facts that cost nothing to check and are worth real debugging time on
+    macOS: a section whose `serial:` node is gone (the renumbering above), the
+    one unclaimed node that is probably the renamed board, and two sections
+    claiming the same node - which is not a warning but a dead printer, because
+    klippy takes a port exclusively and the second board retries for 90 s and
+    then errors out. Never writes anything: the fix stays the user's
+    `serial --set`, typed by a human who can see the cable.
+    """
+    present = {p["path"] for p in ports}
+    notes = []
+    missing = 0
+    owner = {}
+    for name, serial in rows:
+        label = "[mcu]" if name == "mcu" else "[mcu {}]".format(name)
+        if serial in owner:
+            notes.append("[!] {} and {} both point at {}: one klippy can hold "
+                         "that port, the other retries for 90 s and then "
+                         "errors.".format(owner[serial], label, serial))
+        else:
+            owner[serial] = label
+        if serial not in present:
+            missing += 1
+            notes.append("[!] {} points at {}, which is not attached right now."
+                         .format(label, serial))
+    if missing and len(rows) == 1:
+        free = [p["path"] for p in ports if p["path"] not in claims]
+        if len(free) == 1:
+            notes.append("    macOS may have renamed the node. If it is the "
+                         "same board, re-point it: klipperformac serial --set "
+                         + free[0])
+    return notes
+
+
 def cmd_serial(args):
     ports = detect.scan()
+    idents = _identity_map() if ports else {}
+    rows, claims = _configured_mcus()
     for p in ports:
         desc = (" (" + p["description"] + ")") if p["description"] else ""
-        print(p["path"] + desc)
+        tail = _identity_tail(idents.get(p["path"]), claims.get(p["path"]))
+        print(p["path"] + desc + ("  " + tail if tail else ""))
     target = args.set
     if args.auto and not target:
         if len(ports) == 1:
@@ -452,10 +549,15 @@ def cmd_serial(args):
             _die("--auto: {} candidates found; pick one of the above: "
                  "klipperformac serial --set PATH".format(len(ports)))
     if not target:
+        notes = _serial_notes(ports, rows, claims)
         if not ports:
             print("No USB serial devices found. Connect the printer board and "
                   "retry.")
+            for note in notes:
+                print(note)
             return
+        for note in notes:
+            print(note)
         print("\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
               "(or --auto for the first above)")
         return
@@ -904,6 +1006,20 @@ def cmd_backup(args):
     is: cli.py must not need the whole module to parse `klipperformac status`."""
     from . import backup
     backup.dispatch(args)
+
+
+def cmd_flash(args):
+    """`klipperformac flash detect|uf2|dfu|serial|doctor|build`.
+
+    flash.py owns every decision (what is attached, whether a .uf2/.bin is real,
+    which transport a board is in, when the stack must come down first); this is
+    the thin dispatch the subparser points at, and - like backup and tui - the
+    module is imported here rather than at module scope so `klipperformac status`
+    does not need it."""
+    from . import flash
+    code = flash.dispatch(args)
+    if code:
+        sys.exit(code)
 
 
 def _klippy_console(cmd, timeout=6):
@@ -2133,6 +2249,10 @@ def main(argv=None):
                    help="also delete the data folder without asking")
     p.add_argument("--keep-data", action="store_true",
                    help="never delete the data folder")
+    # `flash` keeps its whole flag surface in flash.py (add_parser) so this file
+    # gains one call here and one handler entry below, and nothing else.
+    from . import flash as _flash
+    _flash.add_parser(sub)
 
     args = ap.parse_args(argv)
     handlers = {
@@ -2146,6 +2266,7 @@ def main(argv=None):
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
         "backup": cmd_backup,
         "cam": cmd_cam,
+        "flash": cmd_flash,
         "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
     }
     handlers[args.cmd](args)
