@@ -498,11 +498,17 @@ def test_main_data_set_prints_the_result_and_exits_cleanly(stack, capfd, tmp_pat
 
 
 def test_main_data_refuses_home_without_writing_anything(stack, capfd, monkeypatch):
+    """A refusal is a refusal: exit 1 with the reason on stdout, and nothing
+    under the real home touched. The wave-2 guard in cmd_data turned "print a
+    warning, return 0" into a real failure, which is what a script or the GUI
+    needs to know the move did NOT happen."""
     real_home = __import__("pathlib").Path.home()
     before = sorted(os.listdir(str(real_home)))
-    stack.cli.main(["data", "--set", "~"])
-    out = capfd.readouterr().out
-    assert "Refusing" in out
+    with pytest.raises(SystemExit) as caught:
+        stack.cli.main(["data", "--set", "~"])
+    assert caught.value.code == 1
+    cap = capfd.readouterr()
+    assert "Refusing" in cap.out
     assert sorted(os.listdir(str(real_home))) == before
 
 

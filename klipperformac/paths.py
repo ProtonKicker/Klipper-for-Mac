@@ -2,12 +2,40 @@ import json
 import os
 from pathlib import Path
 
+# Klipper/Moonraker configs are routinely saved by editors in cp1252 or
+# Latin-1 (German comments in vendor configs), and Moonraker itself does not
+# require UTF-8. latin-1 is the last resort because it is byte-lossless: every
+# byte round-trips, so a rewrite never mangles a comment we did not touch.
+CFG_FALLBACK_ENCODING = "latin-1"
+_UTF8_BOM = b"\xef\xbb\xbf"
 
-def _p(env, default):
-    return Path(os.environ.get(env, default)).expanduser()
+
+def _env_dir(env, default, what):
+    """A folder from the environment, always absolute.
+
+    `export KLIPPERFORMAC_HOME=` (empty) means "unset", never "the folder I am
+    standing in": Path('') is '.', which would make the whole install - and
+    `klipperformac uninstall` - depend on the current directory. A relative
+    path is refused the same way, because the stack is started from a different
+    folder than the terminal that typed the command."""
+    raw = os.environ.get(env)
+    if raw is None or not raw.strip():
+        raw = default
+    path = Path(raw.strip()).expanduser()
+    if not path.is_absolute():
+        raise SystemExit("Invalid {} value: {!r} - {} must be an absolute path "
+                         "(starting with / or ~), otherwise every command "
+                         "depends on the folder it happens to be run from"
+                         .format(env, raw, what))
+    return path
 
 
-APP_HOME = _p("KLIPPERFORMAC_HOME", "~/.klipperformac")
+APP_HOME = _env_dir("KLIPPERFORMAC_HOME", "~/.klipperformac",
+                    "the Klipper-for-Mac app folder")
+if APP_HOME == Path.home():
+    raise SystemExit("Invalid KLIPPERFORMAC_HOME value: {} is your home "
+                     "folder. The app folder must be a folder of its own, e.g. "
+                     "~/.klipperformac".format(APP_HOME))
 
 # User-visible data folder. Resolution order: env var, settings.json
 # (written by `klipperformac data --set`), the default inside APP_HOME
@@ -48,6 +76,58 @@ def save_settings(settings):
         raise
 
 
+def read_config(path):
+    """(text, encoding) of a user-editable config file.
+
+    Never raises UnicodeDecodeError: one non-UTF-8 byte in a comment must not
+    be able to stop `up`/`doctor`/`lan`/`presets`. OSError (missing/unreadable)
+    is the caller's business. The encoding comes back so a rewrite writes the
+    bytes the user had with only our line changed - which is why utf-8 is tried
+    as plain utf-8 and "utf-8-sig" is only reported when a BOM is really there
+    (encoding a BOM-less file as utf-8-sig would add one)."""
+    data = Path(path).read_bytes()
+    if data.startswith(_UTF8_BOM):
+        try:
+            # Decoded as utf-8-sig so the BOM leaves the text, and reported as
+            # utf-8-sig so the rewrite puts exactly one back.
+            return data.decode("utf-8-sig"), "utf-8-sig"
+        except UnicodeDecodeError:
+            pass
+    for enc in ("utf-8", "cp1252"):
+        try:
+            return data.decode(enc), enc
+        except UnicodeDecodeError:
+            continue
+    return data.decode(CFG_FALLBACK_ENCODING), CFG_FALLBACK_ENCODING
+
+
+def read_config_text(path):
+    """The text of a config file, byte-safe (see read_config)."""
+    return read_config(path)[0]
+
+
+def write_config(path, text, encoding="utf-8"):
+    """Write-then-replace for any file a running stack reads (printer.cfg,
+    moonraker.conf, state/settings json).
+
+    Writing in place truncates first, so a crash, a full disk or a killed
+    process mid-write used to leave a half config behind - which Klipper/Moonraker
+    then read as a broken install. The temp file sits in the same folder (same
+    filesystem) so os.replace is atomic, and it carries the encoding we read."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding=encoding, newline="") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _usable_data(value):
     """The settings.json "data" value if it can be trusted, else None.
     settings.json is written by the SwiftUI app too, so a junk value (a number,
@@ -57,13 +137,71 @@ def _usable_data(value):
     if not isinstance(value, str) or not value.strip():
         return None
     path = Path(value).expanduser()
-    return path if path.is_absolute() else None
+    if not path.is_absolute() or protected_data_dir(path):
+        return None
+    return path
+
+
+def protected_data_dir(path):
+    """Folders that must never become (or be deleted as) the data folder: the
+    home root, a filesystem root, and the top-level user folders people keep
+    irreplaceable files in. `data --set` and `uninstall --data` both consult
+    this, so one typo cannot turn a housekeeping command into a wipe."""
+    if path in (Path.home(), Path("/")) or path.parent == path:
+        return True
+    home = Path.home()
+    for name in ("Documents", "Desktop", "Downloads", "Pictures", "Movies",
+                 "Music", "Library"):
+        if path == home / name:
+            return True
+    return False
+
+
+def looks_like_data_dir(path):
+    """Does `path` hold the layout a Klipper-for-Mac data folder has?
+
+    A directory is only ever deleted after this question is answered yes: the
+    alternative is `uninstall --data` wiping whatever folder a stale settings
+    value happens to name."""
+    path = Path(path)
+    if not path.is_dir():
+        return False
+    if (path / "config" / "printer.cfg").is_file():
+        return True
+    known = ("config", "run", "logs", "gcodes", "web", "timelapse")
+    return sum(1 for name in known if (path / name).is_dir()) >= 2
+
+
+def looks_like_app_home(path):
+    """Does `path` hold an install this tool made?
+
+    Same purpose as looks_like_data_dir, one level up: `uninstall` removes a
+    whole tree. Only markers a SETUP actually writes count - deliberately not
+    `data/` or `bin/`, because our own commands create those on the way (taking
+    the run/cli.lock makes run/), and a folder that only holds what this very
+    command just made is not evidence of an installation."""
+    path = Path(path)
+    if not path.is_dir():
+        return False
+    for marker in ("lockfile.json", "src", "shims", "refs.d"):
+        if (path / marker).exists():
+            return True
+    for folder in ("venv", "venv-shaper", "klipper", "moonraker"):
+        if (path / folder).is_dir():
+            return True
+    return False
 
 
 def _resolve_data():
     env = os.environ.get("KLIPPERFORMAC_DATA")
-    if env:
-        return Path(env).expanduser()
+    if env is not None and env.strip():
+        path = _env_dir("KLIPPERFORMAC_DATA", None, "the data folder")
+        if protected_data_dir(path):
+            raise SystemExit("Invalid KLIPPERFORMAC_DATA value: {} is too "
+                             "important a folder to hold printer data. Pick a "
+                             "folder of its own, e.g. {}"
+                             .format(path, DEFAULT_DATA))
+        return path
     saved = _usable_data(load_settings().get("data"))
     if saved:
         return saved
@@ -104,7 +242,7 @@ def set_data(path):
     """Point all data-derived paths at a new folder (relocation-safe)."""
     global DATA, CONFIG, PRESETS, PRINTER_CFG, MOONRAKER_CONF, RUN, STATE
     global LOGS, WEB, WEB_MAINSAIL, WEB_FLUIDD, API_SOCKET, KLIPPY_LOG
-    global MOONRAKER_LOG, CAM_STATE, CAM_LOG, TIMELAPSE
+    global MOONRAKER_LOG, CAM_STATE, CAM_LOG, TIMELAPSE, CLI_LOCK
     DATA = Path(path).expanduser()
     CONFIG = DATA / "config"
     PRESETS = CONFIG / "presets"
@@ -122,6 +260,7 @@ def set_data(path):
     CAM_STATE = RUN / "cam.json"
     CAM_LOG = LOGS / "klippacam.log"
     TIMELAPSE = DATA / "timelapse"
+    CLI_LOCK = RUN / "cli.lock"
 
 
 # One-time migration from the pre-rename home (package was called "maklipper").
@@ -194,15 +333,22 @@ def ui_url(ui):
     return "http://localhost:{}".format(ui_port(ui))
 
 
-def web_url():
+def default_ui():
+    """The UI this install actually serves: the lockfile records what setup
+    fetched, "fluidd" is the shipped default. Anything that names the UI to a
+    user (selftest labels, `open`) reads it from here, so a label cannot lie
+    about which folder answered."""
     ui = "fluidd"
     try:
-        import json
         if LOCKFILE.exists():
-            ui = json.loads(LOCKFILE.read_text()).get("ui") or "fluidd"
+            ui = json.loads(read_config_text(LOCKFILE)).get("ui") or "fluidd"
     except Exception:
         pass
-    return ui_url(ui)
+    return ui if ui in ("mainsail", "fluidd") else "fluidd"
+
+
+def web_url():
+    return ui_url(default_ui())
 
 
 def ensure_dirs():

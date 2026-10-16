@@ -2,12 +2,26 @@
 import glob
 import re
 
+from . import paths
+
 PATTERNS = (
     "/dev/cu.usbserial*",
     "/dev/cu.usbmodem*",
     "/dev/cu.wchusbserial*",
     "/dev/cu.SLAB_USBtoUART*",
     "/dev/cu.usbtrance*",
+    # WCH CH340/CH341 boards with the vendor kext loaded name their ports
+    # /dev/cu.URT<n> (and /dev/cu.USR2* for the UART-II chips). This is the
+    # most common 3D-printer USB chip on the market, so leaving it out made a
+    # plugged-in printer invisible to `serial`, `--auto` and the GUI picker.
+    # Tradeoff, accepted deliberately: a CH340 that is NOT the printer (an
+    # Arduino, a serial console on another box) now shows up as a candidate
+    # too - which is what the listing is for. auto_serial()/`--auto` only ever
+    # write a port when exactly ONE candidate exists, so multi-device users
+    # still pick by hand (`serial --set PATH`).
+    "/dev/cu.URT*",
+    "/dev/cu.USR2*",
+    "/dev/cu.WCHTL*",
 )
 
 # cu-name conventions on macOS: the driver family is embedded in the path.
@@ -16,7 +30,11 @@ _HINTS = (
     ("usbserial", "FTDI (or clone)"),
     ("usbmodem", "USB-CDC (STM32 / SKR / Pi Pico class boards)"),
     ("SLAB", "Silicon Labs CP210x"),
-    ("usbtrance", " Teensy HID"),
+    ("usbtrance", "Teensy HID"),
+    # Longest token first below: "urt" is also a substring of nothing else here.
+    ("wchtl", "WCH CH340/CH341 (WCH-Link)"),
+    ("usr2", "WCH CH340/CH341"),
+    ("urt", "WCH CH340/CH341"),
 )
 
 
@@ -52,12 +70,17 @@ def scan():
 def write_serial(cfg_path, device_path):
     """Set `serial:` inside the [mcu] section only. Adds the line if [mcu]
     exists without it; refuses (returns False) if no [mcu] section exists or
-    the device path could inject config lines."""
+    the device path could inject config lines.
+
+    Reads/writes byte-safe: a vendor printer.cfg saved in cp1252 is rewritten
+    with its own encoding (see paths.read_config), and through a temp file, so
+    a crash cannot leave a half printer.cfg where Klipper expects a whole one."""
     if not cfg_path.exists():
         return False
     if re.search(r"[\r\n\0]", device_path):
         return False
-    lines = cfg_path.read_text().splitlines(True)
+    text, encoding = paths.read_config(cfg_path)
+    lines = text.splitlines(True)
     in_mcu = False
     has_mcu = False
     replaced = False
@@ -87,5 +110,5 @@ def write_serial(cfg_path, device_path):
                 out2.append("serial: {}\n".format(device_path))
                 inserted = True
         out = out2
-    cfg_path.write_text("".join(out))
+    paths.write_config(cfg_path, "".join(out), encoding)
     return True

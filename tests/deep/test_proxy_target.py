@@ -5,13 +5,14 @@ replaced with a recorder inside the proxy module only, so every assertion is
 about what the proxy would put on the wire towards Moonraker. An autouse guard
 makes any attempt to reach the live stack ports fail loudly.
 """
+import email.message
 import importlib
 import io
 import json
 import types
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, example, given, settings, strategies as st
 
 import klipperformac.proxy as proxy_mod
 
@@ -23,6 +24,11 @@ HS = dict(deadline=None, derandomize=True,
 
 STACK_PORTS = frozenset({7125, 7126, 8080, 8081})
 UPSTREAM_SENTINEL = 1
+# Targets that are API-routed but leave by the raw websocket tunnel instead of
+# the HTTP relay (proxy._wants_upgrade special-cases them), so the "relayed
+# without rewrite" property below does not apply to them. Anything else in
+# API_PREFIXES must always travel as HTTP, unchanged.
+TUNNEL_ONLY_TARGETS = frozenset({"/websocket"})
 
 
 @pytest.fixture
@@ -291,8 +297,50 @@ def test_property_api_paths_are_relayed_without_rewrite(proxymod, recorder,
                                                        prefix, suffix, query):
     proxymod.UIPandler.upstream_port = 4321
     path = "/" + prefix + suffix + (("?" + query) if query else "")
+    if path in TUNNEL_ONLY_TARGETS:
+        # The router answers this target with the raw websocket tunnel, which
+        # opens no http.client connection at all (proved end to end by the test
+        # below), so the HTTP-relay assertion cannot describe it. It is carved
+        # out here rather than filtered from the strategy: a prefix that ever
+        # stops being API-routed still fails this property. Checked on the
+        # predicates instead of handle(), because the tunnel dials a real socket
+        # and this file's contract is that no example ever reaches for one.
+        h = object.__new__(proxymod.UIPandler)
+        h.path, h.command = path, "GET"
+        h.headers = email.message.Message()      # not even an Upgrade header
+        assert proxymod.UIPandler.is_api(h) is True, path
+        assert proxymod.UIPandler._wants_upgrade(h) is True, path
+        return
     handle(proxymod, request_line(path))
     assert forwarded(recorder.calls)["url"] == path, path
+
+
+def test_the_bare_websocket_target_is_tunneled_not_http_relayed(proxymod,
+                                                               recorder,
+                                                               monkeypatch):
+    """The rule the property above has to make room for.
+
+    _wants_upgrade() special-cases the exact target /websocket -- a client that
+    forgets the Upgrade header still gets the tunnel, and the request never
+    touches the HTTP relay or the docroot. Asserted with _proxy_ws stubbed, so
+    this stays offline: the tunnel would otherwise dial 127.0.0.1:4321 for real.
+    """
+    proxymod.UIPandler.upstream_port = 4321
+    called = {}
+
+    def fake_ws(self):
+        called["ws"] = self.path
+
+    monkeypatch.setattr(proxymod.UIPandler, "_proxy_ws", fake_ws)
+    h, _out = handle(proxymod, request_line("/websocket"))
+    assert called == {"ws": "/websocket"}, "the tunnel never opened"
+    assert not recorder.calls, "/websocket must not go through _proxy"
+    assert proxymod.UIPandler._wants_upgrade(h) is True
+    # ...and only that exact target: with any tail it is an ordinary API path.
+    called.clear()
+    handle(proxymod, request_line("/websocket?token=1"))
+    assert called == {}
+    assert forwarded(recorder.calls)["url"] == "/websocket?token=1"
 
 
 @pytest.mark.parametrize("method", ["FROB", "PROPFIND", "TRACE"])

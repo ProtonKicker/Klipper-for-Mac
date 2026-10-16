@@ -189,15 +189,25 @@ def test_cam_status_and_doctor_answer_for_any_conf_bytes(camsite, label, blob):
 
 
 def test_webcam_state_gracefulness_ladder(camsite):
-    """The raw layer raises; every cam.py caller above it must not."""
+    """The raw layer is byte-safe now; every cam.py caller above it still is.
+
+    Contract change (wave 2, hunt finding "a single non-UTF-8 byte in
+    printer.cfg or moonraker.conf kills up/doctor/lan/presets"):
+    configgen/paths used to read these files with a bare read_text(), so this
+    test pinned UnicodeDecodeError escaping the raw layer and each caller
+    translating it into a graceful line. The raw layer no longer raises - a
+    vendor config with cp1252 comments must not stop the stack - so the ladder
+    is asserted at the new level instead: the odd bytes are read as latin-1/cp1252
+    and written back UNCHANGED, and no caller crashes.
+    """
     put_conf(camsite, b"[server]\nhost: 127.0.0.1\n\xff\xfe\n")
-    with pytest.raises(UnicodeDecodeError):
-        camsite.configgen.webcam_state()
-    assert any("unknown" in l for l in camsite.cam.status())
+    assert camsite.configgen.webcam_state() == (False, False)
     assert not any("failed" in m for ok, m in camsite.cam.doctor())
-    assert any("moonraker.conf" in l for l in camsite.cam.register_webcam())
+    assert isinstance(camsite.cam.register_webcam(), list)
     ok, lines = camsite.cam.stop()
     assert ok is False and lines == ["Camera was not on."]
+    # the byte that used to abort the read is still there, unmangled
+    assert b"\xff\xfe" in camsite.paths.MOONRAKER_CONF.read_bytes()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="chmod is a no-op for root")

@@ -49,11 +49,20 @@ def baseline(root):
 
 
 def _apply_env(mapping):
+    """Bind the three variables, treating None as 'unset'.
+
+    The teardown below restores a snapshot taken with os.environ.get(), whose
+    missing keys are None: writing that back as text left
+    KLIPPERFORMAC_HOME='None' (and HOME='None') in the real environment for the
+    rest of the pytest session, so any later test that reloaded paths without
+    setting the variables itself died on the absolute-path guard instead of
+    running - a pass/fail that depended on which files ran first."""
     for key in _ENV_KEYS:
-        if key in mapping:
-            os.environ[key] = str(mapping[key])
-        else:
+        value = mapping.get(key)
+        if value is None:
             os.environ.pop(key, None)
+        else:
+            os.environ[key] = str(value)
 
 
 @pytest.fixture(autouse=True)

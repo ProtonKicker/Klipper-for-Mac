@@ -1,13 +1,18 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
 logs | serial | update | open | doctor | cam | uninstall."""
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -17,6 +22,57 @@ from . import cam, configgen, detect, installer, paths, process, shaper, version
 def _die(msg):
     print(msg, file=sys.stderr)
     sys.exit(1)
+
+
+# Commands that mutate the stack take the lock; restart re-enters cmd_up, so
+# the holder handles live here for the lifetime of the process.
+_LOCK_HELD = []
+
+
+@contextlib.contextmanager
+def _cli_lock():
+    """flock(run/cli.lock) around the commands that change the stack.
+
+    Two `up` at once (GUI double-click + terminal, TUI + CLI) used to both pass
+    the "is it running" test and both spawn a full stack: two Moonrackers on
+    one klippy socket, and a state.json whose pids do not own the ports - after
+    which `status` lies in both directions and `down` leaves half of it running.
+    The lock is advisory and per-kernel: it dies with whatever process held it,
+    so a crashed CLI never leaves the tool locked out."""
+    holder = [None]
+
+    def _acquire():
+        if _LOCK_HELD:
+            return  # restart -> cmd_up: already ours, never wait on ourselves
+        try:
+            paths.RUN.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _die("Cannot prepare {} for the command lock: {}".format(
+                paths.RUN, getattr(e, "strerror", None) or e))
+        try:
+            fh = open(paths.CLI_LOCK, "a+")
+        except OSError as e:
+            _die("Cannot open {} for the command lock: {}".format(
+                paths.CLI_LOCK, getattr(e, "strerror", None) or e))
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print("Waiting for another klipperformac command to finish...")
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        _LOCK_HELD.append(fh)
+        holder[0] = fh
+
+    try:
+        _acquire()
+        yield
+    finally:
+        if holder[0] is not None:
+            try:
+                fcntl.flock(holder[0], fcntl.LOCK_UN)
+            except OSError:
+                pass
+            _LOCK_HELD.remove(holder[0])
+            holder[0].close()
 
 
 def _save_settings(settings):
@@ -31,12 +87,33 @@ def _save_settings(settings):
             paths.SETTINGS, getattr(e, "strerror", None) or e))
 
 
+# A preset name becomes one filename: PRESETS/<name>.cfg, and _copy_atomic first
+# writes <name>.cfg.tmp beside it. macOS caps a single path component at 255
+# BYTES, so a long name used to fail inside shutil with a raw
+# OSError(ENAMETOOLONG) traceback. 100 characters is the human limit; the byte
+# limit is what the filesystem actually enforces (an emoji-heavy name can hit it
+# far before 100 characters).
+PRESET_NAME_MAX_CHARS = 100
+PRESET_NAME_MAX_BYTES = 240
+
+
 def _safe_name(name, what="name"):
     """Reject preset/history names that could escape their directory when
-    joined onto PRESETS/history."""
+    joined onto PRESETS/history, blow the filename limit, or forge rows in the
+    preset listing."""
     if not name or re.search(r"[/\\]|\.\.|^\.", name):
         _die("Invalid {} '{}': no path separators, '..', or leading dot "
              "allowed".format(what, name))
+    # A newline or tab in a name is not a name: it splits `klipperformac
+    # presets` (and the GUI/TUI list that parses it) into rows nobody typed.
+    if re.search(r"[\x00-\x1f\x7f]", name):
+        _die("Invalid {} '{}': no control characters (spaces are fine, "
+             "newlines and tabs are not)".format(what, name))
+    if len(name) > PRESET_NAME_MAX_CHARS or len(name.encode("utf-8")) \
+            > PRESET_NAME_MAX_BYTES:
+        _die("Invalid {} '{}': too long ({} characters at most). A preset name "
+             "is a filename".format(what, name[:32] + "...",
+                                    PRESET_NAME_MAX_CHARS))
     return name
 
 
@@ -45,32 +122,129 @@ def cmd_setup(args):
                     install_python=getattr(args, "install_python", False))
 
 
+def _moonraker_get(path, timeout=3):
+    """GET on our own Moonraker REST API; None when it does not answer."""
+    url = "http://localhost:{}{}".format(paths.MOONRAKER_PORT, path)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return json.loads(r.read().decode(errors="replace"))
+    except Exception:
+        return None
+
+
+def _klippy_state(timeout=3):
+    """klippy's state ('ready', 'startup', 'shutdown', 'error') from Moonraker,
+    or None when the stack does not answer (`printer state unknown`).
+
+    A service-level "klipper up" only proves the python process is alive: the
+    finding this answers is a printer stuck in `startup` (bad serial) or
+    `error` (corrupt printer.cfg) while every command said healthy."""
+    answer = _moonraker_get("/printer/info", timeout)
+    if not isinstance(answer, dict):
+        return None
+    state = (answer.get("result") or {}).get("state")
+    return state if isinstance(state, str) else None
+
+
+def _lan_conf_expected():
+    """What moonraker.conf pins [server] host to right now: 'open', 'closed'
+    or 'unpinned' (no config/section/key - which upstream Moonraker reads as
+    0.0.0.0, i.e. open)."""
+    host = configgen.server_host()
+    if host is None:
+        return "unpinned"
+    host = host.strip()
+    if host in ("127.0.0.1", "localhost", "::1") or host.startswith("127."):
+        return "closed"
+    if host in ("0.0.0.0", "*", "::"):
+        return "open"
+    return "open"
+
+
 def _lan_urls(indent="  "):
-    """LAN URLs when LAN access is enabled and we have an address, else []."""
-    if not paths.lan_enabled():
-        return []
-    ip = detect.lan_ip()
-    if not ip:
-        return [indent + "LAN:       enabled, but this Mac has no network "
-                        "address right now"]
-    return [indent + "LAN UI:    http://{}:{}  (mainsail)   "
-                     "http://{}:{}  (fluidd)".format(ip, paths.WEB_PORT,
-                                                     ip, paths.FLUIDD_PORT),
-            indent + "LAN API:   http://{}:{}  (Orca on other devices)"
-            .format(ip, paths.MOONRAKER_PORT)]
+    """LAN URLs to advertise, judged on evidence instead of one settings file.
+
+    There are three places LAN state lives: settings.json (what the user asked
+    for, read by our proxies when they start), moonraker.conf [server] host (what
+    Moonraker binds when it starts) and the running proxies' own argv (what is
+    listening right now). Advertising a URL from only the first of those is how
+    `status` came to print a LAN API link that refused every connection. Each
+    line below is printed only for the service that really is exposed, and a
+    disagreement between the three is said out loud."""
+    want = paths.lan_enabled()
+    expected = _lan_conf_expected()
+    running_bind = process.lan_bind_in_effect()
+    ip = detect.lan_ip() if want else None
+    lines = []
+    if want and not ip:
+        lines.append(indent + "LAN:       enabled, but this Mac has no network "
+                            "address right now")
+        return lines
+    if want:
+        if running_bind != "closed":
+            lines.append(indent + "LAN UI:    http://{}:{}  (mainsail)   "
+                                "http://{}:{}  (fluidd)".format(
+                                    ip, paths.WEB_PORT, ip, paths.FLUIDD_PORT))
+        if expected == "open":
+            lines.append(indent + "LAN API:   http://{}:{}  (Orca on other "
+                                  "devices)".format(ip, paths.MOONRAKER_PORT))
+        if running_bind == "closed":
+            lines.append(indent + "[!] The UI proxies are listening on "
+                        "localhost only right now - they bind the LAN address "
+                        "when they start: klipperformac restart")
+    if want and expected in ("closed", "unpinned"):
+        lines.append(
+            indent + "[!] LAN is switched on in settings but moonraker.conf "
+            "pins host to {} - the API stays localhost-only until you run: "
+            "klipperformac restart".format(
+                "127.0.0.1" if expected == "closed" else "nothing "
+                "(upstream Moonraker defaults to 0.0.0.0)"))
+    if not want and (expected == "open" or running_bind == "open"):
+        lines.append(
+            indent + "[!] LAN is switched OFF in settings but {} is still "
+            "listening on this Mac's network address - close it now with: "
+            "klipperformac restart".format(
+                "moonraker.conf" if expected == "open" else "the UI proxies"))
+    return lines
 
 
 def cmd_up(args):
+    with _cli_lock():
+        _cmd_up(args)
+
+
+def _cmd_up(args):
     paths.ensure_dirs()
     if not paths.VENV_PY.exists():
         _die("Not set up yet. Run: klipperformac setup")
     if configgen.sync_data_paths():
         print("Updated config paths for the current data folder.")
-    if process.running() is not None:
-        print("Already running.")
+    state = process.running()
+    if state is not None and any(state.values()):
+        dead_core = [n for n in ("klipper", "moonraker") if not state.get(n)]
+        if dead_core:
+            # "Already running." here used to hide a stack whose klipper or
+            # Moonraker had died: every port dead, nothing to repair. klipper
+            # and moonraker are not restarted quietly, because a live klipper
+            # with a print running must never be killed by a status command -
+            # so this fails loudly and names the repair.
+            _die("[!] Stack is half stopped ({} DOWN) but still tracked. "
+                 "Repair it with: klipperformac restart".format(
+                     ", ".join(dead_core)))
+        dead_ui = [n for n in process.SERVICES
+                   if n not in ("klipper", "moonraker") and not state.get(n)]
+        if dead_ui:
+            print("[!] Partially stopped ({} DOWN): restarting those services "
+                  "only, the running klipper/moonraker are left alone."
+                  .format(", ".join(dead_ui)))
+            process.repair(state)
+        else:
+            print("Already running.")
+            return
     else:
         note = shaper.interpreter_for_klipper()[1]
-        process.start()
+        if not process.start():
+            sys.exit(1)  # start() said why (port held, record not writable)
         if note:
             print(note)
         print("Klipper stack starting:")
@@ -80,33 +254,42 @@ def cmd_up(args):
         for line in _lan_urls():
             print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
-        _wait_ready()
+        if not _wait_ready():
+            sys.exit(1)
         if getattr(args, "open", False):
             webbrowser.open(paths.web_url())
 
 
 def _wait_ready(timeout=35):
-    import json as _json
-    import time
-    import urllib.request
     url = "http://localhost:{}/server/info".format(paths.MOONRAKER_PORT)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as r:
-                info = _json.loads(r.read().decode()).get("result", {})
+        info = (_moonraker_get("/server/info", 2) or {}).get("result")
+        if isinstance(info, dict):
             state = info.get("klippy_state", "?")
             conn = "connected" if info.get("klippy_connected") else "not yet"
             print("  ready: moonraker up, klippy {} (state: {})".format(conn, state))
-            return
-        except Exception:
-            time.sleep(0.7)
+            return True
+        time.sleep(0.7)
     print("[!] Moonraker did not answer within {}s — check: klipperformac logs"
           .format(timeout))
+    held = [(port, pid) for port, pid in process.our_listeners()]
+    squatters = process.port_conflicts()
+    if squatters:
+        for port, pid, desc in squatters:
+            print("[!] Port {} is answered by {} (not this stack): stop that "
+                  "program or run: klipperformac killall".format(
+                      port, "pid {} ({})".format(pid, desc) if pid else desc))
+    elif held:
+        print("[!] Our own processes are alive on port(s) {} but nothing "
+              "answered: run: klipperformac restart".format(
+                  ", ".join(str(port) for port, _ in held)))
+    return False
 
 
 def cmd_down(args):
-    stopped = process.stop()
+    with _cli_lock():
+        stopped = process.stop()
     cam_off, cam_lines = cam.stop()
     if cam_off:
         print("Stopped (camera turned off too)." if stopped
@@ -118,13 +301,23 @@ def cmd_down(args):
         for line in cam_lines or []:
             if "Camera was not on." not in line:
                 print(line)
+    # "Stopped." that leaves the API answering is worse than no answer at all:
+    # with LAN on, the stack keeps serving the local network after the user said
+    # stop. Report what is still there and how to clear it.
+    left = process.our_listeners()
+    if left:
+        print("[!] Still listening: {} - clear with: klipperformac killall"
+              .format(", ".join("port {} (pid {})".format(p, pid)
+                                for p, pid in left)))
+        sys.exit(1)
 
 
 def cmd_killall(args):
     """Force-kill the whole stack plus any stray service processes that a
     plain `down` would leave behind (untracked proxies, orphan klipper/
     moonraker/caffeinate)."""
-    killed = process.kill_all() + cam.kill_orphans()
+    with _cli_lock():
+        killed = process.kill_all() + cam.kill_orphans()
     if not killed:
         print("Nothing to kill.")
         return
@@ -134,14 +327,22 @@ def cmd_killall(args):
 
 
 def cmd_restart(args):
-    process.stop()
-    cmd_up(args)
+    with _cli_lock():
+        process.stop()
+        _cmd_up(args)
 
 
 def cmd_status(args):
     state = process.running()
     if state is None:
         print("stopped")
+        left = process.our_listeners()
+        if left:
+            print("  [!] {} still answering although no stack is tracked: "
+                  "klipperformac killall".format(
+                      ", ".join("port {}".format(p) for p, _ in left)))
+        for line in _lan_urls(indent="  "):
+            print(line)
         return
     pins = versions.load_pins()
     up = {n: st for n, st in state.items() if st}
@@ -150,6 +351,10 @@ def cmd_status(args):
         if name in ("caffeinate",):
             continue
         print("  {:<12} {}".format(name, "up" if state.get(name) else "DOWN"))
+    klippy = _klippy_state() if up.get("moonraker") else None
+    if up.get("moonraker"):
+        print("  {:<12} {}".format(
+            "klippy", klippy if klippy else "printer state unknown"))
     print("  url          {}".format(paths.web_url()))
     for line in _lan_urls():
         print(line)
@@ -182,17 +387,36 @@ def cmd_lan(args):
         print("LAN access {}.".format("OPEN — other devices can reach the "
                                       "printer" if enabled
                                       else "closed (this Mac only)"))
+        if not paths.MOONRAKER_CONF.exists():
+            print("[!] No moonraker.conf yet, so nothing was pinned in it: the "
+                  "bind is written when the config is created (run: "
+                  "klipperformac setup)")
         if process.running() is not None:
-            if enabled or changed:
-                print("Apply now with: klipperformac restart")
+            # Both halves of the switch read their setting once, at startup:
+            # Moonraker from moonraker.conf, our proxies from settings.json.
+            # Saying "closed (this Mac only)." and leaving *:7125 answering is
+            # the mistake this guards - a user who runs `lan off` before going
+            # to a hotel network must be told the port is still open.
+            print("[!] The stack is running: what is actually listening right "
+                  "now is unchanged{}.".format(
+                      "" if changed else " (the config already said this)"))
+            print("Apply now with: klipperformac restart")
         elif not enabled:
             print("Next start stays localhost-only.")
-    ip_urls = _lan_urls(indent="") if paths.lan_enabled() else []
-    if ip_urls:
-        print("Reachable from other devices on your network:")
-        for line in ip_urls:
-            print("  " + line)
-    elif not paths.lan_enabled():
+    notes = _lan_urls(indent="")
+    if paths.lan_enabled():
+        urls = [line for line in notes if "[!]" not in line]
+        if urls:
+            print("Reachable from other devices on your network:")
+            for line in urls:
+                print("  " + line)
+        for line in notes:
+            if "[!]" in line:
+                print(line)
+    elif notes:
+        for line in notes:
+            print(line)
+    else:
         print("Only this Mac can reach the stack (localhost). Turn on with: "
               "klipperformac lan on")
 
@@ -212,29 +436,44 @@ def cmd_logs(args):
 
 def cmd_serial(args):
     ports = detect.scan()
-    if not ports:
-        print("No USB serial devices found. Connect the printer board and retry.")
-        return
     for p in ports:
         desc = (" (" + p["description"] + ")") if p["description"] else ""
         print(p["path"] + desc)
     target = args.set
-    if args.auto:
+    if args.auto and not target:
         if len(ports) == 1:
             target = ports[0]["path"]
+        elif not ports:
+            _die("No USB printer board detected, so --auto has nothing to "
+                 "pick. Plug it in and retry, or name the port: "
+                 "klipperformac serial --set /dev/cu.usbmodem14101")
         else:
-            print("\n--auto: {} candidates found; pass --set explicitly".format(
-                len(ports)))
+            _die("--auto: {} candidates found; pick one of the above: "
+                 "klipperformac serial --set PATH".format(len(ports)))
     if not target:
+        if not ports:
+            print("No USB serial devices found. Connect the printer board and "
+                  "retry.")
+            return
         print("\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
               "(or --auto for the first above)")
         return
+    # From here the user asked for a specific port: an exit 0 that wrote
+    # nothing (no device scanned, no printer.cfg, no [mcu]) is a lie that CI,
+    # scripts and the GUI all believe. Every failure path below is a real error.
     if not paths.PRINTER_CFG.exists():
         _die("No printer.cfg yet. Run: klipperformac setup")
     if re.search(r"[\r\n\0]", target):
         _die("Invalid device path: must not contain newlines")
+    if not os.path.exists(target):
+        _die("{} is not a device that exists right now: nothing was written "
+             "to {}".format(target, paths.PRINTER_CFG))
     if detect.write_serial(paths.PRINTER_CFG, target):
         print("Wrote serial to " + str(paths.PRINTER_CFG))
+        if target not in [p["path"] for p in ports]:
+            print("[!] {} was not on the scanned list; a device node that "
+                  "exists is accepted anyway (the scanner only knows the "
+                  "common USB-serial name families)".format(target))
     else:
         _die("Could not find [mcu] serial: line in " + str(paths.PRINTER_CFG))
 
@@ -262,6 +501,24 @@ def relocate_data(new):
         return "Data folder already set to: {}".format(new)
     if new == Path.home() or new.parent == new:
         return "Refusing to use {} as the data folder.".format(new)
+    if paths.protected_data_dir(new):
+        return ("Refusing to use {} as the data folder: that is one of your "
+                "own document folders (or your home). `klipperformac "
+                "uninstall --data` deletes the data folder, and a top-level "
+                "folder holds far more than the printer. Give a folder of its "
+                "own, e.g. {}").format(new, paths.DEFAULT_DATA / "data")
+    if new.is_dir():
+        entries = [p for p in new.iterdir() if not p.name.startswith(".")]
+        if entries and not paths.looks_like_data_dir(new):
+            return ("Refusing to move the printer data into {}: it already "
+                    "holds {} item(s) and does not look like a Klipper-for-Mac "
+                    "data folder (no config/printer.cfg, no run/logs/gcodes). "
+                    "Create an empty folder for it first - `uninstall --data` "
+                    "would otherwise delete somebody else's files"
+                    .format(new, len(entries)))
+        if entries:
+            print("[!] {}: already holds a Klipper-for-Mac data folder; "
+                  "merging into it".format(new))
     if os.path.realpath(str(new)).startswith(
             os.path.realpath(str(old)) + os.sep):
         _die("Invalid data folder {}: it is inside the current data folder "
@@ -312,7 +569,12 @@ def cmd_data(args):
                              if not p.name.startswith("."))
             print("  contents: " + (", ".join(entries) if entries else "(empty)"))
         return
-    print(relocate_data(args.set))
+    message = relocate_data(args.set)
+    print(message)
+    # A refusal is a refusal, not a result: `data --set` exiting 0 on "Refusing
+    # to use ..." is what let a mistyped path look like a completed move.
+    if message.startswith(("Refusing", "Invalid")):
+        sys.exit(1)
 
 
 def cmd_update(args):
@@ -388,6 +650,36 @@ def cmd_ui(args):
         webbrowser.open(url)
 
 
+def _copy_atomic(src, dst, what=None):
+    """Copy onto a config path without ever leaving it half-written.
+
+    shutil.copy2() opens the destination with O_TRUNC: a crash, a full disk or
+    a SIGKILL in the middle of `presets --use` used to leave a truncated
+    printer.cfg - the one file Klipper cannot start without, and the reason the
+    version history exists in the first place. Copy to a sibling, then replace
+    (which is atomic within one filesystem).
+
+    With `what` set, a failed copy becomes one clean line on stderr and exit 1
+    instead of a shutil traceback: a disk full, a read-only folder or a source
+    that vanished mid-command is the user's problem to fix, and dumping the
+    interpreter's internals made `presets --save` look like the tool had
+    crashed. The destination is left exactly as it was either way."""
+    dst = Path(dst)
+    tmp = dst.with_name(dst.name + ".tmp")
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except OSError as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        if what is not None:
+            _die("Cannot {}: {} (nothing was written)".format(
+                what, getattr(e, "strerror", None) or e))
+        raise
+
+
 def _history_dir():
     d = paths.CONFIG / "history"
     d.mkdir(parents=True, exist_ok=True)
@@ -395,6 +687,9 @@ def _history_dir():
 
 
 HISTORY_KEEP = 10
+# `presets --import` copies a file into the folder Moonraker serves over its
+# config API; a config is a few kB, so anything bigger is the wrong file.
+PRESET_IMPORT_MAX_BYTES = 2 * 1024 * 1024
 
 
 def snapshot_printer_cfg(reason=""):
@@ -463,7 +758,6 @@ def auto_serial(cfg_path):
 
 
 def cmd_presets(args):
-    import shutil
     paths.PRESETS.mkdir(parents=True, exist_ok=True)
     if args.library:
         names = catalog_names()
@@ -479,10 +773,13 @@ def cmd_presets(args):
                  "klipperformac presets --library".format(args.use_library))
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-library")
-            shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
+            _copy_atomic(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak",
+                         "keep the current config as printer.cfg.bak")
         name = args.use_library
-        shutil.copy2(src, paths.PRESETS / (name + ".cfg"))
-        shutil.copy2(src, paths.PRINTER_CFG)
+        _copy_atomic(src, paths.PRESETS / (name + ".cfg"),
+                     "stage library config '{}' as a preset".format(name))
+        _copy_atomic(src, paths.PRINTER_CFG,
+                     "apply library config '{}'".format(name))
         print("Library config '{}' applied.".format(name))
         for line in auto_serial(paths.PRINTER_CFG)[0]:
             print(line)
@@ -510,7 +807,8 @@ def cmd_presets(args):
             src = cand[0]
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-restore")
-        shutil.copy2(src, paths.PRINTER_CFG)
+        _copy_atomic(src, paths.PRINTER_CFG,
+                     "restore saved version '{}'".format(src.name))
         print("Restored {} as the current config. "
               "Restart to load it.".format(src.name))
         return
@@ -525,7 +823,8 @@ def cmd_presets(args):
             _die("No printer.cfg to save")
         _safe_name(args.save, "preset name")
         dst = paths.PRESETS / (args.save + ".cfg")
-        shutil.copy2(paths.PRINTER_CFG, dst)
+        _copy_atomic(paths.PRINTER_CFG, dst,
+                     "save the current config as preset '{}'".format(args.save))
         print("Saved preset '{}' -> {}".format(args.save, dst))
         return
     if args.use:
@@ -537,8 +836,10 @@ def cmd_presets(args):
                 args.use, ", ".join(avail) or "none"))
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-preset")
-            shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
-        shutil.copy2(src, paths.PRINTER_CFG)
+            _copy_atomic(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak",
+                         "keep the current config as printer.cfg.bak")
+        _copy_atomic(src, paths.PRINTER_CFG,
+                     "apply preset '{}'".format(args.use))
         print("Preset '{}' applied (previous config kept as printer.cfg.bak)."
               .format(args.use))
         if args.auto_serial:
@@ -551,10 +852,26 @@ def cmd_presets(args):
         src = os.path.expanduser(args.import_)
         if not os.path.isfile(src):
             _die("File not found: " + src)
+        # A preset is copied into DATA/config/presets, which Moonraker serves
+        # to any device that can reach it (/server/files/config/...). Mirroring
+        # an upstream example config is the point of this flag; staging an
+        # arbitrary file (a keychain, an ssh config, a 4 GB blob) into a
+        # network-served folder is not, so the source has to look like a config.
+        size = os.path.getsize(src)
+        if size > PRESET_IMPORT_MAX_BYTES:
+            _die("Refusing to import {}: it is {} bytes, over the {} byte "
+                 "limit for presets. A printer.cfg is a few kB; import the "
+                 "config, not the file it is not.".format(
+                     src, size, PRESET_IMPORT_MAX_BYTES))
+        with open(src, "rb") as f:
+            head = f.read(min(size, 8192))
+        if b"\0" in head:
+            _die("Refusing to import {}: it is binary (contains a NUL byte), "
+                 "not a Klipper config.".format(src))
         name = args.import_name or os.path.splitext(os.path.basename(src))[0]
         _safe_name(name, "preset name")
         dst = paths.PRESETS / (name + ".cfg")
-        shutil.copy2(src, dst)
+        _copy_atomic(src, dst, "import '{}' as preset '{}'".format(src, name))
         print("Imported {} as preset '{}'".format(src, name))
         return
     presets = sorted(paths.PRESETS.glob("*.cfg"))
@@ -563,10 +880,17 @@ def cmd_presets(args):
         print("(Upstream example configs are also presets: import one with")
         print(" klipperformac presets --import ~/.klipperformac/klipper/config/<model>.cfg)")
         return
-    current = paths.PRINTER_CFG.read_text() if paths.PRINTER_CFG.exists() else ""
+    # Compared as bytes: a preset saved by an editor in cp1252 must still be
+    # recognised, and read_text() would have crashed on that one byte (the
+    # whole `presets` listing is a read-only view, so it never gets to choose).
+    current = paths.PRINTER_CFG.read_bytes() if paths.PRINTER_CFG.is_file() \
+        else None
     for p in presets:
-        mark = "*" if p.read_text() == current else " "
-        print("  {} {}".format(mark, p.stem))
+        try:
+            same = p.read_bytes() == current
+        except OSError:
+            same = False
+        print("  {} {}".format("*" if same else " ", p.stem))
     print("(current marked *)")
 
 
@@ -656,8 +980,26 @@ def cmd_gcode(args):
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             r.read()
+    except urllib.error.HTTPError as e:
+        # Moonraker answered - it just refused. Its body says why ("Printer is
+        # not ready", "Unknown command", a homing failure mid-script), and that
+        # is the information the user needs; "HTTP Error 400: Unknown" blamed
+        # reachability instead and sent people checking their network.
+        try:
+            body = e.read().decode(errors="replace")
+        except Exception:
+            body = ""
+        reason = body
+        try:
+            answer = json.loads(body)
+            reason = ((answer.get("error") or {}).get("message")
+                      or json.dumps(answer)[:200])
+        except ValueError:
+            pass
+        _die("Moonraker rejected the script (HTTP {}): {}".format(
+            e.code, " ".join(str(reason).split())[:300] or "(no reason given)"))
     except Exception as e:
-        _die("Moonraker not reachable or script rejected: " + str(e))
+        _die("Moonraker not reachable (is it up?): " + str(e))
     print("sent: " + script + "  (output appears in: klipperformac logs)")
 
 
@@ -776,6 +1118,21 @@ def cmd_doctor(args):
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
         if down:
             print("[!] services not running: " + ", ".join(down))
+    if state and state.get("moonraker"):
+        # A live python process is not a working printer. With a wrong [mcu]
+        # serial klippy sits in `startup` forever and with an invalid section
+        # it reports `error` ("Printer is halted") - both used to leave doctor
+        # all green, which is the gate AGENTS.md 4 puts on "done".
+        klippy = _klippy_state()
+        if klippy == "ready":
+            print("[ok] klipper state: ready")
+        elif klippy is None:
+            print("[i]  klipper state: unknown (moonraker did not answer "
+                  "/printer/info)")
+        else:
+            print("[!] klipper state: {} - the printer cannot move "
+                  "(klipperformac logs)".format(klippy))
+            ok = False
     st_shaper = shaper.readiness()
     if st_shaper["needed"] and not st_shaper["healthy"]:
         print("[!] shaper: " + st_shaper["detail"])
@@ -800,10 +1157,49 @@ def cmd_doctor(args):
     sys.exit(0 if ok else 1)
 
 
+SYSTEM_DIRS = ("/", "/usr", "/bin", "/sbin", "/etc", "/var", "/tmp", "/private",
+               "/opt", "/Volumes", "/Applications", "/System", "/Library",
+               "/Users", "/home", "/root", "/dev", "/proc", "/Network")
+
+
+def _deletable_tree(path, looks, what):
+    """Why this folder may (or may not) be removed by `uninstall`.
+
+    Every rmtree in this tool goes through here. A folder is only ours to delete
+    when it is absolute, is not somebody else's whole tree (home root, a system
+    folder, a filesystem root) and actually carries the shape of what it claims
+    to be. `KLIPPERFORMAC_HOME=`, `=~` or a junk settings.json value used to be
+    enough to make `uninstall` delete the current directory or the home folder -
+    with ignore_errors=True on top, so it even reported success."""
+    path = Path(path)
+    if not path.exists():
+        return None  # nothing to delete either way
+    if not path.is_absolute():
+        return ("{} '{}' is not an absolute path; refusing to delete it. "
+                "Set KLIPPERFORMAC_HOME/KLIPPERFORMAC_DATA to a full path."
+                .format(what, path))
+    resolved = Path(os.path.realpath(str(path)))
+    if resolved in (Path.home(), Path("/")) or str(resolved) in SYSTEM_DIRS:
+        return ("[!] Refusing to delete {}: it is {} , not a Klipper-for-Mac "
+                "folder.".format(path, "your home folder"
+                                 if resolved == Path.home()
+                                 else "a system folder"))
+    if resolved != path and path.is_symlink():
+        return ("[!] Refusing to delete {}: it is a symbolic link, not the "
+                "folder itself.".format(path))
+    if not looks(path):
+        return ("[!] Refusing to delete {}: it does not look like {} "
+                "(no venv/klipper/moonraker install layout). Remove it by hand "
+                "if you really meant to.".format(
+                    path, "an app folder" if "app" in what else "a data folder"))
+    return None
+
+
 def cmd_uninstall(args):
     """Remove the app (launcher symlink + app home). Asks before touching the
     user data folder unless --data/--keep-data says otherwise."""
-    killed = process.kill_all() + cam.kill_orphans()
+    with _cli_lock():
+        killed = process.kill_all() + cam.kill_orphans()
     if killed:
         print("Stopped {} process(es).".format(len(killed)))
 
@@ -850,21 +1246,59 @@ def cmd_uninstall(args):
         shutil.move(str(data), str(kept))
         print("Moved your data folder out of the app folder: " + str(kept))
 
+    refused = []
     removed = []
     for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
-        if home.exists():
-            shutil.rmtree(home, ignore_errors=True)
-            print("Removed app folder: " + str(home))
-            removed.append(home)
-    if not removed:
+        problem = _deletable_tree(home, paths.looks_like_app_home,
+                                  "the app folder")
+        if problem:
+            print(problem)
+            if home == paths.APP_HOME and home.exists():
+                refused.append(problem)
+            continue
+        if not home.exists():
+            continue
+        try:
+            shutil.rmtree(home)
+        except OSError as e:
+            # No ignore_errors=True: a half-removed install must not read as
+            # "Uninstalled." while files (and a running venv) are still there.
+            print("[!] Could not fully remove {}: {} (leftover files remain)"
+                  .format(home, getattr(e, "strerror", None) or e))
+            refused.append(str(home))
+            continue
+        print("Removed app folder: " + str(home))
+        removed.append(home)
+    if not removed and not refused:
         print("No app installation found at " + str(paths.APP_HOME))
 
     if remove_data:
-        if data in (Path.home(), Path("/")) or not data.exists():
-            print("[!] Refusing to delete: " + str(data))
-        else:
-            shutil.rmtree(data)
-            print("Removed data folder: " + str(data))
+        problem = None
+        if not data.exists():
+            if inside_app and not paths.APP_HOME.exists():
+                print("Removed data folder (it sat inside the app folder): "
+                      + str(data))
+        elif paths.protected_data_dir(data):
+            problem = ("[!] Refusing to delete: {} (your own documents/home "
+                       "folder is not a data folder)".format(data))
+        elif not paths.looks_like_data_dir(data):
+            problem = ("[!] Refusing to delete the data folder {}: it does not "
+                       "have a Klipper-for-Mac data layout (no "
+                       "config/printer.cfg, no config/run/logs/gcodes set), so "
+                       "it was never made here. Delete it yourself if you "
+                       "meant to.".format(data))
+        if problem:
+            print(problem)
+            refused.append(problem)
+        elif data.exists():
+            try:
+                shutil.rmtree(data)
+            except OSError as e:
+                print("[!] Could not fully remove {}: {} (leftover files "
+                      "remain)".format(data, getattr(e, "strerror", None) or e))
+                refused.append(str(data))
+            else:
+                print("Removed data folder: " + str(data))
     elif kept is not None:
         print("Kept data folder: {} (point a fresh install at it with "
               "klipperformac data --set {})".format(kept, kept))
@@ -872,6 +1306,9 @@ def cmd_uninstall(args):
         print("Kept data folder: {} (delete it yourself if you want)".format(data))
     print("Uninstalled. Reload your shell or open a new terminal to clear the "
           "command from PATH cache: hash -r")
+    if refused:
+        _die("uninstall: {} folder(s) were refused, not deleted".format(
+            len(refused)))
 
 
 def main(argv=None):

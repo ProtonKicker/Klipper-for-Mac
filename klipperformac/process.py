@@ -12,7 +12,9 @@ Modeled on the startup sequence of the `instances` app, adapted for macOS:
 import json
 import os
 import re
+import shutil
 import signal
+import socket
 import subprocess
 import time
 
@@ -21,6 +23,9 @@ from .compat import (build_env, ensure_runtime_shims, invalidate_stale_build,
                      shim_env)
 
 SERVICES = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
+# The ports the stack serves on: `up` refuses to start a stack a squatter would
+# half-blind (klipper+moonraker spawn, HTTP never answers, `status` lies).
+STACK_PORTS = ("moonraker", "web_mainsail", "web_fluidd")
 MARKERS = {
     "klipper": "klippy.py",
     "moonraker": "moonraker",
@@ -295,6 +300,224 @@ def _reap_orphans():
             _signal(pid, signal.SIGKILL)
 
 
+# ---- caffeinate: our own sleep prevention, kept owned -------------------
+#
+# `caffeinate -dis` has no path in its argv, so _service_kind() cannot tell
+# this install's caffeinate from anyone else's: a machine-wide scan would let a
+# second KLIPPERFORMAC_HOME SIGKILL the primary instance's sleep guard (and the
+# other way round lets a stray keep the Mac awake forever, AGENTS.md 5). So
+# every caffeinate we start is written down next to the stack record, and only
+# what we wrote down - re-validated by its exact command line - is ever ours to
+# signal. state.json alone is not enough: it keeps one pid per service, so a
+# stack that was started twice (before the cli lock) or whose record was
+# cleared leaves a caffeinate nobody can see.
+CAFFEINATE_CMD = "caffeinate -dis"
+_CAFFEINATE_LIMIT = 16
+
+
+def _caffeinate_record_path():
+    return paths.RUN / "caffeinate.json"
+
+
+def _read_caffeinate_record():
+    try:
+        with open(_caffeinate_record_path()) as f:
+            rec = json.load(f)
+    except Exception:
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _note_caffeinate(pid):
+    """Add a pid we just started to the caffeinate record (write-then-replace,
+    like every other file a running stack depends on)."""
+    pids = _recorded_caffeinate_pids(boot_check=False)
+    if pid not in pids:
+        pids.append(pid)
+    data = {"boot_time": _boot_time(), "app_home": str(paths.APP_HOME),
+            "pids": pids[-_CAFFEINATE_LIMIT:]}
+    tmp = _caffeinate_record_path().with_name("caffeinate.json.tmp")
+    try:
+        paths.RUN.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(_caffeinate_record_path())
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _recorded_caffeinate_pids(boot_check=True):
+    """Raw pids from the record, same-install same-boot only (boot_check off for
+    read-modify-write, where a live check would drop the very pids we keep)."""
+    rec = _read_caffeinate_record()
+    pids = rec.get("pids")
+    if not isinstance(pids, list):
+        return []
+    if rec.get("app_home") != str(paths.APP_HOME):
+        return []  # another instance's list is not our process ledger
+    if boot_check and rec.get("boot_time") not in (_boot_time(), None):
+        return []  # a record from an earlier boot: those pids are gone
+    out = []
+    for value in pids:
+        pid = _own_pid(value)
+        if pid is not None and pid not in out:
+            out.append(pid)
+    return out
+
+
+def _live_caffeinate_pids():
+    """Recorded pids that are still an exact `caffeinate -dis` (a recycled pid
+    belongs to somebody else and is left alone)."""
+    pids = _recorded_caffeinate_pids()
+    if not pids:
+        return []
+    live = _live_cmds(pids)
+    return [p for p in pids if live.get(str(p), "").strip() == CAFFEINATE_CMD]
+
+
+def reap_stale_caffeinate():
+    """Signal the sleep guards this install started but no live stack record
+    owns (previous session, cleared state file, double start). Called from
+    start() and stop(); returns the pids it stopped."""
+    pids = _live_caffeinate_pids()
+    tracked = _load() or {}
+    keep = _own_pid(tracked.get("caffeinate")) if tracked else None
+    targets = [p for p in pids if p != keep]
+    for pid in targets:
+        _signal(pid, signal.SIGTERM)
+    if targets:
+        deadline = time.time() + 2.0
+        live = set(targets)
+        while live and time.time() < deadline:
+            time.sleep(0.2)
+            live = {p for p in live if _live_cmds([p])}
+        for pid in live:
+            _signal(pid, signal.SIGKILL)
+    return [p for p in targets]
+
+
+def _clear_caffeinate_record():
+    try:
+        _caffeinate_record_path().unlink()
+    except OSError:
+        pass
+
+
+# ---- ports: what is actually listening ---------------------------------
+def stack_port(name):
+    return {"moonraker": paths.MOONRAKER_PORT, "web_mainsail": paths.WEB_PORT,
+            "web_fluidd": paths.FLUIDD_PORT}[name]
+
+
+def our_listeners():
+    """[(port, pid)] on our stack ports held by a process whose command line is
+    one of THIS install's services. A squatter is deliberately not one of
+    these, so `down` can report "something we started is still there" without
+    blaming somebody else's web server."""
+    out = []
+    for name in STACK_PORTS:
+        port = stack_port(name)
+        pids = _listener_pids(port)
+        if pids is None:
+            continue
+        cmds = _live_cmds(pids)
+        for pid in pids:
+            if _service_kind(cmds.get(str(pid), "")) is not None:
+                out.append((port, pid))
+    return out
+
+
+def lan_bind_in_effect():
+    """'open'/'closed' as the RUNNING UI proxies' own argv says, or None when no
+    proxy of ours is running.
+
+    The bind address is an argument start() puts in the proxy's command line, so
+    this is evidence of what is actually listening - unlike settings.json, which
+    only records what the user asked for and is applied at the next start()."""
+    state = running()
+    if not state:
+        return None
+    pids = [state.get(name) for name in ("web_mainsail", "web_fluidd")
+            if state.get(name)]
+    seen = [pid for pid in pids if pid]
+    if not seen:
+        return None
+    cmds = _live_cmds(seen)
+    answers = []
+    for pid in seen:
+        toks = cmds.get(str(pid), "").split()
+        if len(toks) >= 7 and toks[3].isdigit():
+            answers.append(_bind_is_open(toks[6]))
+    if not answers:
+        return None
+    return "open" if any(answers) else "closed"
+
+
+def _bind_is_open(bind):
+    return bind not in ("127.0.0.1", "localhost", "::1", "")
+
+
+def _listener_pids(port):
+    """Pids with a tcp LISTEN socket on `port`, or None when this Mac cannot
+    tell (no lsof): callers must not read None as "free"."""
+    lsof = shutil.which("lsof")
+    if not lsof:
+        return None
+    try:
+        out = subprocess.run(
+            [lsof, "-nP", "-iTCP:{}".format(port), "-sTCP:LISTEN", "-Fp"],
+            capture_output=True).stdout.decode(errors="replace")
+    except Exception:
+        return None
+    pids = []
+    for line in out.splitlines():
+        if line.startswith("p") and line[1:].strip().isdigit():
+            pid = int(line[1:].strip())
+            if pid > 1 and pid not in pids:
+                pids.append(pid)
+    return pids
+
+
+def _port_free(port):
+    """Bind probe (SO_REUSEADDR so a TIME_WAIT socket we left behind does not
+    read as "taken"). Only an active listener makes this False."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("", port))
+    except OSError:
+        return False
+    finally:
+        sock.close()
+    return True
+
+
+def port_conflicts():
+    """[(port, pid_or_None, description)] of stack ports held by a process that
+    is NOT one of ours. Empty list means up may spawn."""
+    conflicts = []
+    for name in STACK_PORTS:
+        port = stack_port(name)
+        pids = _listener_pids(port)
+        if pids is None:  # cannot inspect: fall back to the bind probe
+            if not _port_free(port):
+                conflicts.append((port, None, "held by another program "
+                                              "(no lsof to identify it)"))
+            continue
+        cmds = _live_cmds(pids)
+        for pid in pids:
+            cmd = cmds.get(str(pid), "")
+            if _service_kind(cmd) is not None:
+                continue  # ours: _reap_orphans() owns that one
+            conflicts.append((port, pid, cmd or "unknown command"))
+    return conflicts
+
+
 def _lan_opted_in():
     """LAN exposure needs an explicit true in settings.json (AGENTS.md: never
     enabled by default). paths.lan_enabled() coerces with bool(), where a
@@ -331,6 +554,17 @@ def start():
               "permissions and run: klipperformac up".format(paths.STATE))
         return False
     _reap_orphans()
+    reap_stale_caffeinate()
+    conflicts = port_conflicts()
+    if conflicts:
+        _clear()
+        for port, pid, desc in conflicts:
+            print("[!] Port {} is held by {}{}".format(
+                port, "pid {} ({})".format(pid, desc) if pid else desc,
+                " - it is not part of this stack"))
+        print("[!] Nothing was started: free the port above (stop the other "
+              "program, or: klipperformac killall) then run: klipperformac up")
+        return False
     invalidate_stale_build(paths.KLIPPER)
     ensure_runtime_shims(paths.VENV_PY)
 
@@ -371,9 +605,63 @@ def start():
     )
     cproc = _popen(["caffeinate", "-dis"])
 
+    _note_caffeinate(cproc.pid)
     _save({"klipper": kproc, "moonraker": mproc, "web_mainsail": wproc,
            "web_fluidd": fproc, "caffeinate": cproc})
     return True
+
+
+def missing_services(state=None):
+    """Names in SERVICES the tracked stack is missing (all of them when no
+    stack is tracked at all)."""
+    st = running() if state is None else state
+    if not st:
+        return []
+    return [name for name in SERVICES if not st.get(name)]
+
+
+def repair(state=None):
+    """Bring back the services a live stack lost without disturbing the ones
+    that answer: klipper and moonraker are left alone on purpose, because
+    restarting them kills an active print - the caller tells the user to run
+    `klipperformac restart` for those. Returns the names it started."""
+    st = running() if state is None else state
+    if not st:
+        return []
+    safe = [n for n in missing_services(st)
+            if n in ("web_mainsail", "web_fluidd", "caffeinate")]
+    if not safe:
+        return []
+    py = str(paths.VENV_PY)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    web_env = dict(os.environ)
+    web_env["PYTHONPATH"] = repo_root + (
+        os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
+    bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
+    started = {}
+    if "web_mainsail" in safe:
+        started["web_mainsail"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
+             str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env)
+    if "web_fluidd" in safe:
+        started["web_fluidd"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
+             str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env)
+    if "caffeinate" in safe:
+        started["caffeinate"] = _popen(["caffeinate", "-dis"])
+        _note_caffeinate(started["caffeinate"].pid)
+    try:
+        _save(started)
+    except OSError:
+        for proc in started.values():
+            _signal(_own_pid(proc.pid), signal.SIGTERM)
+        print("[!] Cannot write {} - the repaired services are running but "
+              "`down` will not know them. Fix that folder, then run: "
+              "klipperformac killall".format(paths.STATE))
+        return []
+    return sorted(started)
 
 
 def _stop_targets(state):
@@ -400,6 +688,16 @@ def stop(timeout=6.0):
     if state is None:
         return False
     targets = _stop_targets(state)
+    # The same install can hold more processes than state.json lists (a stack
+    # started twice, a record cleared by hand, a crash between spawn and save).
+    # `down` used to report "Stopped." while those kept the API and the UI
+    # serving on the ports - with LAN on, serving the whole local network after
+    # the user said stop. Anything answering to our argv shape, under THIS
+    # install's folders, goes down with the stack.
+    tracked = {pid for _, pid in targets}
+    targets += [("stray", pid) for pid in _scan_service_pids()
+                if pid not in tracked]
+    reap_stale_caffeinate()
     if not targets:
         _clear()  # nothing here is ours to stop; let the next start() be clean
         return False
@@ -438,6 +736,7 @@ def stop(timeout=6.0):
                       "inspection: {}".format(n, dict(targets).get(n), paths.STATE))
         return False
     _clear()
+    _clear_caffeinate_record()
     return True
 
 
@@ -454,6 +753,8 @@ def kill_all():
                 targets[pid] = name
     for pid in _scan_service_pids(with_caffeinate=True):
         targets.setdefault(pid, "stray")
+    for pid in _live_caffeinate_pids():
+        targets.setdefault(pid, "caffeinate")
     # Tracked pids need the same cmdline evidence stop() uses; the scanned
     # strays were already identified by their argv.
     tracked = [pid for pid, name in targets.items() if name != "stray"]
@@ -477,6 +778,7 @@ def kill_all():
                 pass
             pending.remove(pid)
     _clear()
+    _clear_caffeinate_record()
     return sorted(killed)
 
 
