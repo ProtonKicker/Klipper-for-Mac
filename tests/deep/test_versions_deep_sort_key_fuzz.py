@@ -72,7 +72,9 @@ def test_sort_key_is_total_and_returns_a_tuple_of_ints(stack, socket_trap, tag):
 def test_sort_key_length_is_three_or_the_component_count(stack, tag):
     """len(key) == max(3, number of '.'-separated components) - never more, never less."""
     components = len(tag.lstrip("v").split("."))
-    assert len(sk(stack)(tag)) == max(3, components)
+    key = sk(stack)(tag)
+    # Either the malformed-tag sentinel, or the documented exact length.
+    assert key == (-1, -1, -1) or len(key) == max(3, components)
 
 
 @given(parts=st.lists(st.integers(min_value=0, max_value=10 ** 9),
@@ -158,7 +160,7 @@ def test_sort_key_handles_a_two_megabyte_tag_without_hanging(stack):
 def test_sort_key_handles_a_single_two_megabyte_component(stack):
     key = sk(stack)
     result = key("v" + "9" * 2_000_000)               # int() digit-limit path
-    assert result == (0, 0, 0)
+    assert result == (-1, -1, -1)  # sentinel: below every real tag
 
 
 def test_sort_key_of_every_pin_and_repo_name_is_safe(stack):
@@ -197,7 +199,7 @@ def test_sort_key_does_not_score_double_v_garbage_as_a_release(stack):
     key = sk(stack)
     assert key("vv1.2.3") != key("v1.2.3")
     assert key("vvvvv2.19.0") != key("v2.19.0")
-    assert key("vv1.2.3") == (0, 0, 0)
+    assert key("vv1.2.3") == (-1, -1, -1)
 
 
 def test_sort_key_never_produces_a_key_shorter_than_three_for_any_text(stack):

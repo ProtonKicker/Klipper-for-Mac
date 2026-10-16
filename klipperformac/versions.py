@@ -140,20 +140,20 @@ def _sort_key(tag):
         if body[:1] == "v":
             # Only a single leading 'v' may be consumed; a double-'v' name is a
             # malformed tag, not the release it otherwise resembles.
-            return (0, 0, 0)
+            return (-1, -1, -1)
     else:
         body = tag
     parts = body.split(".")
     if not body or not parts:
-        return (0, 0, 0)
+        return (-1, -1, -1)
     nums = []
     for p in parts:
         if not _ASCII_NUM.fullmatch(p):
-            return (0, 0, 0)
+            return (-1, -1, -1)
         try:
             nums.append(int(p))
         except ValueError:
-            return (0, 0, 0)
+            return (-1, -1, -1)
     while len(nums) < 3:
         nums.append(0)
     return tuple(nums)

@@ -157,10 +157,6 @@ def test_sort_key_rejects_non_ascii_digit_and_separator_forms(stack):
     assert sk("v 1.2.3") != sk("v1.2.3")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _sort_key maps a too-long digit run (>4300 digits, int() limit) and "
-    "every other unparseable form to the same (0,0,0) key as the empty string, so "
-    "garbage tags tie with real v0.x tags and max() can hand back a garbage tag"))
 def test_sort_key_distinguishes_garbage_from_real_tags(stack):
     sk = stack.versions._sort_key
     garbage_keys = {t: sk(t) for t in ("", "garbage", "vxyz", "9" * 5000, "[]")}
