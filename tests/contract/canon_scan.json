@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "The faked live half of the `serial --json` contract for canon_multi_mcu.cfg.",
+    "detect.scan() and detect.all_identities() are the only two calls the CLI",
+    "layer makes to the machine, and a byte-golden must not depend on what is",
+    "plugged into this Mac today, so both are answered from this file: no port is",
+    "opened, no ioreg runs, the bench SKR Pico is never reset. `attached` is the",
+    "node list macOS would report; `identities` is one detect.identity() dict per",
+    "node, in detect's own shape ('key' = 'usb:<vid>:<pid>:<USB serial>')."
+  ],
+  "attached": [
+    "/dev/cu.usbmodem14101",
+    "/dev/cu.usbserial-1420"
+  ],
+  "identities": [
+    {
+      "vid_pid": "1D50:614E",
+      "serial": "5044506110A45B1C",
+      "name": "rp2040",
+      "path": "/dev/cu.usbmodem14101",
+      "vendor": "Klipper",
+      "location": "14100000",
+      "ioservice_path": "Root/IOService//dev/cu.usbmodem14101",
+      "key": "usb:1d50:614e:5044506110A45B1C"
+    },
+    {
+      "vid_pid": "1A86:7523",
+      "serial": "00A1B2C3",
+      "name": "usb2.0-serial",
+      "path": "/dev/cu.usbserial-1420",
+      "vendor": "QinHeng",
+      "location": "14200000",
+      "ioservice_path": "Root/IOService//dev/cu.usbserial-1420",
+      "key": "usb:1a86:7523:00A1B2C3"
+    }
+  ]
+}

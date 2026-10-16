@@ -46,6 +46,12 @@ def _describe(path):
     return ""
 
 
+# An MCU section name this tool is willing to write: one word, printable ASCII,
+# no whitespace/brackets/colon/semicolon/hash (all of which Klipper would read
+# as something other than what the user typed). See mcu_header().
+_MCU_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,31}\Z")
+
+
 def lan_ip():
     """This Mac's primary LAN IPv4 (UDP connect picks the routed interface;
     no packets are actually sent). None when offline."""
@@ -68,19 +74,47 @@ def scan():
     return [{"path": p, "description": _describe(p)} for p in sorted(set(ports))]
 
 
-def write_serial(cfg_path, device_path):
-    """Set `serial:` inside the [mcu] section only. Adds the line if [mcu]
-    exists without it; refuses (returns False) if no [mcu] section exists or
-    the device path could inject config lines.
+def mcu_header(name="mcu"):
+    """The printer.cfg section header for an MCU name: '[mcu]' / '[mcu tool]'.
 
-    Reads/writes byte-safe: a vendor printer.cfg saved in cp1252 is rewritten
-    with its own encoding (see paths.read_config), and through a temp file, so
-    a crash cannot leave a half printer.cfg where Klipper expects a whole one."""
-    if not cfg_path.exists():
-        return False
+    None when `name` cannot safely become one. Klipper reads a header as
+    `pruned_line[1:-1].strip()` after stripping `#`/`;` comments
+    (klippy/configfile.py), so a secondary MCU's object name is the section
+    text - '[mcu tool]' is the object 'mcu tool' (klippy/mcu.py:1246-1253).
+    Anything this tool cannot write back verbatim (whitespace, brackets,
+    a colon, a control character) is refused here rather than half-written,
+    because a section klippy reads as a DIFFERENT object than the name the
+    user typed is a silently broken printer.
+    """
+    if name is None:
+        name = "mcu"
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if name == "mcu":
+        return "[mcu]"
+    if not name or not _MCU_NAME_RE.match(name):
+        return None
+    return "[mcu {}]".format(name)
+
+
+def set_serial_text(text, device_path, header="[mcu]"):
+    """printer.cfg text -> the same text with ONE section's serial: set.
+
+    None when the section is not there or the path could inject config lines,
+    so a caller can tell "nothing changed" from "changed to nothing". Every
+    byte outside that one line is kept exactly as it was: other sections,
+    comments, blank lines, CRLF endings, indentation. This is the kernel
+    `write_serial` has always used, split out because mcus.set_serial() is a
+    pure text-in/text-out writer for EVERY [mcu*] section and must not
+    re-implement the line rules (one implementation, one behavior).
+    """
+    if not isinstance(text, str) or not isinstance(header, str):
+        return None
+    if not isinstance(device_path, str):
+        return None
     if re.search(r"[\r\n\0]", device_path):
-        return False
-    text, encoding = paths.read_config(cfg_path)
+        return None
     lines = text.splitlines(True)
     in_mcu = False
     has_mcu = False
@@ -89,7 +123,7 @@ def write_serial(cfg_path, device_path):
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_mcu = stripped == "[mcu]"
+            in_mcu = stripped == header
             has_mcu = has_mcu or in_mcu
         if in_mcu and re.match(r"serial\s*:", stripped):
             eol = "\r\n" if line.endswith("\r\n") else "\n"
@@ -99,19 +133,50 @@ def write_serial(cfg_path, device_path):
         out.append(line)
     if not replaced:
         if not has_mcu:
-            return False
+            return None
         out2 = []
         inserted = False
         for line in out:
-            if not inserted and line.strip() == "[mcu]" and \
+            if not inserted and line.strip() == header and \
                     not line.endswith(("\n", "\r")):
                 line = line + "\n"
             out2.append(line)
-            if not inserted and line.strip() == "[mcu]":
+            if not inserted and line.strip() == header:
                 out2.append("serial: {}\n".format(device_path))
                 inserted = True
         out = out2
-    paths.write_config(cfg_path, "".join(out), encoding)
+    return "".join(out)
+
+
+def write_serial(cfg_path, device_path, mcu_name="mcu"):
+    """Set `serial:` inside ONE [mcu...] section and nowhere else.
+
+    `mcu_name` defaults to "mcu" (the timing master), which is exactly the old
+    signature and the old behavior: only `[mcu]` changes, `[mcu tool]` is left
+    untouched. Name a section to point that one at a port ('tool' -> '[mcu
+    tool]'). Adds the line when the section exists without it; refuses
+    (returns False) when the section does not exist, when the name cannot be
+    a section header (see mcu_header), or when the device path could inject
+    config lines.
+
+    NEVER creates a section: adding `[mcu <name>]` to a config is
+    mcus.add_mcu_section()'s job (and a user decision), not a side effect of
+    setting a path.
+
+    Reads/writes byte-safe: a vendor printer.cfg saved in cp1252 is rewritten
+    with its own encoding (see paths.read_config), and through a temp file, so
+    a crash cannot leave a half printer.cfg where Klipper expects a whole one."""
+    header = mcu_header(mcu_name)
+    if header is None or not cfg_path.exists():
+        return False
+    try:
+        text, encoding = paths.read_config(cfg_path)
+    except OSError:
+        return False
+    updated = set_serial_text(text, device_path, header=header)
+    if updated is None:
+        return False
+    paths.write_config(cfg_path, updated, encoding)
     return True
 
 

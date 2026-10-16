@@ -529,15 +529,737 @@ def _serial_notes(ports, rows, claims):
     return notes
 
 
+# ===========================================================================
+# multi-MCU: EVERY [mcu*] section, plus one JSON contract
+#
+# Upstream already takes N MCUs: klippy/mcu.py:1246-1253 adds the object 'mcu'
+# for the timing master and one object 'mcu <name>' (clocksync.SecondarySync)
+# per '[mcu <name>]' section, which config.get_prefix_sections('mcu ') finds.
+# What this tool assumed was exactly one: write_serial() only ever touched
+# [mcu], `serial` listed ports without saying which section wanted which, and
+# doctor asked klippy about "the printer" instead of about each MCU. A user with
+# a toolboard MCU therefore had no way to see, set or diagnose cable 2.
+#
+# ONE CONTRACT (shared with the SwiftUI app / TUI consumer, pinned by
+# tests/climcu/test_serial_json_contract.py for shape and by
+# tests/contract/ for BYTES - tests/contract/serial_json.golden is this command's
+# exact stdout for tests/contract/canon_multi_mcu.cfg, and the Swift decoder keeps
+# the same bytes in its own source, so renaming a key here breaks a build there):
+#
+#   klipperformac serial --json  ->
+#     {"mcus": [{"mcu": "mcu"|"tool", "section": "[mcu tool]",
+#               "serial": "/dev/cu.usbmodem14101" | null,
+#               "configured": true, "claimed": true,
+#               "identity": {"vid_pid": "1d50:614e", "serial": "...",
+#                            "key": "usb:...", "present": true} | null,
+#               "conflict": null | "bad-section-name" | "duplicate-port"
+#                         | "missing-port"}],
+#      "single": true}
+#
+#   * mcus[] is in klipper's own priority: the timing master first, then the
+#     secondary sections by name; `single` is len(mcus) <= 1 (a config with no
+#     [mcu] at all is not a multi-MCU config, and the GUI must not branch on an
+#     empty list).
+#   * read-only mode always exits 0; a malformed printer.cfg shows up as a
+#     `conflict` string on the entry, never as a traceback, because `serial
+#     --json` is what a GUI calls to render a panel.
+#   * `conflict` is RANKED, in the order of the tuple above: bad-section-name >
+#     duplicate-port > missing-port. A section klipper would read as a different
+#     object is the cause, and an unattached node it names is the symptom; a row
+#     carrying both must be labelled with the one the user can only fix by hand,
+#     or the GUI sends them to the cable. Both this file's own candidate and
+#     mcus.validate()'s are ranked, never "whoever spoke first".
+#   * `serial` is the value klipper would ACTUALLY use: a CAN section carries its
+#     uuid here and `claimed` says it holds no USB node, so "not claimed" never
+#     means "not configured".
+#
+# WHO OWNS WHAT: mcus.py (wave 3, agent A) owns the config reading/writing
+# (list_mcus/validate/set_serial/add_mcu_section). This layer owns the CLI/JSON
+# surface and the live USB + runtime facts (detect.scan, detect identity map,
+# one Moonraker GET). Every call into mcus is defensive: when the module is not
+# there, the same answers come from this file's own parse - a degrade path that
+# mirrors klipper's name rules row for row, with the one remaining difference
+# (raw control bytes inside a serial: value) named and explained in
+# tests/contract/test_backend_agreement.py rather than papered over.
+# ===========================================================================
+
+MCU_IDENTITY_MARKER = "# klipperformac:identity"
+MCU_PROBE_TIMEOUT = 3.0
+_MCU_JSON_KEYS = ("mcu", "section", "serial", "configured", "claimed",
+                  "identity", "conflict")
+#: The contract's conflict vocabulary, IN PRECEDENCE ORDER: cause before symptom.
+#: ``mcus.CONFLICT_CODES`` is the same tuple on the reader's side, and
+#: ``tests/contract/test_json_bytes_contract.py`` pins the two against each other
+#: (and against the Swift enum that turns them into badges), because `conflict` is
+#: the one field a GUI renders without reading the config itself.
+_MCU_CONFLICTS = ("bad-section-name", "duplicate-port", "missing-port")
+_MCU_CONFLICT_RANK = {code: rank for rank, code in enumerate(_MCU_CONFLICTS)}
+# /dev/cu.* / /dev/tty.* / the driver-named nodes: "a real port", the same
+# test auto_serial has always used, now applied per section instead of to the
+# first serial line anywhere in the file.
+_MCU_REAL_PORT_RE = re.compile(r"/dev/(cu|tty|usbserial|usbmodem)\S*")
+_MCU_COMMENT_RE = re.compile(r"[#;].*$")
+_MCU_MARKER_RE = re.compile(
+    r"[#;][^\n]*klipperformac:identity[ \t]*(\S+)", re.IGNORECASE)
+
+
+def _mcus_module():
+    """klipperformac.mcus when wave 3 has landed it, else None.
+
+    Importing inside the function keeps `klipperformac status` from needing the
+    module, and keeps a broken/absent mcus.py from ever being a traceback in a
+    read-only command."""
+    try:
+        from . import mcus
+    except Exception:
+        return None
+    return mcus
+
+
+def _cfg_text(cfg_path):
+    """The text of a config file, or "" when it cannot be read (missing, a
+    directory, an unreadable encoding): every caller degrades to "no sections".
+    """
+    try:
+        return paths.read_config_text(cfg_path)
+    except Exception:
+        return ""
+
+
+def _real_serial(value):
+    """True when a section's serial: already names a real device node."""
+    return bool(value) and bool(_MCU_REAL_PORT_RE.search(str(value)))
+
+
+def _mcu_marker_key(line):
+    """The '# klipperformac:identity <key>' binding inside a section, or None.
+
+    The key is detect.identity()['key'] ('usb:VID:PID:SERIAL'): macOS
+    renumbers /dev/cu.usbmodemNNNNN on every replug, so a section bound by node
+    path breaks and a section bound by USB identity does not. configgen.py does
+    NOT write this marker (untouched on purpose), so its absence is the normal
+    case and every reader here treats a section without it as "guess nothing".
+    """
+    m = _MCU_MARKER_RE.search(line)
+    return m.group(1) if m else None
+
+
+def _mcu_row_name(row):
+    """The contract's "mcu" field for one row - and never an invented name.
+
+    ``row.get("name") or "mcu"`` reads as harmless defaulting and is not:
+    '[mcu ]' is a real section whose klipper-derived name is the EMPTY string
+    (klippy/mcu.py:1151-1158 strips exactly the four characters 'mcu ' from
+    'mcu ', and nothing is left), and a present-but-falsy name replaced by
+    "mcu" points the GUI's per-section write - and its row label - straight at
+    the timing master's own section. So presence of the key decides, not its
+    truthiness; only a row that carries no name at all falls back.
+    """
+    for key in ("mcu", "name"):
+        if key in row and row[key] is not None:
+            return str(row[key])
+    return "mcu"
+
+
+def _mcu_bad_name(name, is_master=False):
+    """True when '[mcu <name>]' is not something this tool can write back
+    verbatim - klipper's object name would not be the name the user typed.
+
+    Mirrors ``mcus.name_problem()`` (the reader's own rule) so a section is
+    called out the same way whether mcus.py answered or this file's parse did:
+    klipper strips four characters and registers the RESULT as the pin chip
+    (klippy/pins.py:126-131), so an empty, padded or multi-word name is a
+    different board, not a prettier spelling of the same one. `detect.mcu_header`
+    covers the character set (no ':' ';' '#' '[' ']' whitespace, one word).
+    """
+    if is_master:
+        return False
+    if not name or name != name.strip() or any(c.isspace() for c in name):
+        return True
+    return not detect.mcu_header(name)
+
+
+def _mcu_section_name(inner, closed=True):
+    """``(is_mcu, mcu_name, bad_name)`` for a header's inner text, klipper's way.
+
+    `inner` is the text between the FIRST '[' and the LAST ']' of the line as
+    klipper reads it (configparser's SECTCRE, greedy). The three outcomes match
+    ``mcus._entry()`` deliberately:
+      * 'mcu' -> the timing master, name 'mcu', never badly named;
+      * 'mcu ' + anything -> a SecondarySync board (klippy/mcu.py:1247), named
+        by what is LEFT of the four stripped characters, spaces included;
+      * anything else that merely looks like an mcu ('MCU', 'Mcu tool',
+        'mcu] [mcu tool', an unterminated '[mcu tool') -> klipper builds no MCU
+        object and then stops on the section (configfile.py:430-441), so it is
+        reported under the name the file uses and marked bad.
+    """
+    lowered = inner.lower()
+    is_mcu = closed and (inner == "mcu" or inner.startswith("mcu "))
+    if not (lowered == "mcu" or lowered.startswith("mcu ")
+            or ("mcu" in lowered and "]" in inner)):
+        # Not an mcu section and does not look like one: not this command's
+        # business ('[stepper_x]', '[fan]', a plain typo in another section).
+        return False, None, False
+    if is_mcu and inner == "mcu":
+        return True, "mcu", False
+    if is_mcu:
+        name = inner[4:]
+        return True, name, _mcu_bad_name(name)
+    return False, inner, True
+
+
+def _parse_mcu_sections(text):
+    """[{mcu, section, serial, marker, bad_name}] for each [mcu*] header.
+
+    Never raises and reads the way klippy reads (klippy/configfile.py: a line
+    whose comment-stripped text starts with '[' is a header, the section name
+    runs to the LAST ']' on that line, and a repeated header continues the same
+    section - so a config that includes the same [mcu tool] twice does not
+    become two MCUs here). The marker comment is read from the RAW line, because
+    a comment is exactly where it lives.
+
+    This is the degrade path: `mcus.list_mcus()` is the reader of record and this
+    parse mirrors its name rules exactly for every header that is one well-formed
+    line ('[mcu  a]' -> ' a', '[mcu ]' -> '', '[mcu a ]' -> 'a ', '[MCU]' -> its
+    own bad-section row). The residual differences are listed, labelled and
+    explained in tests/contract/test_backend_agreement.py - they are all shapes
+    only the klipper-faithful reader can describe at all.
+    """
+    rows = []
+    by_name = {}
+    current = None
+    serial_row = None       # section whose serial: the LAST option line set
+    for raw in (text or "").splitlines():
+        pruned = _MCU_COMMENT_RE.sub("", raw).strip()
+        if pruned.startswith("["):
+            closed = pruned.endswith("]")
+            inner = pruned[1:-1] if closed else pruned[1:]
+            is_mcu, name, bad = _mcu_section_name(inner, closed)
+            if name is None:
+                current = None
+                serial_row = None
+                continue
+            current = by_name.get(inner)
+            if current is None:
+                current = {"mcu": name, "section": "[" + inner + "]",
+                           "serial": None, "marker": None,
+                           "canbus": None, "is_mcu": is_mcu,
+                           "bad_name": bad}
+                by_name[inner] = current
+                rows.append(current)
+            serial_row = None
+            continue
+        if current is None:
+            continue
+        if not pruned:
+            # A blank or comment line: neither ends an option's value for klipper
+            # (configfile.py counts it and keeps joining), and it is exactly where
+            # a '# klipperformac:identity' binding lives, so fall through to the
+            # marker read below without touching serial_row.
+            pass
+        elif raw[:1].isspace() and serial_row is not None:
+            # An indented line CONTINUES the option above it and klipper joins
+            # it into the value (configfile.py:172), so 'serial:' now holds two
+            # lines and names no device node at all. mcus.list_mcus() reports
+            # that as "no usable serial"; this parse has to say the same, or
+            # auto_serial() calls a two-line value a port and reports a printer
+            # that cannot start as configured.
+            serial_row["serial"] = None
+            serial_row = None
+            continue
+        else:
+            serial_row = None
+            m = re.match(r"serial[ \t]*:[ \t]*(\S+)", pruned)
+            if m:
+                current["serial"] = m.group(1)   # klipper: last one wins
+                serial_row = current
+                continue
+            can = re.match(r"canbus_uuid[ \t]*:[ \t]*(\S+)", pruned)
+            if can:
+                # A CAN MCU is configured and complete and is NOT a /dev/* node:
+                # auto_serial() must never overwrite it with a USB port, and
+                # "not attached" cannot be checked from here.
+                current["canbus"] = can.group(1)
+        marker = _mcu_marker_key(raw)
+        if marker and current["marker"] is None:
+            current["marker"] = marker
+    return rows
+
+
+def _mcu_key_parts(key):
+    """('1d50:614e', '5044506110A45B1C') from 'usb:1d50:614e:<serial>'.
+
+    None, None for anything that is not that shape - a marker a human typed
+    wrong must degrade to 'no identity', never to a guessed board."""
+    parts = str(key or "").split(":")
+    if len(parts) < 4 or parts[0].lower() != "usb":
+        return None, None
+    vid, pid = parts[1], parts[2]
+    if len(vid) != 4 or len(pid) != 4:
+        return None, None
+    try:
+        int(vid, 16)
+        int(pid, 16)
+    except ValueError:
+        return None, None
+    return "{}:{}".format(vid.lower(), pid.lower()), ":".join(parts[3:])
+
+
+def _mcu_identity_view(ident, present):
+    """The contract's identity object, projected from a detect.identity() dict.
+
+    Four keys, always the same four: the identity dict is additive on purpose
+    (ioservice_path, name, vendor, location...), and a GUI parsing this contract
+    must never be surprised by a key it did not ask for.
+    """
+    if not ident:
+        return None
+    return {"vid_pid": (str(ident.get("vid_pid")).lower()
+                        if ident.get("vid_pid") else None),
+            "serial": (str(ident.get("serial"))
+                       if ident.get("serial") else None),
+            "key": (str(ident.get("key")) if ident.get("key") else None),
+            "present": bool(present)}
+
+
+def _mcu_rows(cfg_path, text):
+    """Section rows: mcus.list_mcus(text) when wave 3 has it, else our own parse.
+
+    Both are projected to the same facts this layer needs (name, section header,
+    serial, canbus, marker, bad name, conflict), so the live computation has one
+    input shape. mcus.py owns reading printer.cfg the way klipper reads it
+    (configparser's own SECTCRE, last-value-wins, comment rules) - it does NOT
+    know about the '# klipperformac:identity' binding comment, so that still
+    comes from this file's parse and is merged in by name."""
+    mod = _mcus_module()
+    list_fn = getattr(mod, "list_mcus", None) if mod else None
+    if not callable(list_fn):
+        return None
+    try:
+        entries = list_fn(text)
+    except Exception:
+        return None
+    if not isinstance(entries, (list, tuple)):
+        return None
+    conflict_fn = getattr(mod, "conflicts_by_mcus", None)
+    conflicts = {}
+    if callable(conflict_fn):
+        try:
+            got = conflict_fn(entries)
+            if isinstance(got, dict):
+                conflicts = got
+        except Exception:
+            conflicts = {}
+    markers = {}
+    for row in _parse_mcu_sections(text):
+        if row.get("marker"):
+            markers[row["mcu"]] = row["marker"]
+    out = []
+    for row in entries:
+        if not isinstance(row, dict):
+            continue
+        name = _mcu_row_name(row)
+        header = row.get("section_header") or detect.mcu_header(name) \
+            or "[mcu ?]"
+        # mcus.py owns the name rules (four-character strip, pin-chip collisions),
+        # so take its verdict when it gives one; the recomputation below is only
+        # for a module that answers without those keys.
+        if "bad_name" in row:
+            bad = bool(row["bad_name"])
+        else:
+            bad = bool(row.get("malformed_header"))
+            if "is_mcu" in row:
+                bad = bad or not row.get("is_mcu")
+            else:
+                bad = bad or _mcu_bad_name(name, name == "mcu")
+        out.append({"mcu": name,
+                    "section": header,
+                    "serial": row.get("serial") or None,
+                    "canbus": row.get("canbus_uuid") or row.get("canbus"),
+                    "marker": row.get("marker") or markers.get(name),
+                    "bad_name": bad,
+                    "configured": row.get("configured", True),
+                    "conflict": conflicts.get(name)})
+    return out
+
+
+def _mcu_entries(cfg_path=None, text=None, ports=None, idents=None):
+    """Contract-shaped entries for every [mcu*] section, live facts layered on.
+
+    One read of printer.cfg, at most one ioreg, zero writes. `conflict`
+    precedence is structural first (a section klipper would not read as its own
+    name), then duplicate-port (two sections, one port: the dead-printer case),
+    then missing-port (no serial line, or a node that is not attached right
+    now). A CAN section is configured and claims no USB node, so it is never
+    reported as missing.
+    """
+    cfg_path = cfg_path or paths.PRINTER_CFG
+    if text is None:
+        text = _cfg_text(cfg_path)
+    rows = _mcu_rows(cfg_path, text)
+    if rows is None:
+        rows = _parse_mcu_sections(text)
+    if ports is None:
+        try:
+            ports = detect.scan()
+        except Exception:
+            ports = []
+    if idents is None:
+        idents = {}
+    present = {p.get("path") for p in ports if p.get("path")}
+    by_key = {}
+    for ident in (idents or {}).values():
+        key = str(ident.get("key") or "").lower()
+        if key:
+            by_key.setdefault(key, ident)
+    entries = []
+    for row in rows:
+        name = _mcu_row_name(row)
+        header = row.get("section") or detect.mcu_header(name) or "[mcu ?]"
+        if row.get("configured", True) is False:
+            # A row mcus offered for a section that is not in the file: nothing
+            # to conflict about, and never a port to write.
+            entries.append({"mcu": name, "section": header, "serial": None,
+                            "configured": False, "claimed": False,
+                            "canbus": None, "marker": None, "identity": None,
+                            "conflict": None})
+            continue
+        serial = row.get("serial") or None
+        canbus = row.get("canbus") or None
+        entries.append({"mcu": name, "section": header,
+                        "serial": serial or canbus,
+                        "configured": True,
+                        # `claimed` is about a USB node: a CAN uuid configures
+                        # an MCU but holds no /dev/cu.* open.
+                        "claimed": bool(serial),
+                        "canbus": canbus,
+                        "marker": row.get("marker"),
+                        "_bad_name": bool(row.get("bad_name")),
+                        "_conflict": row.get("conflict"),
+                        "identity": None})
+    owners = {}
+    for e in entries:
+        if e["claimed"]:
+            owners.setdefault(e["serial"], []).append(e["section"])
+    for e in entries:
+        ours = None
+        if e.get("_bad_name"):
+            ours = "bad-section-name"
+        elif e["claimed"] and len(owners.get(e["serial"], [])) > 1:
+            ours = "duplicate-port"
+        elif e["configured"] and not e.get("canbus") and \
+                (not e["claimed"] or e["serial"] not in present):
+            ours = "missing-port"
+        given = e.get("_conflict")
+        given = given if given in _MCU_CONFLICT_RANK else None
+        # RANK the candidates, never "whoever spoke first". '[mcu  a]' with a
+        # serial: is both badly named (what mcus.py, reading klipper's own rules,
+        # reports) and holding a node that is not attached right now (what this
+        # layer can see live). Reporting the second sends the user to the cable
+        # when the header is the bug - and the header is the one thing a GUI
+        # cannot fix for them.
+        ranked = [code for code in (ours, given) if code]
+        e["conflict"] = _mcu_conflict_pick(ranked)
+        e["identity"] = _mcu_identity(e, present, idents, by_key)
+    entries.sort(key=lambda e: (e["mcu"] != "mcu", e["mcu"]))
+    return entries
+
+
+def _mcu_conflict_pick(codes):
+    """The highest-precedence conflict of several, or None."""
+    if not codes:
+        return None
+    return min(codes, key=_MCU_CONFLICT_RANK.__getitem__)
+
+
+def _mcu_identity(entry, present, idents, by_key):
+    """The identity behind one section: the node it names, or the board its
+    marker binds, or None. `present` is a live fact, never a hope."""
+    serial = entry.get("serial")
+    if serial and idents.get(serial):
+        return _mcu_identity_view(idents[serial], True)
+    key = str(entry.get("marker") or "").lower()
+    if key:
+        hit = by_key.get(key)
+        if hit:
+            return _mcu_identity_view(hit, hit.get("path") in present)
+        vid_pid, serial_no = _mcu_key_parts(entry.get("marker"))
+        return {"vid_pid": vid_pid, "serial": serial_no or None,
+                "key": entry.get("marker"), "present": False}
+    if serial:
+        # A node that exists but has no USB board behind it (a virtual port, a
+        # Bluetooth tunnel, an unreadable ioreg) is still not an identity.
+        return None
+    return None
+
+
+def _mcu_json(entries):
+    """The --json payload: exactly the contract, keys in contract order."""
+    mcus = []
+    for e in entries:
+        mcus.append({"mcu": e["mcu"], "section": e["section"],
+                     "serial": e.get("serial"),
+                     "configured": bool(e.get("configured", True)),
+                     "claimed": bool(e.get("claimed")),
+                     "identity": e.get("identity"),
+                     "conflict": e.get("conflict")})
+    return {"mcus": mcus, "single": len(mcus) <= 1}
+
+
+def _mcu_json_line(entries):
+    """The contract as one stdout line. Never a traceback and never a partial
+    document: a GUI/TUI caller parses stdout, so anything that cannot be said
+    as a contract entry is said on stderr, and the shape stays valid."""
+    try:
+        return json.dumps(_mcu_json(entries), default=str)
+    except Exception as e:
+        print("[!] serial --json could not describe the sections: {}".format(e),
+              file=sys.stderr)
+        return json.dumps({"mcus": [], "single": True})
+
+
+def _mcu_table_lines(entries, ports):
+    """The per-[mcu]-section table `serial` prints under the port listing.
+
+    Lines start with two spaces and a section name, never with a device path:
+    scripts (and the SwiftUI picker) read the port rows by their leading
+    /dev/cu.*, and that contract is older than this table.
+    """
+    present = {p.get("path") for p in ports}
+    lines = ["", "MCU sections in {}:".format(paths.PRINTER_CFG)]
+    for e in entries:
+        ident = e.get("identity") or {}
+        serial = e.get("serial")
+        if not e.get("configured", True):
+            verdict = "not in printer.cfg"
+        elif e.get("conflict") == "bad-section-name":
+            verdict = "bad section name (klippy reads a different object)"
+        elif e.get("conflict") == "duplicate-port":
+            verdict = "CONFLICT 2 sections on one port"
+        elif not serial:
+            verdict = "no serial set"
+        elif serial in present:
+            verdict = "attached"
+        else:
+            verdict = "port not attached"
+        tail = ""
+        if ident.get("key"):
+            tail = "  identity " + str(ident["key"])
+            if ident.get("present") is False:
+                tail += " (not attached)"
+        lines.append("  {:<14} {:<30} {}{}".format(
+            e["section"], str(serial or "-"), verdict, tail))
+    lines.append("  (machine-readable: klipperformac serial --json)")
+    return lines
+
+
+def _mcu_section_serial(cfg_path, name):
+    """The serial: a section holds in printer.cfg RIGHT NOW, or None.
+
+    Read with the same reader the listing uses, so a write can be verified
+    against the file instead of against a return value."""
+    text = _cfg_text(cfg_path)
+    rows = _mcu_rows(cfg_path, text)
+    if rows is None:
+        rows = _parse_mcu_sections(text)
+    for row in rows:
+        if row.get("mcu") == name:
+            return row.get("serial")
+    return None
+
+
+def _write_mcu_serial(cfg_path, device_path, name="mcu"):
+    """Point ONE [mcu*] section at a port: (ok, message|None).
+
+    mcus.set_serial() (text in / text out, klipper's own section rules, and a
+    refusal that names the section it refused) is the writer when wave 3 has it;
+    this command owns the file, so the read/write pair stays the byte-safe
+    atomic paths.read_config + paths.write_config. Without the module,
+    detect.write_serial(cfg, path, name) - the same kernel, one section.
+
+    Either way `ok` is verified by reading the section back: an exit 0 that wrote
+    nothing is a lie CI, scripts and the GUI all believe (AGENTS.md 4).
+    """
+    mod = _mcus_module()
+    fn = getattr(mod, "set_serial", None) if mod else None
+    if callable(fn):
+        try:
+            text, encoding = paths.read_config(cfg_path)
+        except Exception as e:
+            return False, "could not read {}: {}".format(
+                cfg_path, getattr(e, "strerror", None) or e)
+        updated = None
+        try:
+            updated = fn(text, name, device_path)
+        except TypeError:
+            updated = None          # unknown signature: use our own writer
+        except Exception as e:
+            return False, str(e) or "mcus.set_serial() refused the write"
+        if isinstance(updated, str):
+            try:
+                paths.write_config(cfg_path, updated, encoding)
+            except Exception as e:
+                return False, "could not write {}: {}".format(
+                    cfg_path, getattr(e, "strerror", None) or e)
+            return _mcu_section_serial(cfg_path, name) == device_path, None
+    try:
+        if not detect.write_serial(cfg_path, device_path, name):
+            return False, None
+    except Exception as e:
+        return False, str(e)
+    return _mcu_section_serial(cfg_path, name) == device_path, None
+
+
+def _mcu_conflicts(cfg_path):
+    """Human-readable problems for one config file (used by `presets --import`).
+
+    mcus.validate() first - it knows klipper's rules and explains each one; with
+    no module, the same conflicts `serial --json` reports, minus "not attached
+    right now", which is not a defect in a preset (the printer may be unplugged,
+    or on another Mac). Never raises and never blocks: an import still imports.
+    """
+    warnings = _mcu_validate(cfg_path)
+    if warnings is not None:
+        return warnings
+    out = []
+    for e in _mcu_entries(cfg_path=cfg_path, ports=[], idents={}):
+        conflict = e.get("conflict")
+        if conflict == "missing-port" and e.get("serial"):
+            continue
+        if conflict == "missing-port":
+            out.append("{} has no serial: (klipper cannot start it)".format(
+                e["section"]))
+        elif conflict:
+            out.append("{}: {}".format(e["section"], conflict))
+    return out
+
+
+def _mcu_validate(cfg_path):
+    """mcus.validate() normalised to [str] messages; None when wave 3 has not
+    landed (the caller then falls back to its own conflict parse)."""
+    mod = _mcus_module()
+    validate_fn = getattr(mod, "validate", None) if mod else None
+    list_fn = getattr(mod, "list_mcus", None) if mod else None
+    if not (callable(validate_fn) and callable(list_fn)):
+        return None
+    try:
+        issues = validate_fn(list_fn(_cfg_text(cfg_path)))
+    except Exception:
+        return None
+    msgs = []
+    for issue in issues if isinstance(issues, (list, tuple)) else []:
+        if isinstance(issue, dict):
+            msg = issue.get("message")
+            if msg:
+                msgs.append(str(msg))
+        elif isinstance(issue, str) and issue:
+            msgs.append(issue)
+    return msgs
+
+
+def _mcu_object_name(name):
+    """klippy's object name for a section: 'mcu', or 'mcu <name>' (the
+    SecondarySync one) - klippy/mcu.py:1246-1253."""
+    return "mcu" if name == "mcu" else "mcu {}".format(name)
+
+
+def _mcu_runtime(name, timeout=MCU_PROBE_TIMEOUT):
+    """('ok'|'missing'|'unknown', detail) for one MCU, from one read-only GET.
+
+    /printer/objects/query?mcu%20<name>=mcu_version is how Mainsail asks the
+    same question. Moonraker answers 200 with a null value for an object klippy
+    never loaded, so `null` here really does mean "klippy has no such MCU" -
+    and no answer at all (stack down, klippy in shutdown, a 3 s timeout) is
+    'unknown', which no caller may treat as a failure.
+    """
+    obj = _mcu_object_name(name)
+    data = _moonraker_get("/printer/objects/query?{}=mcu_version".format(
+        obj.replace(" ", "%20")), timeout=timeout)
+    if not isinstance(data, dict):
+        return "unknown", "moonraker did not answer"
+    status = (data.get("result") or {}).get("status") or {}
+    if obj not in status:
+        return "unknown", "no {} object in the answer".format(obj)
+    version = (status.get(obj) or {}).get("mcu_version")
+    if version:
+        return "ok", str(version)
+    return "missing", "klippy has no firmware version for it (not loaded)"
+
+
+def _mcu_lines_fail(lines, klippy):
+    """Whether any per-MCU line should turn `doctor` red.
+
+    Only one verdict is a failure, and only in one state: a section klippy did
+    not load while klippy claims `ready` (so the section is missing from a
+    printer that otherwise works). 'unknown' - stack down, klippy in shutdown,
+    the 3 s GET with no answer - is never an accusation: doctor's exit code is
+    the install-correctness gate AGENTS.md 4 puts on "done", not a hardware
+    attendance sheet."""
+    return any(verdict == "missing" and klippy == "ready"
+               for _tag, _text, verdict in (lines or []))
+
+
+def _mcu_report_lines(cfg_path=None, entries=None):
+    """[(tag, text)] one line per configured MCU, shared by doctor and selftest
+    so the two can never disagree about the same printer."""
+    entries = _mcu_entries(cfg_path=cfg_path) if entries is None else entries
+    lines = []
+    for e in entries:
+        if not e.get("configured", True):
+            continue
+        verdict, detail = _mcu_runtime(e["mcu"])
+        if verdict == "ok":
+            tag = "[ok] "
+            text = "mcu {}: loaded by klippy (firmware {})".format(
+                e["section"], detail)
+            if e.get("serial"):
+                text += " on {}".format(e["serial"])
+        elif verdict == "missing":
+            tag = "[!] "
+            text = "mcu {}: klippy did not load this section ({})".format(
+                e["section"], detail)
+        else:
+            tag = "[i]  "
+            text = "mcu {}: runtime unknown ({})".format(e["section"], detail)
+        lines.append((tag, text, verdict))
+    return lines
+
+
 def cmd_serial(args):
+    """`serial` / `serial --json` / `serial --set PATH [MCUNAME]`.
+
+    Three layers from one read of printer.cfg: the device nodes macOS offers,
+    the [mcu*] SECTIONS that want them (upstream takes N of them - see the
+    multi-MCU block above), and the advice that only appears when the two are
+    put side by side. --json is the same information as the contract: always
+    exit 0 in read-only mode, never a traceback, because a GUI panel that
+    cannot parse a config is a red box, not a crash.
+    """
+    as_json = bool(getattr(args, "json", False))
+    # "not given" and "given as the empty string" are different requests: an
+    # empty MCUNAME means '[mcu ]' (a section klipper names ''), and defaulting
+    # it to the timing master would write the wrong board's port on a typed
+    # argument. See _mcu_row_name().
+    raw_name = getattr(args, "mcu", None)
+    name = "mcu" if raw_name is None else str(raw_name).strip()
     ports = detect.scan()
     idents = _identity_map() if ports else {}
     rows, claims = _configured_mcus()
-    for p in ports:
-        desc = (" (" + p["description"] + ")") if p["description"] else ""
-        tail = _identity_tail(idents.get(p["path"]), claims.get(p["path"]))
-        print(p["path"] + desc + ("  " + tail if tail else ""))
-    target = args.set
+    try:
+        entries = _mcu_entries(ports=ports, idents=idents)
+    except Exception as e:
+        # Read-only commands do not traceback: say what could not be read and
+        # carry on with the port listing, which needs neither mcus nor the cfg.
+        print("[!] mcu sections were not read: {}".format(e), file=sys.stderr)
+        entries = []
+    target = getattr(args, "set", None)
+    if not as_json:
+        # --json means stdout is exactly one JSON document: no port rows, no
+        # advice, no "Wrote serial to". Diagnostics go to stderr instead.
+        for p in ports:
+            desc = (" (" + p["description"] + ")") if p["description"] else ""
+            tail = _identity_tail(idents.get(p["path"]), claims.get(p["path"]))
+            print(p["path"] + desc + ("  " + tail if tail else ""))
     if args.auto and not target:
         if len(ports) == 1:
             target = ports[0]["path"]
@@ -549,17 +1271,23 @@ def cmd_serial(args):
             _die("--auto: {} candidates found; pick one of the above: "
                  "klipperformac serial --set PATH".format(len(ports)))
     if not target:
-        notes = _serial_notes(ports, rows, claims)
+        # Read-only: the listing (or the contract) is the whole answer, and a
+        # malformed printer.cfg is a `conflict` on a row, never an exit 1.
+        if as_json:
+            print(_mcu_json_line(entries))
+            return
         if not ports:
             print("No USB serial devices found. Connect the printer board and "
                   "retry.")
-            for note in notes:
-                print(note)
-            return
-        for note in notes:
+        if entries:
+            for line in _mcu_table_lines(entries, ports):
+                print(line)
+        for note in _serial_notes(ports, rows, claims):
             print(note)
-        print("\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
-              "(or --auto for the first above)")
+        if ports:
+            print("\nTo use one: klipperformac serial --set "
+                  "/dev/cu.usbserial-XXXX [MCUNAME] (or --auto for the first "
+                  "above)")
         return
     # From here the user asked for a specific port: an exit 0 that wrote
     # nothing (no device scanned, no printer.cfg, no [mcu]) is a lie that CI,
@@ -568,17 +1296,63 @@ def cmd_serial(args):
         _die("No printer.cfg yet. Run: klipperformac setup")
     if re.search(r"[\r\n\0]", target):
         _die("Invalid device path: must not contain newlines")
+    header = detect.mcu_header(name)
+    if header is None:
+        _die("Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
+             "klipper would read a section back as a different object than the "
+             "name you typed.".format(name))
+    sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports,
+                            idents=idents)
+    names = [e["mcu"] for e in sections if e.get("configured", True)]
+    if name not in names:
+        _die("No {} section in {}: nothing was written. Available: {} "
+             "(klipperformac serial --json gives every section with its port)."
+             .format(header, paths.PRINTER_CFG,
+                     ", ".join(e["section"] for e in sections
+                               if e.get("configured", True))
+                     or "no MCU section at all"))
+    target_section = [e for e in sections
+                      if e["mcu"] == name and e.get("configured", True)]
+    if target_section and target_section[0].get("canbus"):
+        # mcu.py:780-791 - `canbus_uuid` WINS and the serial line is never even
+        # read, so writing one into a CAN section is a config edit that does
+        # nothing and looks like it did something. AGENTS.md rule 2: never change
+        # printer.cfg semantics silently.
+        _die("{} connects over CAN (canbus_uuid: {}): a serial: line there is "
+             "read by nothing (klippy/mcu.py:780-791). Nothing was written to "
+             "{}.".format(header, target_section[0]["canbus"], header))
+    holders = {}
+    for e in sections:
+        if e.get("claimed") and e.get("serial"):
+            holders.setdefault(e["serial"], (e["mcu"], e["section"]))
+    held = holders.get(target)
+    if held and held[0] != name:
+        # Two sections on one node is not advice, it is a dead printer: klippy
+        # holds a port exclusively and the second board retries for 90 s and
+        # then errors. Refusing the write is the only honest answer here.
+        _die("{} is already claimed by {} in printer.cfg: refusing to point "
+             "{} at the same port. One klippy can hold it, the other retries "
+             "for 90 s and then errors. Give {} its own port.".format(
+                 target, held[1], header, header))
     if not os.path.exists(target):
         _die("{} is not a device that exists right now: nothing was written "
              "to {}".format(target, paths.PRINTER_CFG))
-    if detect.write_serial(paths.PRINTER_CFG, target):
-        print("Wrote serial to " + str(paths.PRINTER_CFG))
+    wrote, reason = _write_mcu_serial(paths.PRINTER_CFG, target, name)
+    if wrote:
         if target not in [p["path"] for p in ports]:
-            print("[!] {} was not on the scanned list; a device node that "
-                  "exists is accepted anyway (the scanner only knows the "
-                  "common USB-serial name families)".format(target))
+            note = ("[!] {} was not on the scanned list; a device node that "
+                    "exists is accepted anyway (the scanner only knows the "
+                    "common USB-serial name families)".format(target))
+            print(note, file=sys.stderr if as_json else sys.stdout)
+        if as_json:
+            print(_mcu_json_line(_mcu_entries(
+                cfg_path=paths.PRINTER_CFG, ports=ports, idents=idents)))
+        else:
+            print("Wrote serial to {} for {}".format(paths.PRINTER_CFG, header))
     else:
-        _die("Could not find [mcu] serial: line in " + str(paths.PRINTER_CFG))
+        _die("Could not write the serial: line for {} in {}: {}".format(
+            header, paths.PRINTER_CFG,
+            reason or "no such section, or the file refused it"))
 
 
 def relocate_data(new):
@@ -833,13 +1607,164 @@ def catalog_names():
 
 
 def auto_serial(cfg_path):
-    """Fill [mcu] serial: with the detected USB board when the config does
-    not already carry a real port. Returns (lines, picked_ok)."""
+    """Give every [mcu*] section that has no real port a port. (lines, picked_ok)
+
+    Two rules, in this order, and both only ever write a node that is attached
+    and unclaimed (klippy holds a port exclusively, so handing one port to two
+    sections is writing a printer that cannot start):
+
+      1. identity: a section carrying the marker comment
+         '# klipperformac:identity usb:VID:PID:SERIAL' gets its board resolved
+         through detect's IOKit layer, which survives macOS renumbering the node
+         on every replug. configgen.py does NOT write that marker (it is not
+         ours to change), so this rule only fires on configs a user or a later
+         wave bound on purpose.
+      2. the pre-multi-MCU rule, unchanged in spirit: exactly ONE unclaimed
+         candidate board and nothing resolved by identity, so write it.
+
+    picked_ok is the honest answer to "does every section have a port now",
+    read back from the file rather than trusted from a return value."""
+    text = _cfg_text(cfg_path)
+    rows = _parse_mcu_sections(text)
+    if not rows:
+        return _auto_serial_single(cfg_path, text)
+    bare = [r for r in rows if not _real_serial(r.get("serial"))
+            and not r.get("canbus")]
+    need = [r for r in bare if not r.get("bad_name")]
+    lines = [_mcu_bad_section_line(r) for r in bare if r.get("bad_name")]
+    if not need:
+        if lines:
+            return lines, not _mcu_sections_missing(cfg_path)
+        return ["Serial port already set in printer.cfg."], True
+    ports = detect.scan()
+    if not ports:
+        return lines + ["No USB printer board detected. Plug it in, then pick "
+                        "it under Serial device (or: klipperformac serial "
+                        "--auto)."], False
+    claimed = {r["serial"] for r in rows if r.get("serial")}
+    # one ioreg, and only for a config that actually binds a section to an
+    # identity: without a marker there is nothing to resolve.
+    idents = _identity_map() if any(r.get("marker") for r in need) else {}
+    used = set()
+    pending = []
+    for row in need:
+        key = row.get("marker")
+        if not key:
+            pending.append(row)
+            continue
+        # A bound section is never handed whatever cable is left: the marker
+        # says WHICH board, and pointing it at a different one is how a tool
+        # head starts driving a heater it has no wires to.
+        hit = _mcu_ident_by_key(idents, key)
+        label = _mcu_section_label(row["mcu"])
+        if hit is None:
+            lines.append("[!] {} is bound to identity {}, which is not attached "
+                         "right now: nothing was guessed.".format(label, key))
+            continue
+        if hit["path"] in claimed or hit["path"] in used:
+            lines.append("[!] {}'s board {} is already claimed by another "
+                         "section: nothing was written for it.".format(
+                             label, hit["path"]))
+            continue
+        wrote, why = _write_mcu_serial(cfg_path, hit["path"], row["mcu"])
+        if wrote:
+            used.add(hit["path"])
+            lines.append("Board connected: {}{} for {} (matched by identity "
+                         "{})".format(hit["path"],
+                                      _port_desc(ports, hit["path"]),
+                                      label, key))
+        else:
+            lines.append("[!] could not write the serial: line for {}: {}"
+                         .format(label, why or "no such section, or it refused"))
+    free = [p for p in ports if p["path"] not in claimed
+            and p["path"] not in used]
+    if pending:
+        if len(free) == 1 and len(pending) == 1:
+            # The one guess this tool has always allowed: a single board and a
+            # single section with no binding can only mean each other.
+            row = pending[0]
+            wrote, why = _write_mcu_serial(cfg_path, free[0]["path"],
+                                           row["mcu"])
+            if wrote:
+                lines.append("Board connected: {}{} for {}".format(
+                    free[0]["path"], _port_desc(ports, free[0]["path"]),
+                    _mcu_section_label(row["mcu"])))
+            else:
+                lines.append("[!] could not write the serial: line for {}: {}"
+                             .format(_mcu_section_label(row["mcu"]),
+                                     why or "no such section, or it refused"))
+        elif not free:
+            lines.append("[!] no unclaimed USB board left for {}.".format(
+                ", ".join(_mcu_section_label(r["mcu"]) for r in pending)))
+        else:
+            out = ["Multiple USB devices found - pick one (then: "
+                   "klipperformac serial --set PATH MCUNAME):"]
+            out += ["  " + p["path"] + (" (" + p["description"] + ")"
+                                        if p["description"] else "")
+                    for p in free]
+            out.append("  {} still has no serial.".format(
+                ", ".join(_mcu_section_label(r["mcu"]) for r in pending)))
+            lines.extend(out)
+    return lines, not _mcu_sections_missing(cfg_path)
+
+
+def _mcu_section_label(name):
+    """'[mcu tool]' for a message, and never None: a name this tool will not
+    write still has to be named in the line that says so."""
+    return detect.mcu_header(name) or "[mcu {}]".format(name)
+
+
+def _mcu_bad_section_line(row):
+    return ("[!] {} is not a section name this tool writes: klipper would read "
+            "a different object than you typed. Fix it by hand; nothing was "
+            "changed.".format(_mcu_section_label(row["mcu"])))
+
+
+def _port_desc(ports, path):
+    for p in ports:
+        if p.get("path") == path:
+            return (" (" + p["description"] + ")") if p.get("description") \
+                else ""
+    return ""
+
+
+def _mcu_ident_by_key(idents, key):
+    """The attached identity dict whose stable key equals a section's marker.
+
+    Case-insensitive on purpose: ioreg publishes the USB serial upper case and
+    a human pasting a key into printer.cfg usually does not care. None when the
+    board is not attached right now (or the marker is not a key at all), which
+    is a section that stays unassigned rather than a guessed one."""
+    want = str(key or "").strip().lower()
+    if not want:
+        return None
+    for ident in (idents or {}).values():
+        if str(ident.get("key") or "").strip().lower() == want:
+            return ident
+        vid_pid, serial = _mcu_key_parts(want)
+        if vid_pid and str(ident.get("vid_pid") or "").lower() == vid_pid \
+                and not serial:
+            return ident
+    return None
+
+
+def _mcu_sections_missing(cfg_path):
+    """True when a section this tool can serve still has no real port.
+
+    A section whose name cannot be written back is not "missing a port": it is
+    reported by name in its own line, and a human has to fix the header."""
+    rows = _parse_mcu_sections(_cfg_text(cfg_path))
+    if not rows:
+        return True
+    return any(not r.get("bad_name") and not _real_serial(r.get("serial"))
+               and not r.get("canbus") for r in rows)
+
+
+def _auto_serial_single(cfg_path, text):
+    """The original single-section path, kept for configs this parser does not
+    read as MCU sections at all (no [mcu] header, a glued header, a vendor
+    config that puts serial: somewhere else): behaviour must not regress."""
     lines = []
-    try:
-        text = cfg_path.read_text(errors="replace")
-    except OSError:
-        text = ""
     m = re.search(r"(?m)^\s*serial\s*:(?!\s*$)(.*)$", text)
     if m and re.search(r"/dev/(cu|tty|usbserial|usbmodem)\S*", m.group(1)):
         return ["Serial port already set in printer.cfg."], True
@@ -855,7 +1780,8 @@ def auto_serial(cfg_path):
                 for p in ports]
         return out, False
     if detect.write_serial(cfg_path, ports[0]["path"]):
-        desc = (" (" + ports[0]["description"] + ")") if ports[0]["description"] else ""
+        desc = (" (" + ports[0]["description"] + ")") \
+            if ports[0]["description"] else ""
         return ["Board connected: " + ports[0]["path"] + desc], True
     return ["The config has no [mcu] section to put the serial port in."], False
 
@@ -976,6 +1902,17 @@ def cmd_presets(args):
         dst = paths.PRESETS / (name + ".cfg")
         _copy_atomic(src, dst, "import '{}' as preset '{}'".format(src, name))
         print("Imported {} as preset '{}'".format(src, name))
+        # A multi-MCU config imported blind is the classic "Printer is halted"
+        # report: two [mcu*] sections on one node, or a section name klipper
+        # reads as something else. Say it now, on stderr, and still import -
+        # the config may be for a printer that is not attached to this Mac, and
+        # blocking an import is not this command's call to make.
+        try:
+            for warn in _mcu_conflicts(dst):
+                print("[!] " + warn, file=sys.stderr)
+        except Exception as e:
+            print("[!] multi-MCU check did not run: {}".format(e),
+                  file=sys.stderr)
         return
     presets = sorted(paths.PRESETS.glob("*.cfg"))
     if not presets:
@@ -1197,6 +2134,15 @@ def cmd_selftest(args):
     if code:
         # The child says what failed; its status is the answer AGENTS.md gates on.
         sys.exit(1 if code < 0 else code)
+    # The child covers web + moonraker + klippy as one printer. Upstream takes N
+    # MCUs, so the same per-MCU probe `doctor` prints runs here too - advisory
+    # only: the exit code stays the child's answer, because a selftest that went
+    # red over one unplugged toolboard would bury the three links that matter.
+    try:
+        for tag, text, _verdict in _mcu_report_lines():
+            print(tag + text)
+    except Exception as e:
+        print("[i]  mcu sections: not reported ({})".format(e))
 
 
 def cmd_tui(args):
@@ -1929,6 +2875,21 @@ def cmd_doctor(args):
             print("[!] klipper state: {} - the printer cannot move "
                   "(klipperformac logs)".format(klippy))
             ok = False
+        # ... and "ready" is still only the printer as a whole. Upstream takes N
+        # MCUs (klippy/mcu.py:1246), so ask about each one: a [mcu tool] klippy
+        # never loaded means cable 2 is not talking, and `status` alone cannot
+        # see it. One read-only GET per section, 3 s timeout, and an MCU the
+        # stack cannot describe is 'unknown', which never turns doctor red.
+        try:
+            mcu_lines = _mcu_report_lines()
+        except Exception as e:
+            # A doctor that stops printing halfway is worse than a missing line.
+            print("[i]  mcu sections: not reported ({})".format(e))
+            mcu_lines = []
+        for tag, text, verdict in mcu_lines:
+            print(tag + text)
+        if _mcu_lines_fail(mcu_lines, klippy):
+            ok = False
     # Host scheduling posture: macOS gives klippy no real-time priority (no
     # SCHED_FIFO, negative nice is root-only), so the remaining risk is made
     # visible instead of promised away. Same report `klipperformac timing`
@@ -2170,9 +3131,17 @@ def main(argv=None):
                    nargs="?")
     p.add_argument("-n", "--lines", type=int, default=40)
     p.add_argument("-f", "--follow", action="store_true")
-    p = sub.add_parser("serial", help="list USB printer ports / set [mcu] serial")
+    p = sub.add_parser("serial", help="list USB ports and [mcu*] sections / "
+                                      "set one section's serial")
     p.add_argument("--set", metavar="PATH")
     p.add_argument("--auto", action="store_true")
+    p.add_argument("--json", action="store_true",
+                   help="machine-readable: {\"mcus\": [...], \"single\": bool} "
+                        "for every [mcu*] section with its port, USB identity "
+                        "and conflict; always exits 0 in read-only mode")
+    p.add_argument("mcu", nargs="?", metavar="MCUNAME",
+                   help="the [mcu ...] section to write with --set/--auto "
+                        "(default: mcu, the timing master)")
     p = sub.add_parser("data", help="show or move the user data folder")
     p.add_argument("--set", metavar="PATH")
     p = sub.add_parser("update", help="check (or apply) upstream component updates")
