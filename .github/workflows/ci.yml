@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  qa-and-build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install shellcheck
+        run: brew install shellcheck
+
+      - name: Create QA venv
+        run: python3 -m venv .venv-test
+
+      - name: Install QA dependencies
+        run: .venv-test/bin/python -m pip install -U pip && .venv-test/bin/python -m pip install -r requirements-dev.txt
+
+      - name: Run offline QA gate
+        run: QA_REQUIRE_SHELLCHECK=1 sh scripts/qa/full.sh
+
+      - name: Build macOS app
+        working-directory: KlipperMac
+        run: ./build-app.sh

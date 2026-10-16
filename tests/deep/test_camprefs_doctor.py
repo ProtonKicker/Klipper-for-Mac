@@ -191,11 +191,6 @@ def test_doctor_port_free(stack, monkeypatch):
     assert stack.cam._check_port() == (True, "camera port %d: free" % PORT)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _check_port prints the state file's 'port' verbatim (it is the "
-    "one reader that never int()s it), so a corrupt run/cam.json is blessed as "
-    "'camera port banana: streaming' while cam status on the same state dies "
-    "with ValueError - the port must be validated like paths._port does"))
 def test_doctor_rejects_a_non_numeric_port_from_the_state(stack):
     write_state(stack, {"boot_time": BOOT, "pid": PID, "port": "banana"})
     ok, msg = stack.cam._check_port()

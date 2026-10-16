@@ -231,10 +231,6 @@ def test_non_object_settings_root_falls_back_to_empty(stack):
         assert stack.cam.save_prefs(fps=15) == {"fps": 15}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: a corrupt settings.json is silently read as {} and the next cam "
-    "save overwrites the file, destroying the 'data' folder pointer and every "
-    "other stored setting (the stack then looks like a fresh install)"))
 def test_corrupt_settings_json_save_does_not_lose_other_keys(stack):
     write_settings(stack, '{"data": "/Volumes/BigDrive/kd", "lan": tru')
     stack.cam.save_prefs(fps=20)
@@ -245,10 +241,6 @@ def test_corrupt_settings_json_save_does_not_lose_other_keys(stack):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="chmod is a no-op for root")
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: same class as the corrupt-prefs bug - an EACCES on "
-    "settings.json is swallowed by load_settings(), so saving cam prefs "
-    "overwrites a prefs file the user can still see, losing the data pointer"))
 def test_unreadable_settings_json_save_does_not_lose_other_keys(stack):
     write_settings(stack, '{"data": "/Volumes/BigDrive/kd"}')
     os.chmod(stack.paths.SETTINGS, 0o000)
@@ -259,12 +251,6 @@ def test_unreadable_settings_json_save_does_not_lose_other_keys(stack):
     assert "/Volumes/BigDrive/kd" in stack.paths.SETTINGS.read_text()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: paths.save_settings() uses json.dumps with the default "
-    "allow_nan=True, so a NaN/Infinity that was ever in settings.json is "
-    "written back as the non-standard literals NaN/Infinity; the SwiftUI app "
-    "(JSONSerialization) and every strict JSON parser then reject the whole "
-    "file, which silently puts the data folder back to its default"))
 def test_saved_prefs_are_strict_valid_json(stack):
     write_settings(stack, '{"data": "/Volumes/X", "cam": {"quality": Infinity,'
                           ' "width": NaN}}')

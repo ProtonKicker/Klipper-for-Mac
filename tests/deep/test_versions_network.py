@@ -353,11 +353,6 @@ def test_check_updates_tolerates_wrong_typed_pins(stack, canned, payload):
     assert isinstance(errors, list)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: latest_tag() docstring promises it prefers release-looking tags, "
-    "but _sort_key() collapses 'v2.19.0-rc1' to (2,19,0) - identical to the stable "
-    "'v2.19.0' - and max() keeps the first-seen entry, so a pre-release published "
-    "after the stable release becomes the pin that `update --apply` installs"))
 def test_latest_tag_prefers_stable_over_prerelease_on_a_tie(stack, canned):
     canned["payload"] = _tags("v2.0.0-rc1", "v2.0.0")
     assert stack.versions.latest_tag("mainsail") == "v2.0.0"

@@ -41,7 +41,7 @@ struct CameraView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    Task { await model.refresh(reloadEnv: true) }
+                    Task { await reloadCamera() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -297,6 +297,17 @@ struct CameraView: View {
                     ?? "No camera found — plug one in, or use the camera built into this Mac"
             }
         }
+    }
+
+    @MainActor
+    private func reloadCamera() async {
+        await model.refresh(reloadEnv: true)
+        devices = []
+        devicesHint = ""
+        devicesLoaded = false
+        prefsLoaded = false
+        loadPrefs()
+        loadDevices()
     }
 }
 

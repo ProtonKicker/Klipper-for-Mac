@@ -158,8 +158,29 @@ def ensure_webcam_section(name=WEBCAM_NAME, enabled=True, port=None):
     text, encoding = _read_conf()
     section = webcam_section_text(name, enabled, port)
     span = _webcam_span(text, name)
-    updated = (_join(text[:span[0]], section, text[span[1]:]) if span
-               else _join(text, section))
+    if span is None:
+        updated = _join(text, section)
+    else:
+        want = {
+            "enabled": "True" if enabled else "False",
+            "service": "mjpegstreamer",
+            "location": "printer",
+            "stream_url": "http://localhost:{}/?action=stream".format(
+                int(port or paths.CAM_PORT)),
+            "snapshot_url": "http://localhost:{}/?action=snapshot".format(
+                int(port or paths.CAM_PORT)),
+        }
+        body = text[span[0]:span[1]]
+        for key, value in want.items():
+            pat = r"(?im)^([ \t]*" + re.escape(key) + r"[ \t]*:[ \t]*)[^\r\n]*$"
+            if re.search(pat, body):
+                body = re.sub(pat, r"\1" + value, body, count=1)
+            else:
+                head_end = re.match(r"[^\r\n]*(?:\r\n|\n|$)", body).end()
+                eol = "\r\n" if body[:head_end].endswith("\r\n") else "\n"
+                body = body[:head_end].rstrip("\r\n") + eol + key + ": " + value \
+                    + eol + body[head_end:]
+        updated = text[:span[0]] + body + text[span[1]:]
     if updated == text:
         return False
     _write_conf(updated, encoding)

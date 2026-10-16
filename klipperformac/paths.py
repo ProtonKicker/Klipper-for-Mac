@@ -1,5 +1,6 @@
 import json
 import os
+import math
 from pathlib import Path
 
 # Klipper/Moonraker configs are routinely saved by editors in cp1252 or
@@ -8,6 +9,7 @@ from pathlib import Path
 # byte round-trips, so a rewrite never mangles a comment we did not touch.
 CFG_FALLBACK_ENCODING = "latin-1"
 _UTF8_BOM = b"\xef\xbb\xbf"
+_UNREADABLE_SETTINGS = object()
 
 
 def _env_dir(env, default, what):
@@ -58,6 +60,44 @@ def load_settings():
     return data if isinstance(data, dict) else {}
 
 
+def _load_settings_for_update():
+    """settings.json for a mutating write path.
+
+    Missing file -> {}. A syntactically valid non-object root also behaves like
+    {} (matching load_settings()). But a torn or unreadable file is preserved in
+    place: mutating commands must not silently replace a file they could not
+    faithfully read."""
+    try:
+        raw = SETTINGS.read_text()
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        if SETTINGS.is_file():
+            return _UNREADABLE_SETTINGS
+        raise
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        bak = SETTINGS.with_suffix(".json.bak")
+        try:
+            bak.write_text(raw)
+        except OSError:
+            pass
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _json_safe(value):
+    """Recursively map non-finite floats to None so settings.json stays strict."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
 def save_settings(settings):
     """Write settings.json write-then-replace. A blocked write (read-only home,
     prefs file replaced by a directory, root-owned sidecar) raises OSError with
@@ -66,9 +106,11 @@ def save_settings(settings):
     APP_HOME.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS.with_suffix(".json.tmp")
     try:
-        tmp.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n")
+        payload = json.dumps(_json_safe(settings), indent=2, sort_keys=True,
+                             allow_nan=False) + "\n"
+        tmp.write_text(payload)
         tmp.replace(SETTINGS)
-    except OSError:
+    except (OSError, ValueError):
         try:
             tmp.unlink()
         except OSError:
@@ -308,7 +350,10 @@ def cam_settings():
 
 
 def save_cam_settings(**kwargs):
-    settings = load_settings()
+    settings = _load_settings_for_update()
+    if settings is _UNREADABLE_SETTINGS:
+        cam = load_settings().get("cam")
+        return dict(cam) if isinstance(cam, dict) else {}
     cam = settings.get("cam")
     cam = dict(cam) if isinstance(cam, dict) else {}
     for key, value in kwargs.items():

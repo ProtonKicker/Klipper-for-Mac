@@ -58,6 +58,40 @@ final class AppModel: ObservableObject {
     private var ticks = 0
     private var lastCfgHash: String?
     private var cfgWatch: DispatchSourceFileSystemObject?
+    private var pendingSheetLines: [String] = []
+    private var sheetFlushTask: Task<Void, Never>?
+
+    private enum CLITimeout {
+        static let control: TimeInterval = 20
+        static let cameraList: TimeInterval = 10
+        static let library: TimeInterval = 15
+        static let updateCheck: TimeInterval = 45
+        static let snapshot: TimeInterval = 15
+        static let updateApply: TimeInterval = 1_800
+        static let setup: TimeInterval = 7_200
+    }
+
+    private static func timeout(for args: [String]) -> TimeInterval {
+        switch args.first {
+        case "setup":
+            return CLITimeout.setup
+        case "update":
+            return args.contains("--apply") ? CLITimeout.updateApply : CLITimeout.updateCheck
+        case "presets":
+            return args.contains("--library") ? CLITimeout.library : CLITimeout.control
+        case "cam":
+            return args.contains("list") ? CLITimeout.cameraList : CLITimeout.control
+        default:
+            return CLITimeout.control
+        }
+    }
+
+    private static func cliErrorMessage(_ error: Error, notFound: String) -> String {
+        if let cli = error as? CLIError, case .notFound = cli {
+            return notFound
+        }
+        return error.localizedDescription
+    }
 
     func bootstrap() async {
         await refresh()
@@ -66,11 +100,6 @@ final class AppModel: ObservableObject {
         if !observingActive {
             observingActive = true
             let center = NotificationCenter.default
-            center.addObserver(forName: NSApplication.didResignActiveNotification,
-                               object: nil, queue: .main) { [weak self] _ in
-                guard let self else { return }
-                Task { @MainActor in self.stopPolling() }
-            }
             center.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
@@ -104,10 +133,13 @@ final class AppModel: ObservableObject {
 
     private func startPolling() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in await self.refresh() }
         }
+        timer.tolerance = 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func stopPolling() {
@@ -153,7 +185,8 @@ final class AppModel: ObservableObject {
         if lastCfgHash == nil { lastCfgHash = hash; return }
         guard hash != lastCfgHash else { return }
         lastCfgHash = hash
-        _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"])
+        _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"],
+                                            timeout: CLITimeout.snapshot)
     }
 
     func refresh(reloadEnv: Bool = false) async {
@@ -195,7 +228,10 @@ final class AppModel: ObservableObject {
                 lastCfgHash = cfgHash
             } else if cfgHash != lastCfgHash {
                 lastCfgHash = cfgHash
-                Task { _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"]) }
+                Task {
+                    _ = try? await CLIRunner.shared.run(["presets", "--snapshot", "edited"],
+                                                        timeout: CLITimeout.snapshot)
+                }
             }
         }
         let camPort = env.camPort
@@ -227,6 +263,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func enqueueSheetLines(_ lines: [String]) {
+        pendingSheetLines.append(contentsOf: lines)
+        guard sheetFlushTask == nil else { return }
+        sheetFlushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard !Task.isCancelled else { return }
+            flushPendingSheetLines()
+        }
+    }
+
+    private func flushPendingSheetLines() {
+        sheetFlushTask?.cancel()
+        sheetFlushTask = nil
+        guard !pendingSheetLines.isEmpty else { return }
+        sheetLines.append(contentsOf: pendingSheetLines)
+        pendingSheetLines.removeAll(keepingCapacity: true)
+    }
+
     // MARK: - CLI-backed actions
 
     /// The install one-liner lives here so the error toast and the Camera pane
@@ -240,7 +294,7 @@ final class AppModel: ObservableObject {
         env.invalidateCaches()
         let exit: Int32
         do {
-            let r = try await CLIRunner.shared.run(args)
+            let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             exit = r.exit
             if r.exit == 0 {
                 say(ok ?? r.output)
@@ -249,7 +303,9 @@ final class AppModel: ObservableObject {
                                      : r.output, error: true)
             }
         } catch {
-            say("Klipper CLI not found — install it first:\n" + Self.installCommand,
+            say(Self.cliErrorMessage(error,
+                                     notFound: "Klipper CLI not found — install it first:\n"
+                                     + Self.installCommand),
                 error: true)
             exit = -1
         }
@@ -271,12 +327,13 @@ final class AppModel: ObservableObject {
         busy = true
         env.invalidateCaches()
         do {
-            let r = try await CLIRunner.shared.run(["lan", on ? "on" : "off"])
+            let r = try await CLIRunner.shared.run(["lan", on ? "on" : "off"],
+                                                   timeout: Self.timeout(for: ["lan"]))
             if r.exit != 0 {
                 say(r.output.isEmpty ? "Could not change LAN access." : r.output, error: true)
             }
         } catch {
-            say("Klipper CLI not found.", error: true)
+            say(Self.cliErrorMessage(error, notFound: "Klipper CLI not found."), error: true)
         }
         busy = false
         await refresh(reloadEnv: true)
@@ -297,7 +354,7 @@ final class AppModel: ObservableObject {
         var good = false
         var toast = ""
         do {
-            let r = try await CLIRunner.shared.run(args)
+            let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             good = r.exit == 0
             let first = Self.firstLine(r.output)
             if good {
@@ -306,7 +363,9 @@ final class AppModel: ObservableObject {
                 toast = first.isEmpty ? "klipperformac \(args.first ?? "") failed." : first
             }
         } catch {
-            toast = "Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh"
+            toast = Self.cliErrorMessage(error,
+                                         notFound: "Klipper CLI not found — install it first:\n"
+                                         + Self.installCommand)
         }
         busy = false
         say(toast, error: !good)
@@ -317,7 +376,8 @@ final class AppModel: ObservableObject {
     /// Upstream example configs (klipper/config), for the Browse sheet.
     func libraryConfigs() async -> [String] {
         do {
-            let r = try await CLIRunner.shared.run(["presets", "--library"])
+            let r = try await CLIRunner.shared.run(["presets", "--library"],
+                                                   timeout: Self.timeout(for: ["presets", "--library"]))
             guard r.exit == 0 else { return [] }
             return r.output.split(separator: "\n").map(String.init)
         } catch {
@@ -356,13 +416,13 @@ final class AppModel: ObservableObject {
         var ok = false
         var toast = ""
         do {
-            let r = try await CLIRunner.shared.run(args)
+            let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             ok = r.exit == 0
             toast = ok ? Self.camToast(args.first ?? "", output: r.output)
                        : (Self.firstLine(r.output).isEmpty ? "Camera command failed."
                                                            : Self.firstLine(r.output))
         } catch {
-            toast = Self.camListNoCLI
+            toast = Self.cliErrorMessage(error, notFound: Self.camListNoCLI)
             say(toast, error: true)
             busy = false
             await refresh(reloadEnv: true)
@@ -422,11 +482,12 @@ final class AppModel: ObservableObject {
 
     func camList() async -> [String] {
         do {
-            let r = try await CLIRunner.shared.run(["cam", "list"])
+            let r = try await CLIRunner.shared.run(["cam", "list"],
+                                                   timeout: Self.timeout(for: ["cam", "list"]))
             guard r.exit == 0 else { return [Self.camListFailed] }
             return deviceNames(from: r.output)
         } catch {
-            return [Self.camListNoCLI]
+            return [Self.cliErrorMessage(error, notFound: Self.camListNoCLI)]
         }
     }
 
@@ -462,14 +523,15 @@ final class AppModel: ObservableObject {
         updateLines = ["Checking upstream tags…"]
         defer { busy = false }
         do {
-            let r = try await CLIRunner.shared.run(["update"])
+            let r = try await CLIRunner.shared.run(["update"],
+                                                   timeout: Self.timeout(for: ["update"]))
             let lines = r.output
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             updateLines = lines.isEmpty ? ["All components at newest pinned tags."] : lines
         } catch {
-            updateLines = ["Klipper CLI not found."]
+            updateLines = [Self.cliErrorMessage(error, notFound: "Klipper CLI not found.")]
         }
     }
 
@@ -496,12 +558,14 @@ final class AppModel: ObservableObject {
         sheetRunning = true
         busy = true
         defer {
+            flushPendingSheetLines()
             busy = false
             sheetRunning = false
         }
         do {
-            let code = try await CLIRunner.shared.stream(args) { line in
-                Task { @MainActor in self.sheetLines.append(line) }
+            let code = try await CLIRunner.shared.stream(args,
+                                                         timeout: Self.timeout(for: args)) { lines in
+                Task { @MainActor in self.enqueueSheetLines(lines) }
             }
             if code != 0 {
                 sheetLines.append("—— finished with exit \(code) ——"

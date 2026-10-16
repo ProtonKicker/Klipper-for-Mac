@@ -24,6 +24,9 @@ struct StackSnapshot: Equatable {
 /// read (pid + cmdline marker + boot time), so stale state self-heals.
 enum StackReader {
     static let order = ["web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate"]
+    private static var cmdCache: (at: Date, key: String, value: [String: String]) =
+        (.distantPast, "", [:])
+    private static let cmdLock = NSLock()
 
     static func pretty(_ name: String) -> String {
         switch name {
@@ -77,9 +80,29 @@ enum StackReader {
             if let pid = obj[name] as? Int { pids[name] = pid }
         }
         let idList = pids.values.map(String.init)
+        let cmds = commandLines(for: idList)
+        snap.services = order.map { name in
+            let pid = pids[name].map(String.init)
+            let cmd = pid.flatMap { cmds[$0] } ?? ""
+            return ServiceState(name: name, up: pid != nil && cmd.contains(markers[name] ?? ""))
+        }
+        return snap
+    }
+
+    private static func commandLines(for idList: [String]) -> [String: String] {
+        guard !idList.isEmpty else { return [:] }
+        let key = idList.sorted().joined(separator: ",")
+        cmdLock.lock()
+        if cmdCache.key == key, Date().timeIntervalSince(cmdCache.at) < 3 {
+            let value = cmdCache.value
+            cmdLock.unlock()
+            return value
+        }
+        cmdLock.unlock()
+
         var cmds: [String: String] = [:]
-        if !idList.isEmpty, let out = runTool("/bin/ps", ["-p", idList.joined(separator: ","),
-                                                          "-o", "pid=,state=,command="]) {
+        if let out = runTool("/bin/ps", ["-p", idList.joined(separator: ","),
+                                         "-o", "pid=,state=,command="]) {
             for raw in out.split(separator: "\n") {
                 let parts = raw.split(separator: " ", maxSplits: 2,
                                       omittingEmptySubsequences: true)
@@ -88,12 +111,10 @@ enum StackReader {
                 cmds[String(parts[0])] = String(parts[2])
             }
         }
-        snap.services = order.map { name in
-            let pid = pids[name].map(String.init)
-            let cmd = pid.flatMap { cmds[$0] } ?? ""
-            return ServiceState(name: name, up: pid != nil && cmd.contains(markers[name] ?? ""))
-        }
-        return snap
+        cmdLock.lock()
+        cmdCache = (Date(), key, cmds)
+        cmdLock.unlock()
+        return cmds
     }
 
     private static func runTool(_ exe: String, _ args: [String]) -> String? {

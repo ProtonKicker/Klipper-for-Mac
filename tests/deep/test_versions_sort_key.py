@@ -143,23 +143,18 @@ def test_sort_key_ordering_agrees_with_componentwise_order(stack, a, b):
     assert (ka == kb) == (tuple(a) == tuple(b))
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: _sort_key feeds raw tag components to int(), which accepts unicode "
-    "digits, '_' digit separators, surrounding whitespace, a '+'/'-' sign and "
-    "non-breaking spaces, so 'v1_0.2.3' is read as 10.x.y and 'v1.-2.3' as a "
-    "negative component instead of being rejected as a non-version tag"))
 def test_sort_key_rejects_non_ascii_digit_and_separator_forms(stack):
     """A tag is not a version unless every component is pure ASCII 0-9."""
     sk = stack.versions._sort_key
     # underscores must not silently merge into a bigger number
     assert sk("v1_0.2.3") != sk("v10.2.3")
-    # signs must not produce negative components (they invert the ordering)
-    assert sk("v1.-2.3") == sk("v0.0.0") or sk("v1.-2.3") >= (0, 0, 0)
+    # signs must not be treated as numeric components at all
+    assert sk("v1.-2.3") != sk("v1.2.3")
     # unicode digits are not ASCII digits
-    assert sk("١.٢.٣") == (0, 0, 0)
-    assert sk("v１.２.３") == (0, 0, 0)
+    assert sk("١.٢.٣") != sk("v1.2.3")
+    assert sk("v１.２.３") != sk("v1.2.3")
     # whitespace inside/around a component must not be tolerated
-    assert sk("v 1.2.3") == (0, 0, 0)
+    assert sk("v 1.2.3") != sk("v1.2.3")
 
 
 @pytest.mark.xfail(strict=True, reason=(

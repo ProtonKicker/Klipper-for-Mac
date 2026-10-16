@@ -154,12 +154,6 @@ def test_hostile_device_names_never_reach_moonraker_conf(conf, device):
     assert conf.cam.prefs()["device"] == device
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: configgen.ensure_webcam_section() - called by cam on via "
-    "register_webcam() - replaces the whole managed section, so camera options "
-    "the user added by hand there (target_fps, flip_horizontal, comments) are "
-    "silently deleted on every 'klipperformac cam on', while cam off's "
-    "set_webcam_enabled() deliberately preserves them"))
 def test_hand_added_webcam_keys_survive_cam_on(conf):
     conf.configgen.ensure_webcam_section()
     text = conf.paths.MOONRAKER_CONF.read_text()
@@ -263,11 +257,6 @@ def test_prefs_absent_keys_are_simply_not_passed(conf, monkeypatch):
     assert len(argv) == 12, argv
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cam.start() and cam.snapshot() gate the device on "
-    "`if p.get('device')`, so a device stored as the JSON number 0 (a legal "
-    "camera index; the CLI stores the string '0', which works) is silently "
-    "dropped and the automatic camera is used instead"))
 def test_numeric_device_index_zero_is_still_honoured(conf, monkeypatch):
     conf.paths.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     conf.paths.SETTINGS.write_text('{"cam": {"device": 0}}')

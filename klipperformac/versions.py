@@ -43,6 +43,8 @@ _SHA40 = re.compile(r"[0-9a-f]{40}")
 # safe in a git ref and in a releases/download/<tag> URL path segment. This
 # rejects whitespace, control bytes, non-ASCII, '/', ';', etc.
 _REF_SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~+-]*")
+_ASCII_NUM = re.compile(r"[0-9]+")
+_STABLE_RELEASE = re.compile(r"v?[0-9]+(?:\.[0-9]+)+")
 # Hard cap on an update-check response body (GitHub tag lists are far smaller).
 _MAX_JSON_BYTES = 4_000_000
 
@@ -138,16 +140,20 @@ def _sort_key(tag):
         if body[:1] == "v":
             # Only a single leading 'v' may be consumed; a double-'v' name is a
             # malformed tag, not the release it otherwise resembles.
-            return (0,) * max(3, body.count(".") + 1)
+            return (0, 0, 0)
     else:
         body = tag
     parts = body.split(".")
+    if not body or not parts:
+        return (0, 0, 0)
     nums = []
     for p in parts:
+        if not _ASCII_NUM.fullmatch(p):
+            return (0, 0, 0)
         try:
             nums.append(int(p))
         except ValueError:
-            nums.append(0)
+            return (0, 0, 0)
     while len(nums) < 3:
         nums.append(0)
     return tuple(nums)
@@ -174,7 +180,8 @@ def latest_tag(component):
     plain = [t for t in names if _is_release_tag(t)]
     if not plain:
         return None
-    return max(plain, key=_sort_key)
+    return max(plain, key=lambda tag: (_sort_key(tag),
+                                       1 if _STABLE_RELEASE.fullmatch(tag) else 0))
 
 
 def remote_master_sha():

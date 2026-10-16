@@ -103,7 +103,7 @@ struct DashboardView: View {
                     Text("Kill all").frame(width: stackButtonWidth)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(FlatPalette.red)
+                .tint(.red)
                 .disabled(model.busy || !model.snapshot.tracked)
                 Spacer()
             }

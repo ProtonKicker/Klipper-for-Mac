@@ -15,11 +15,12 @@ enum FlatIconKind {
 }
 
 struct FlatIcon: View {
+    @Environment(\.colorScheme) private var colorScheme
     let kind: FlatIconKind
     var size: CGFloat = 16
     var color: Color = FlatPalette.brown
 
-    private var soft: Color { color.opacity(0.28) }
+    private var soft: Color { color.opacity(colorScheme == .dark ? 0.55 : 0.28) }
     private var stroke: StrokeStyle {
         StrokeStyle(lineWidth: max(1.2, size * 0.14), lineCap: .round, lineJoin: .round)
     }

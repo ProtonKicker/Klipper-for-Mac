@@ -35,7 +35,7 @@ struct ContentView: View {
                     Label {
                         Text(p.rawValue)
                     } icon: {
-                        FlatIcon(kind: p.icon, size: 16, color: p.tint)
+                        FlatIcon(kind: p.icon, size: 16, color: pane == p ? .primary : p.tint)
                     }
                     .tag(p)
                 }

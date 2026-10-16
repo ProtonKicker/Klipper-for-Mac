@@ -51,8 +51,8 @@ struct SettingsView: View {
                 Spacer()
             }
             if !model.updateLines.isEmpty {
-                ForEach(Array(model.updateLines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
+                ForEach(model.updateLines.indices, id: \.self) { index in
+                    Text(model.updateLines[index])
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -111,4 +111,3 @@ struct SettingsView: View {
         }
     }
 }
-

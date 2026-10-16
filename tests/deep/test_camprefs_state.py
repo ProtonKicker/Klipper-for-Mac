@@ -280,11 +280,6 @@ def test_status_shows_a_valid_streaming_state(state):
     assert "device Front" in lines
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: running() re-validates pid/boot_time/cmdline but never the "
-    "'port' field, so a corrupt run/cam.json makes stream_url()/snapshot_url() "
-    "raise an uncaught ValueError - 'klipperformac cam status', 'cam on' and "
-    "the TUI redraw die with a traceback instead of self-healing the state"))
 def test_status_survives_a_non_numeric_port_in_state(state):
     write_state(state, good_state(port="banana"))
     lines = state.cam.status()          # currently: ValueError
@@ -292,10 +287,6 @@ def test_status_survives_a_non_numeric_port_in_state(state):
     assert state.cam.running() is None, "an unusable port must self-heal"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: the state file's 'port' is never range-checked (paths._port "
-    "demands 1..65535 for the env var), so an absurd port is published "
-    "verbatim as the stream URL by cam status"))
 def test_status_rejects_an_out_of_range_port(state):
     write_state(state, good_state(port=99999999999))
     lines = "\n".join(state.cam.status())

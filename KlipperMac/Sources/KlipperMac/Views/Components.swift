@@ -47,7 +47,14 @@ struct MessageBanner: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
             .padding(8)
         }
     }

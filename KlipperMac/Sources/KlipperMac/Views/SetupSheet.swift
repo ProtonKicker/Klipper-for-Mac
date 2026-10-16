@@ -16,9 +16,9 @@ struct SetupSheet: View {
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                            Text(line)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines.indices, id: \.self) { index in
+                            Text(lines[index])
                                 .font(.system(size: 11, design: .monospaced))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)

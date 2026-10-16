@@ -110,20 +110,24 @@ def helper_path():
             path = Path(raw).expanduser()
             if path.is_file():
                 return path
-    if paths.CAM_BIN.is_file():
-        return paths.CAM_BIN
+    installed = paths.CAM_BIN if paths.CAM_BIN.is_file() else None
+    blocked_dest = paths.CAM_BIN.exists() and not paths.CAM_BIN.is_file()
     for cand in GUI_BUNDLES:
         inside = Path(cand).expanduser()
         if not inside.is_file():
             continue
+        if blocked_dest:
+            return inside
         try:
             paths.CAM_BIN.parent.mkdir(parents=True, exist_ok=True)
-            if _needs_copy(inside, paths.CAM_BIN):
+            if installed is None or _needs_copy(inside, paths.CAM_BIN):
                 shutil.copy2(str(inside), str(paths.CAM_BIN))
                 os.chmod(str(paths.CAM_BIN), 0o755)
         except OSError:
             return inside  # read-only bundle etc.: use it where it is
         return paths.CAM_BIN
+    if installed is not None:
+        return installed
     return None
 
 
@@ -390,14 +394,26 @@ def _device_argv(p):
     """["--device", NAME] when a camera name is stored, [] when it is not, and
     None when the stored name cannot be passed to another process at all."""
     device = p.get("device")
-    if not device:
+    if device is None:
         return []
     text = str(device)
+    if not text:
+        return []
     try:
         os.fsencode(text)          # what exec() does to every argv element
     except ValueError:             # UnicodeEncodeError: nothing we can spawn
         return None
     return ["--device", text]
+
+
+def _valid_state_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if 1 <= port <= 65535:
+        return port
+    return None
 
 
 def running():
@@ -412,6 +428,8 @@ def running():
     pid = state.get("pid") if isinstance(state, dict) else None
     bt = _process()._boot_time()
     if bt is None or not isinstance(pid, int) or state.get("boot_time") != bt:
+        return _clear_state()
+    if "port" in state and _valid_state_port(state.get("port")) is None:
         return _clear_state()
     cmd = _process()._live_cmds([pid]).get(str(pid), "")
     if CAM not in cmd or "--stream" not in cmd:
@@ -887,8 +905,9 @@ def _check_permission():
 def _check_port():
     state = running()
     if state is not None:
+        port = _valid_state_port(state.get("port")) or paths.CAM_PORT
         return True, "camera port {}: streaming".format(
-            state.get("port") or paths.CAM_PORT)
+            port)
     if _port_free(paths.CAM_PORT):
         return True, "camera port {}: free".format(paths.CAM_PORT)
     return False, ("camera port {}: taken by another app (or an untracked "

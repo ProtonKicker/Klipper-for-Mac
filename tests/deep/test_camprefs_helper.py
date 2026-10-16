@@ -136,12 +136,6 @@ def test_helper_is_copied_out_of_the_bundle_once(stack, tmp_path, monkeypatch):
     assert inside.read_bytes() == b"APPLE-SILICON-BINARY", "bundle untouched"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: cam.helper_path() returns any existing "
-    "~/.klipperformac/bin/KlipperCam without ever comparing it to the app "
-    "bundle, so _needs_copy() is dead code and a newer helper shipped by an "
-    "updated 'Klipper for Mac.app' is never installed - the user keeps "
-    "streaming on the old binary until the file is deleted by hand"))
 def test_a_newer_bundle_helper_replaces_the_installed_copy(stack, tmp_path,
                                                            monkeypatch):
     inside = bundle_at(stack, tmp_path, body=b"OLD")
@@ -214,12 +208,6 @@ def test_bundle_that_is_a_directory_is_skipped(stack, tmp_path, monkeypatch):
     assert stack.cam.helper_path() is None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BUG DEEP: when ~/.klipperformac/bin/KlipperCam exists as a DIRECTORY, "
-    "helper_path() copies the bundle binary *into* that folder (shutil.copy2 "
-    "silently retargets), chmods the folder, and returns the folder path as "
-    "'the helper' - every later exec then fails and doctor blames the camera "
-    "permission instead of the broken install"))
 def test_cam_bin_as_a_directory_must_not_be_reported_as_the_helper(
         stack, tmp_path, monkeypatch):
     inside = bundle_at(stack, tmp_path, body=b"BINARY")
