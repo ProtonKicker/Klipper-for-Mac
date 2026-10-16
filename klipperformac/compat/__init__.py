@@ -6,8 +6,10 @@ supplied via CPATH, so pristine Klipper sources compile bit-for-bit unchanged
 dirs for #include <...>; verified empirically with `gcc -E -v`).
 
 Run-time: a `sitecustomize.py` in the venv we create (CPython auto-imports
-it) supplies Linux-only attributes Moonraker touches, and an `ip` shim on
-Moonraker's PATH emulates `ip -json -det address` from `ifconfig`.
+it) supplies Linux-only attributes Moonraker touches, asks for a USER_INTERACTIVE
+QoS class for the klippy child alone (the closest macOS gets to real-time
+scheduling without root), and an `ip` shim on Moonraker's PATH emulates
+`ip -json -det address` from `ifconfig`.
 
 Upstream Klipper/Moonraker checkouts are never edited by any of this.
 """
@@ -17,6 +19,13 @@ import subprocess
 from pathlib import Path
 
 INCLUDE = str((Path(__file__).resolve().parent / "include"))
+
+# The single switch the sitecustomize QoS block reads. Kept here so
+# process.start() (which sets it) and shim_env()/web_env (which must not carry
+# it) cannot drift apart, and so `klipperformac timing` can look for the exact
+# string the shim looks for.
+QOS_ENV_VAR = "KLIPPERFORMAC_QOS"
+QOS_ENV_VALUE = "ui"
 
 SITECUSTOMIZE_SRC = '''\
 """klipperformac runtime shim (auto-imported by the venv's Python).
@@ -29,8 +38,20 @@ macOS Python lacks a few Linux-only attributes Moonraker touches:
   local address with a UDP socket; the flags only make it nonblocking/
   close-on-exec, and the probe never reads or writes, so defining them as 0
   keeps behavior correct (socket type stays a plain SOCK_DGRAM).
+
+And a scheduler shim for klippy alone: macOS has no SCHED_FIFO and a *negative*
+nice is root-only (measured on this Mac: os.setpriority(PRIO_PROCESS, 0, -5)
+-> EACCES, os.nice(-1) -> EPERM, renice -n -5 -> Permission denied), so the one
+posture still available without root is a QoS class request
+(pthread_set_qos_class_self_np, sys/qos.h). It runs only when KLIPPERFORMAC_QOS
+is "ui", which process.start() puts in the klippy child's environment and in
+nobody else's; every failure path here is silent, because a machine where the
+symbol is missing must still boot klippy. sys/qos.h:51 - this "does not allow
+threads to supersede any limits that may be applied" to the process, so it is a
+request, not a guarantee.
 Generated file; re-created by setup/up.
 """
+import os as _os
 import socket
 import time
 
@@ -40,6 +61,41 @@ if not hasattr(time, "CLOCK_BOOTTIME"):
 for _flag, _name in ((0x800, "SOCK_CLOEXEC"), (0x4000, "SOCK_NONBLOCK")):
     if not hasattr(socket, _name):
         setattr(socket, _name, 0)
+
+_QOS_UI = 0x21                # QOS_CLASS_USER_INTERACTIVE (sys/qos.h:131)
+
+
+def _klipperformac_set_qos():
+    """Ask for USER_INTERACTIVE on THIS thread; False when not available."""
+    try:
+        import ctypes
+        lib = ctypes.CDLL(None, use_errno=True)
+        fn = lib.pthread_set_qos_class_self_np   # AttributeError -> bail
+        fn.argtypes = [ctypes.c_uint, ctypes.c_int]
+        # relative priority 0: the range is 0..QOS_MIN_RELATIVE_PRIORITY (-15,
+        # sys/qos.h:153) and a negative one only ever loosens the request.
+        return fn(ctypes.c_uint(_QOS_UI), ctypes.c_int(0)) == 0
+    except Exception:
+        return False
+
+
+if _os.environ.get("KLIPPERFORMAC_QOS", "") == "ui":
+    _klipperformac_set_qos()
+    import threading as _th
+    # Threads inherit the QoS class of the thread that created them, so
+    # klippy's reactor/serial/helpers each have to ask again ON the new thread
+    # itself. _bootstrap_inner is the first code that runs there, and every
+    # library here is a caller of threading.Thread, so the patch is guarded to
+    # be applied once - re-importing this file must not stack wrappers.
+    if not getattr(_th.Thread, "_klipperformac_qos", False):
+        _orig_boot = _th.Thread._bootstrap_inner
+
+        def _qos_boot(self, *a, **kw):      # runs ON the new thread
+            _klipperformac_set_qos()
+            return _orig_boot(self, *a, **kw)
+
+        _th.Thread._bootstrap_inner = _qos_boot
+        _th.Thread._klipperformac_qos = True
 '''
 
 # Emits what Moonraker parses: operstate, link_type, address, addr_info with
@@ -162,8 +218,16 @@ def ensure_runtime_shims(venv_python):
 
 
 def shim_env(base=None):
+    """Moonraker's environment: our `ip` shim on PATH, and never the QoS switch.
+
+    KLIPPERFORMAC_QOS is klippy's alone (process.start() sets it for the klippy
+    child only). Stripping it here is what keeps that true when a user exports it
+    in their shell: moonraker is not on the step-timing path, and a blanket
+    boost is not what the mitigation asks for.
+    """
     from .. import paths
     env = dict(os.environ if base is None else base)
+    env.pop(QOS_ENV_VAR, None)
     shims = str(paths.APP_HOME / SHIMS_DIR_NAME)
     env["PATH"] = shims + os.pathsep + env.get("PATH", os.defpath)
     return env

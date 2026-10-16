@@ -79,12 +79,14 @@ off at the café.
 | `serial` | list USB serials; `--auto`/`--set PATH` writes `[mcu] serial:` into printer.cfg |
 | `data` | show data folder; `--set PATH` moves everything there |
 | `presets` | config presets (`--save/--use/--import`, auto-backup) |
+| `backup create/list/verify/restore/prune` | archive the whole data folder to `data/backups/`, verify an archive actually restores, restore it, keep the newest 10 |
 | `ui [fluidd\|mainsail]` | switch the default dashboard and open it |
 | `gcode …` / `--status` | send G-code / query printer state |
 | `cam on/off/status/list/snapshot/build/config` | Mac or iPhone camera streamed to the dashboard (localhost-only) |
 | `logs [klipper\|moonraker] [-f]` | tail logs |
 | `update [--apply]` | check upstream; re-fetch pinned tags and rebuild (never automatic) |
 | `doctor` / `selftest` | environment / end-to-end link checks |
+| `timing [--json]` | read-only scheduling + power telemetry: what macOS is giving klippy right now (safe mid-print; `doctor` prints the short form) |
 | `uninstall` | remove everything; asks before deleting the data folder (`--data`/`--keep-data`) |
 
 ## Where things live
@@ -109,6 +111,14 @@ venv so Moonraker/Mainsail run unmodified. Timing is comfortable: Klipper
 tolerates hundreds of ms of host latency; macOS delivers sub-millisecond.
 The one rule: **the Mac must stay awake while printing** — `up` runs
 `caffeinate` for you; keep it on AC.
+
+## macOS hardware limits
+
+CAN bus at runtime, host GPIO/I2C/SPI, and Linux-style real-time priorities
+are **not possible on macOS** — verified against the pinned upstream sources,
+with the exact code paths and the working alternatives (USB-CDC firmware
+flashing, second USB MCU, network-pluggable power/sensor devices) documented
+in [docs/macos-hardware-limits.md](docs/macos-hardware-limits.md).
 
 ## Limitations
 

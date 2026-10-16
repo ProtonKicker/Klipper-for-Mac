@@ -62,9 +62,11 @@ Rules:
   marked `hardware`
 - long-running tests should be marked `slow`
 
-Right now the scaffold supports a live tier, but there are no dedicated
-`live` / `hardware` tests checked in yet, so `make test-live` may collect zero
-tests. That is fine; the scaffold is ready for them.
+The live tier is no longer a scaffold: `tests/live/` (running stack + attached
+board) and one live read-only posture test inside `tests/rt/` carry
+`@pytest.mark.live` / `@pytest.mark.hardware`, so `make test-live` collects real
+tests. It still never runs by default, and it still needs
+`KLIPPERFORMAC_ALLOW_LIVE=1` said out loud because it reads your actual printer.
 
 ## Hooks
 
@@ -113,6 +115,13 @@ Use these rough buckets:
 - `tests/test_*.py` for fast, focused offline checks
 - `tests/regress/` for permanent regression tests that must stay in the fast tier
 - `tests/deep/` for larger offline sweeps, fuzz/property tests, and slower cases
+- one directory per feature slice for a group that shares fixtures:
+  `tests/backup/` (archive format, CLI surface, restore, prune), `tests/rt/`
+  (QoS shim, spawn environment, `timing` telemetry, live posture), `tests/docs/`
+  (guards on the verified hardware-limit verdicts), `tests/live/` (opt-in, real
+  stack). A feature directory needs no marker to be collected — `pytest.ini`
+  already points at `tests`, and the default `-m "not live and not hardware"`
+  deselects the opt-in tests wherever they live.
 
 If a fast-tier test becomes expensive, profile it with pytest durations and
 move it to `tests/deep/` or mark it `slow`.

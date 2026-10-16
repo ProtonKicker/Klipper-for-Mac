@@ -19,8 +19,8 @@ import subprocess
 import time
 
 from . import paths, shaper
-from .compat import (build_env, ensure_runtime_shims, invalidate_stale_build,
-                     shim_env)
+from .compat import (QOS_ENV_VALUE, QOS_ENV_VAR, build_env,
+                     ensure_runtime_shims, invalidate_stale_build, shim_env)
 
 SERVICES = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
 # The ports the stack serves on: `up` refuses to start a stack a squatter would
@@ -232,6 +232,18 @@ def _popen(cmd, **kw):
                     stderr=subprocess.DEVNULL, start_new_session=True)
     defaults.update(kw)
     return subprocess.Popen(cmd, **defaults)
+
+
+def _web_env(repo_root):
+    """The UI proxies' environment: the repo importable, and never the QoS
+    switch klippy alone asked for (compat.shim_env does the same for moonraker).
+    A user who exported KLIPPERFORMAC_QOS in their shell would otherwise boost
+    every child of the stack, which is not the mitigation and not measurable."""
+    env = dict(os.environ)
+    env.pop(QOS_ENV_VAR, None)
+    env["PYTHONPATH"] = repo_root + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return env
 
 
 def _under_install(token):
@@ -582,12 +594,36 @@ def start():
     kpy = shaper.interpreter_for_klipper()[0]
     klipper_klippy = paths.KLIPPER / "klippy"
     env = build_env()
+    # klippy alone is timing-critical, so it alone carries the switch that makes
+    # our generated sitecustomize ask for a USER_INTERACTIVE QoS class
+    # (compat.SITECUSTOMIZE_SRC). Moonraker, the UI proxies and the camera never
+    # see it: they are not on the step-timing path.
+    #
+    # There is deliberately no nice/renice/`taskpolicy` call here. macOS has no
+    # SCHED_FIFO and a *negative* nice is root-only - measured on this Mac:
+    # os.setpriority(PRIO_PROCESS, 0, -5) -> EACCES, os.nice(-1) -> EPERM,
+    # `renice -n -5` -> Permission denied - and a positive nice would only push
+    # klippy further down. `klipperformac timing` reports what the scheduler
+    # actually gave us.
+    #
+    # argv is untouched: _service_kind() and running() identify the child by its
+    # argv shape, so an environment-only change stays invisible to detection.
+    kenv = dict(env)
+    kenv[QOS_ENV_VAR] = QOS_ENV_VALUE
+    # ...but the switch is only half of it: sitecustomize is PER INTERPRETER, and
+    # klippy may be about to run on the 3.14 shaper venv (SHAPER_CALIBRATE needs
+    # numpy). installer.setup() writes the file into the main venv only, so
+    # without this the QoS ask - and the CLOCK_BOOTTIME/SOCK_* attributes -
+    # would be read by nobody, in silence. Idempotent, and cheap when kpy is the
+    # main venv (the file already matches and is left alone).
+    if str(kpy) != py:
+        ensure_runtime_shims(kpy)
 
     kproc = _popen(
         [kpy, str(klipper_klippy / "klippy.py"),
          "-a", str(paths.API_SOCKET), "-l", str(paths.KLIPPY_LOG),
          str(paths.PRINTER_CFG)],
-        cwd=str(klipper_klippy), env=env,
+        cwd=str(klipper_klippy), env=kenv,
     )
     mproc = _popen(
         [py, "-m", "moonraker",
@@ -596,9 +632,7 @@ def start():
         cwd=str(paths.MOONRAKER), env=shim_env(),
     )
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    web_env = dict(os.environ)
-    web_env["PYTHONPATH"] = repo_root + (
-        os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
+    web_env = _web_env(repo_root)
     bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
 
     wproc = _popen(
@@ -642,9 +676,7 @@ def repair(state=None):
         return []
     py = str(paths.VENV_PY)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    web_env = dict(os.environ)
-    web_env["PYTHONPATH"] = repo_root + (
-        os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
+    web_env = _web_env(repo_root)
     bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
     started = {}
     if "web_mainsail" in safe:

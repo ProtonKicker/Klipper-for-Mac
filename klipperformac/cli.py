@@ -1,5 +1,5 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
-logs | serial | update | open | doctor | cam | uninstall."""
+logs | serial | update | open | doctor | timing | backup | cam | uninstall."""
 import argparse
 import contextlib
 import fcntl
@@ -254,6 +254,7 @@ def _cmd_up(args):
         for line in _lan_urls():
             print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
+        _power_warning()
         if not _wait_ready():
             sys.exit(1)
         if getattr(args, "open", False):
@@ -894,6 +895,17 @@ def cmd_presets(args):
     print("(current marked *)")
 
 
+def cmd_backup(args):
+    """`klipperformac backup create|list|verify|restore|prune`.
+
+    All of it lives in backup.py (the archive format, the zip-slip guard, the
+    config validation). This is the thin dispatch the subparser points at, and
+    backup is imported here rather than at module scope for the same reason tui
+    is: cli.py must not need the whole module to parse `klipperformac status`."""
+    from . import backup
+    backup.dispatch(args)
+
+
 def _klippy_console(cmd, timeout=6):
     """Send a Klipper console command (STATUS, RESTART, HELP, ...) over the
     host console PTY that klippy exposes as /tmp/printer. G-code via UIs
@@ -1076,6 +1088,678 @@ def cmd_tui(args):
     tui.main()
 
 
+# ---- timing: what macOS is doing to klippy's scheduling (read-only) ------
+#
+# Everything in this block is a READ: `ps`, `pmset`, `ioreg`, our own log files
+# and one localhost GET. Nothing is started, stopped, restarted or rewritten, so
+# `klipperformac timing` is safe to run *during* a print - which is exactly when
+# its answer matters.
+#
+# The thresholds come from the "Real-time scheduling" research plus pristine
+# upstream Klipper (which stays untouched; these are reads of it, not edits):
+#   - src/stepper.c:289 `queue_step oid=%c interval=%u count=%hu add=%hi` - one
+#     command per step run, so the MCU owns every step edge and the host only
+#     has to keep feeding it.
+#   - klippy/chelper/serialqueue.c:110 MIN_REQTIME_DELTA 0.100 and :107 MIN_RTO
+#     0.025 - commands are released ~100 ms ahead of need with a 25 ms
+#     retransmit floor; the research's reading of that budget is that the host
+#     must get scheduled again every ~250-450 ms to stay comfortably ahead.
+#   - klippy/extras/error_mcu.py:34-46 - "Timer too close" and its siblings are
+#     what host starvation looks like; klippy/mcu.py:906 turns a serial dropout
+#     into "Lost communication with MCU".
+#   - measured on this Mac by that research: srtt <= 3 ms, min half-RTT 64-84 us,
+#     0 "Timer too close" across 6 klippy.log files, klippy at `ps` pri 31, and
+#     no root-free way to ask for more: macOS has no SCHED_FIFO and a negative
+#     nice is root-only (os.setpriority -> EACCES, os.nice(-1) -> EPERM), which
+#     is why the only mitigation we ship is the QoS request in
+#     compat.SITECUSTOMIZE_SRC plus this telemetry.
+
+PRI_NORMAL = 31        # an unthrottled process reads 31 here (measured)
+PRI_THROTTLED = 20     # UTILITY-class QoS lands in 20..30 (measured)
+_THERM_TIMEOUT = 2.0   # `pmset -g therm` streams and never exits by itself
+_LOG_BUDGET = 8 << 20  # at most 8 MiB of klippy.log: the command stays cheap
+_MACOS_MAX_PID = 99999  # macOS pids stop here; see process.py's _MAX_PID note
+
+# The starvation error strings, as klippy prints them (extras/error_mcu.py:34-46
+# is the list upstream itself treats as "the host computer is overloaded").
+HOST_ERRORS = (
+    ("timer_too_close", "Timer too close"),
+    ("missed_scheduling", "Missed scheduling of next "),
+    ("rescheduled_timer", "Rescheduled timer in the past"),
+    ("stepper_too_far", "Stepper too far in past"),
+    # mcu.py:906: a serial dropout. Often USB/board-side, not host starvation,
+    # so it is reported but never fatal on its own.
+    ("lost_communication", "Lost communication with MCU"),
+)
+
+# Fields the research pinned as the print's health indicators. A Stats line can
+# carry several MCUs, so each key is read across the whole line: the worst MCU
+# wins, and for rto the worst value is the lowest (its floor is MIN_RTO,
+# serialqueue.c:107).
+STAT_MAXIMA = ("srtt", "bytes_retransmit", "mcu_task_stddev", "sysload",
+               "print_stall", "buffer_time", "print_time")
+STAT_MINIMA = ("rto",)
+STAT_FIELDS = STAT_MAXIMA + STAT_MINIMA
+
+# Options that only a *Linux* Klipper knows. klippy rejects an option it has not
+# seen: "Option 'rtpriority' is not valid in section 'printer'" comes out of
+# klippy/configfile.py:440 and halts the printer, so adding it would be worse
+# than useless - we detect it and say so, and never rewrite printer.cfg
+# (AGENTS.md 2). Grow this list only from real user reports, each one verified
+# against this Klipper checkout's docs/Config_Reference.md first.
+LINUX_ONLY_CONFIG_OPTIONS = (("printer", "rtpriority"),)
+
+
+def _valid_pid(value):
+    """value as a pid worth asking `ps` about, or None (see process.py: a pid of
+    0 is a process group and a huge one is not a process at all)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 1 < value <= _MACOS_MAX_PID else None
+
+
+def _decode(raw):
+    if raw is None:
+        return ""
+    if isinstance(raw, bytes):
+        return raw.decode(errors="replace")
+    return str(raw)
+
+
+def _timed_run(argv, timeout=5.0):
+    """stdout of a read-only command, "" when it said nothing, None when it could
+    not be run at all.
+
+    The timeout is not cosmetic: `pmset -g therm` streams and never exits on its
+    own (research finding), so calling it without one hangs the command - and
+    when it does time out, the bytes it already printed are the answer, which is
+    why TimeoutExpired.stdout is parsed instead of dropped."""
+    try:
+        done = subprocess.run(argv, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return _decode(exc.stdout)
+    except Exception:
+        return None
+    return _decode(done.stdout)
+
+
+def _pri_class(pri):
+    """Verdict for a `ps` priority, from the measurements in the research: 31 is
+    the machine's normal posture, 20..30 is UTILITY-class (throttled), under 20
+    is BACKGROUND/App-Nap territory a print does not survive."""
+    if pri is None:
+        return "unknown"
+    if pri >= PRI_NORMAL:
+        return "normal"
+    if pri >= PRI_THROTTLED:
+        return "throttled"
+    return "background"
+
+
+def _sched_posture(pid):
+    """(nice, pri) of one pid from `ps -o pid=,ni=,pri=`; (None, None) if the
+    read did not answer."""
+    out = _timed_run(["ps", "-o", "pid=,ni=,pri=", "-p", str(pid)])
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == str(pid):
+            try:
+                return int(parts[1]), int(parts[2])
+            except ValueError:
+                return None, None
+    return None, None
+
+
+def _qos_env_state(pid):
+    """'on'/'off'/'unknown': is KLIPPERFORMAC_QOS=ui in that pid's environment?
+
+    This is the only observable evidence that klippy actually got our shim: a
+    foreign sitecustomize.py in the same venv makes compat skip writing ours
+    (compat/__init__.py writes only its own files), and then klippy boots with
+    no QoS request and no complaint. The kernel hides another user's environment,
+    so 'unknown' is a normal - and honest - answer."""
+    out = _timed_run(["ps", "eww", "-p", str(pid), "-o", "command="])
+    if out is None:
+        return "unknown"
+    if "KLIPPERFORMAC_QOS=ui" in out:
+        return "on"
+    if "KLIPPERFORMAC_QOS" in out:
+        return "off"
+    # `ps eww` appends KEY=VALUE pairs after argv; a line with none of them did
+    # not show the environment at all.
+    return "off" if re.search(r"\s[A-Z_][A-Z0-9_]*=", out) else "unknown"
+
+
+def _pmset_block(text, header):
+    """The `key value` pairs of one `pmset -g custom` block ("Battery Power:").
+    That block is what a laptop falls back to the moment the cable comes out,
+    and its lowpowermode/sleep are two of the things that kill a print."""
+    block = {}
+    inside = False
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.endswith(":"):
+            inside = stripped == header
+            continue
+        if inside:
+            parts = stripped.split(None, 1)
+            if len(parts) == 2:
+                block[parts[0]] = parts[1].strip()
+    return block
+
+
+def _int_or_none(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _power_external():
+    """True on AC, False on battery, None when this Mac does not say.
+
+    `ioreg -rn AppleSmartBattery`'s ExternalConnected, not `pmset -g batt`: the
+    research found the pmset string varies ("Battery %", "AC attached", a
+    charging line) while this key is a boolean in the plist."""
+    out = _timed_run(["ioreg", "-rn", "AppleSmartBattery"])
+    if not out:
+        return None
+    m = re.search(r'"ExternalConnected"\s*=\s*(Yes|No)', out)
+    return None if m is None else m.group(1) == "Yes"
+
+
+def _thermal(timeout=_THERM_TIMEOUT):
+    """`pmset -g therm` as a dict (CPU_Speed_Limit is the one that matters: a
+    capped CPU beats any QoS request). Always read under a timeout - see
+    _timed_run()."""
+    out = _timed_run(["pmset", "-g", "therm"], timeout=timeout)
+    fields = {}
+    for m in re.finditer(r"([A-Za-z_]{3,})\s*=\s*(\S+)", out or ""):
+        fields[m.group(1)] = m.group(2)
+    return fields
+
+
+def _caffeinate_assert_held(pids):
+    """True when a caffeinate pid of OURS holds PreventUserIdleSystemSleep.
+
+    `pmset -g assertions` prints `pid 16010(caffeinate): ... named: "caffeinate
+    command-line tool"`, so the check is the pid *and* the name in parentheses:
+    the pid comes from state.json, which running() has already vouched for, and
+    the name is what stops a recycled number - or somebody else's guard - from
+    reading as our sleep prevention (process.py keeps its own caffeinate ledger
+    for the same reason)."""
+    if not pids:
+        return None
+    out = _timed_run(["pmset", "-g", "assertions"])
+    if out is None:
+        return None
+    for line in out.splitlines():
+        if "PreventUserIdleSystemSleep" not in line:
+            continue
+        m = re.search(r"\bpid\s+(\d+)\(caffeinate\)", line)
+        if m and _int_or_none(m.group(1)) in pids:
+            return True
+    return False
+
+
+def _klippy_log_files(limit=8):
+    """klippy.log newest-first, then the rotated ones. The live log leads
+    because the evidence a user cares about is the print happening now."""
+    try:
+        rotated = sorted((paths.KLIPPY_LOG.parent.glob(
+            paths.KLIPPY_LOG.name + "*")), reverse=True)
+    except OSError:
+        rotated = []
+    files = [paths.KLIPPY_LOG] + [f for f in rotated
+                                  if f != paths.KLIPPY_LOG]
+    return files[:limit]
+
+
+def _read_log_tail(path, budget):
+    """(text, truncated) for at most `budget` bytes of one log, taken from the
+    END: a starvation event from the current print sits there, and an old
+    startup banner does not change the verdict."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            if size > budget:
+                f.seek(size - budget)
+                f.readline()  # a partial line is not evidence
+                return _decode(f.read()), True
+            return _decode(f.read()), False
+    except OSError:
+        return "", False
+
+
+def _host_budget(files=None, budget=_LOG_BUDGET):
+    """klippy.log's own account of host scheduling, regex-extracted.
+
+    Values are the maxima over every log line the scan reached, plus the counts
+    of the error strings upstream labels "host computer is overloaded"
+    (extras/error_mcu.py:34-46). buffer_time is only counted while print_time
+    advanced, because a parked print always reads 0.000."""
+    counts = {key: 0 for key, _ in HOST_ERRORS}
+    maxima = {}
+    stats_lines = 0
+    min_half_rtt = None
+    scanned = []
+    truncated = False
+    left = budget
+    for path in _klippy_log_files() if files is None else files:
+        if left <= 0:
+            truncated = True
+            break
+        text, cut = _read_log_tail(path, left)
+        if text:
+            scanned.append(str(path))
+            left -= len(text.encode(errors="replace"))
+        truncated = truncated or cut
+        prev_print_time = None
+        for line in text.splitlines():
+            for key, needle in HOST_ERRORS:
+                counts[key] += line.count(needle)
+            m = re.search(r"min_half_rtt=([0-9.]+)", line)
+            if m:
+                min_half_rtt = float(m.group(1))
+            if not line.startswith("Stats "):
+                continue
+            stats_lines += 1
+            found = {}
+            for key in STAT_FIELDS:
+                values = [float(v) for v in re.findall(
+                    r"\b%s=(-?[0-9.]+)" % key, line)]
+                if not values:
+                    continue
+                # A Stats line can carry several MCUs: the worst one is the
+                # answer, and for rto "worst" is the smallest floor.
+                found[key] = (min(values) if key in STAT_MINIMA
+                              else max(values))
+            if "print_time" not in found:
+                continue
+            advancing = (prev_print_time is None
+                         or found["print_time"] > prev_print_time)
+            prev_print_time = found["print_time"]
+            if not advancing:
+                found.pop("buffer_time", None)
+            for key, value in found.items():
+                if key not in maxima:
+                    maxima[key] = value
+                elif key in STAT_MINIMA:
+                    maxima[key] = min(maxima[key], value)
+                else:
+                    maxima[key] = max(maxima[key], value)
+    return {
+        "counts": counts,
+        "srtt_max": maxima.get("srtt"),
+        "rto_min": maxima.get("rto"),
+        "bytes_retransmit_max": maxima.get("bytes_retransmit"),
+        "mcu_task_stddev_max": maxima.get("mcu_task_stddev"),
+        "sysload_max": maxima.get("sysload"),
+        "print_stall_max": maxima.get("print_stall"),
+        "buffer_time_max": maxima.get("buffer_time"),
+        "print_time_max": maxima.get("print_time"),
+        "min_half_rtt": min_half_rtt,
+        "stats_lines": stats_lines,
+        "log_files": scanned,
+        "truncated": truncated,
+    }
+
+
+def _power_warning():
+    """One honest line when a stack starts on battery. `caffeinate -s` asks for
+    prevent-system-sleep, which - measured on this Mac and per the man page -
+    only holds while on AC, so on battery just the idle-sleep assertion is
+    keeping us alive and closing the lid still ends the print. Silent on AC and
+    silent when this Mac does not say, because a guess is not a warning."""
+    if _power_external() is not False:
+        return
+    print("[!] On battery: caffeinate's system-sleep assertion is AC-only, so "
+          "lid-close still ends the print. Plug in before printing, and check "
+          "Low Power Mode (`klipperformac timing`).")
+
+
+def linux_only_options(text):
+    """[(section, option)] for the Linux-only Klipper options in a printer.cfg.
+
+    Pure function over text: it never reads or writes a config file, so the
+    caller decides what (if anything) the user is told. `key: value` lines at
+    column 0 start an option; an indented line continues the option above it, so
+    only column-0 keys are tested."""
+    hits = []
+    section = ""
+    for raw in (text or "").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped[0] in "#;":
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].strip().lower()
+            continue
+        if raw[:1] in (" ", "\t"):
+            continue
+        key = re.split(r"[:=]", stripped, maxsplit=1)[0].strip().lower()
+        if (section, key) in LINUX_ONLY_CONFIG_OPTIONS:
+            hits.append((section, key))
+    return hits
+
+
+def _printer_cfg_linux_only():
+    """linux_only_options() on the live printer.cfg; [] when it cannot be read
+    (an unreadable config is not this command's problem to report)."""
+    try:
+        text = paths.PRINTER_CFG.read_text(errors="replace")
+    except (OSError, UnicodeError):
+        return []
+    try:
+        return linux_only_options(text)
+    except Exception:
+        return []
+
+
+def _tracked_pid(name):
+    """The pid state.json recorded for a service, only when running() still
+    vouches for it.
+
+    `process.running()` answers {name: bool} (it re-validates pid + argv marker +
+    boot time on every read) and the number itself lives in run/state.json, so
+    a posture read needs both halves: the bool is the evidence the pid still is
+    this service, the record is the number. A recycled pid never gets here."""
+    state = process.running() or {}
+    if not state.get(name):
+        return None
+    try:
+        record = json.loads(paths.STATE.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    return _valid_pid(record.get(name))
+
+
+def _timing_report():
+    """The whole scheduling picture as one dict. Keys are snake_case and stable:
+    `timing --json` is what the SwiftUI app reads, so a renamed key is a GUI
+    bug. All cheap reads; no state change, no restart."""
+    state = process.running() or {}
+    pid = _tracked_pid("klipper")
+    nice, pri = (None, None)
+    if pid is not None:
+        nice, pri = _sched_posture(pid)
+    klipper = {
+        "pid": pid,
+        "running": bool(state.get("klipper")),
+        "nice": nice,
+        "pri": pri,
+        "class": _pri_class(pri),
+        "qos_env": _qos_env_state(pid) if pid is not None else "unknown",
+    }
+    caffeinate_pid = _tracked_pid("caffeinate")
+    if caffeinate_pid is None and state.get("caffeinate") is False \
+            and state.get("klipper"):
+        # The stack is up and running() says our guard is NOT: nothing to look
+        # for in `pmset -g assertions`, the sleep prevention is simply gone.
+        caffeinate_held = False
+    else:
+        caffeinate_held = _caffeinate_assert_held(
+            [caffeinate_pid] if caffeinate_pid else [])
+    custom = _timed_run(["pmset", "-g", "custom"])
+    battery = _pmset_block(custom, "Battery Power:")
+    thermal = _thermal()
+    power = {
+        "external_connected": _power_external(),
+        "battery_lowpowermode": _int_or_none(battery.get("lowpowermode")),
+        "battery_sleep": _int_or_none(battery.get("sleep")),
+        "caffeinate_pid": caffeinate_pid,
+        "caffeinate_assert_held": caffeinate_held,
+        "cpu_speed_limit": _int_or_none(thermal.get("CPU_Speed_Limit")),
+        "cpu_scheduler_limit": _int_or_none(
+            thermal.get("CPU_Scheduler_Limit")),
+    }
+    budget = _host_budget()
+    printer_state = _klippy_state() if state.get("moonraker") else None
+    report = {
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "stack_running": bool(state),
+        "printer_state": printer_state,
+        "klipper": klipper,
+        "power": power,
+        "host_budget": budget,
+        "linux_only_options": ["[%s] %s" % (s, o)
+                               for s, o in _printer_cfg_linux_only()],
+        "problems": [],
+    }
+    report["problems"] = _timing_problems(report)
+    report["ok"] = not report["problems"]
+    return report
+
+
+def _timing_problems(report):
+    """The hard problems: what makes `timing` (and doctor) exit 1.
+
+    The four the research says a user can act on - klippy throttled into the
+    background, a print the host could not feed, no sleep guard of ours holding,
+    and a print running on battery - plus a printer.cfg that names an option
+    only a Linux Klipper has, because that one halts the printer on boot.
+    Thermal caps and Low Power Mode are printed by _timing_lines() as warnings
+    but never fatal here: the user cannot schedule around a throttled CPU, only
+    work around it."""
+    problems = []
+    klipper = report["klipper"]
+    if klipper["running"] and klipper["class"] == "background":
+        problems.append(
+            "klippy is at ps priority {} ({}) - macOS is App-Napping the "
+            "process that talks to your MCU; start the stack from a Terminal "
+            "or check the app's sleep settings".format(klipper["pri"],
+                                                       klipper["class"]))
+    counts = report["host_budget"]["counts"]
+    if counts.get("timer_too_close"):
+        problems.append('{} "Timer too close" in klippy.log: the host missed a '
+                        "step deadline (upstream: this indicates the host "
+                        "computer is overloaded)".format(
+                            counts["timer_too_close"]))
+    held = report["power"]["caffeinate_assert_held"]
+    if klipper["running"] and held is False:
+        problems.append("no klipperformac caffeinate is holding "
+                        "PreventUserIdleSystemSleep (the guard died, or was "
+                        "started by another instance)")
+    on_battery = report["power"]["external_connected"] is False
+    if on_battery and report["printer_state"] in ("printing", "paused"):
+        problems.append(
+            "printing on battery: caffeinate's system-sleep assertion is "
+            "AC-only, so a lid close or an empty battery stops the print "
+            "- plug in")
+    if report["linux_only_options"]:
+        problems.append("printer.cfg has Linux-only option(s) {}: klippy "
+                        "rejects an unknown option and halts".format(
+                            ", ".join(report["linux_only_options"])))
+    return problems
+
+
+def _timing_lines(report):
+    """[(status, text)] for humans: the same facts as the JSON, each with the
+    threshold it was judged against."""
+    lines = []
+    klipper = report["klipper"]
+    power = report["power"]
+    budget = report["host_budget"]
+    if not klipper["running"]:
+        lines.append(("[i]", "klippy is not running: timing says nothing about "
+                             "a stopped stack (klipperformac up)"))
+    else:
+        posture = "klippy pid {} at ps pri {} ({})".format(
+            klipper["pid"], klipper["pri"], klipper["class"])
+        if klipper["class"] == "normal":
+            posture += " - as good as macOS gets without root"
+        elif klipper["class"] == "unknown":
+            posture += " - ps did not answer"
+        else:
+            posture += " - fix this before printing"
+        lines.append(("[ok]" if klipper["class"] == "normal" else
+                      ("[i]" if klipper["class"] == "unknown" else "[!]"),
+                      posture))
+        qos = klipper["qos_env"]
+        lines.append(("[ok]" if qos == "on" else "[i]",
+                      "KLIPPERFORMAC_QOS in klippy's environment: {}{}".format(
+                          qos,
+                          "" if qos != "off" else
+                          " (the sitecustomize QoS shim is not active - run "
+                          "klipperformac restart)")))
+    source = "on AC" if power["external_connected"] is True else (
+        "on battery" if power["external_connected"] is False else
+        "power source unknown")
+    lpm = power["battery_lowpowermode"]
+    lines.append(("[!]" if (power["external_connected"] is False and lpm)
+                  else "[ok]",
+                  "{}; battery Low Power Mode {} (sleep {}), CPU speed limit "
+                  "{}%".format(source, "ON" if lpm else ("off" if lpm == 0
+                                                         else "unknown"),
+                               power["battery_sleep"],
+                               power["cpu_speed_limit"])))
+    if power["caffeinate_assert_held"] is True:
+        lines.append(("[ok]", "caffeinate pid {} holds "
+                             "PreventUserIdleSystemSleep".format(
+                                 power["caffeinate_pid"])))
+    elif power["caffeinate_assert_held"] is None:
+        lines.append(("[i]", "caffeinate assertion: not checked (no tracked "
+                             "caffeinate pid)"))
+    else:
+        lines.append(("[!]", "no caffeinate guard of ours is holding "
+                             "PreventUserIdleSystemSleep"))
+    if power["cpu_speed_limit"] is not None \
+            and power["cpu_speed_limit"] < 100:
+        lines.append(("[!]", "macOS is capping the CPU to {}% (thermal): QoS "
+                             "cannot outrun a speed limit - cool the Mac "
+                             "down".format(power["cpu_speed_limit"])))
+    errs = " ".join("{}={}".format(key, budget["counts"][key])
+                    for key, _ in HOST_ERRORS)
+    starved = sum(budget["counts"][k] for k, _ in HOST_ERRORS
+                  if k != "lost_communication")
+    lines.append(("[!]" if starved else "[ok]",
+                  "klippy.log over {} file(s){}: srtt max {}s, rto min {}s, "
+                  "bytes_retransmit max {}, mcu_task_stddev max {}, sysload "
+                  "max {}, print_stall max {}, buffer_time max {}s, last "
+                  "min_half_rtt {}s | {}".format(
+                      len(budget["log_files"]),
+                      " (budget-truncated)" if budget["truncated"] else "",
+                      budget["srtt_max"], budget["rto_min"],
+                      budget["bytes_retransmit_max"],
+                      budget["mcu_task_stddev_max"], budget["sysload_max"],
+                      budget["print_stall_max"], budget["buffer_time_max"],
+                      budget["min_half_rtt"], errs)))
+    if budget["counts"]["lost_communication"] and not starved:
+        lines.append(("[i]", "lost_communication is usually the USB link or the "
+                             "board, not the host scheduler (klippy/mcu.py:906)"))
+    lines.append(("[i]", "budget: the MCU owns every step edge "
+                         "(src/stepper.c:289 queue_step); the host only has to "
+                         "be scheduled every ~250-450 ms and pushes commands "
+                         "100 ms ahead with a 25 ms retransmit floor "
+                         "(klippy/chelper/serialqueue.c:110/:107)"))
+    if budget["srtt_max"] is not None and budget["srtt_max"] > 0.003:
+        lines.append(("[!]", "max srtt {}s is above the {}s this Mac measured "
+                             "when healthy: the serial link is being "
+                             "delayed".format(budget["srtt_max"], 0.003)))
+    for option in report["linux_only_options"]:
+        lines.append(("[!]", "printer.cfg carries '{}', which only a Linux "
+                             "Klipper knows: klippy rejects it as an unknown "
+                             "option (klippy/configfile.py:440) and halts. "
+                             "Remove it from your config - macOS cannot raise "
+                             "scheduler priority (no SCHED_FIFO, negative nice "
+                             "is root-only), and step timing is done by the "
+                             "MCU".format(option)))
+    return lines
+
+
+def cmd_timing(args):
+    """`klipperformac timing` - read-only scheduling + power telemetry.
+
+    Exit status: 0 healthy, 1 when something in _timing_problems() fired. The
+    GUI consumes --json; the two share one report so they can never disagree."""
+    report = _timing_report()
+    if getattr(args, "json", False):
+        print(json.dumps(report, indent=2, sort_keys=True))
+        sys.exit(0 if report["ok"] else 1)
+    for tag, text in _timing_lines(report):
+        print("{} {}".format(tag, text))
+    for problem in report["problems"]:
+        print("[!] " + problem)
+    if not report["problems"]:
+        print("[ok] nothing to fix: macOS is giving klippy the best scheduling "
+              "it has without root")
+    sys.exit(0 if report["ok"] else 1)
+
+
+def _doctor_scheduling_lines(report):
+    """The short form of `timing` for doctor: three lines plus whatever is hard.
+
+    Same report object, so doctor and timing can never disagree about the same
+    machine - and the gate AGENTS.md 4 puts on `doctor` now covers the one class
+    of failure the rest of it cannot see: klippy alive, printer idle-looking,
+    and the host scheduler about to eat a step deadline."""
+    lines = []
+    klipper = report["klipper"]
+    power = report["power"]
+    budget = report["host_budget"]
+    if klipper["running"]:
+        lines.append(("[ok]" if klipper["class"] == "normal" else
+                      ("[i]" if klipper["class"] == "unknown" else "[!]"),
+                      "host scheduling posture: klippy pri {} ({}) , QoS shim "
+                      "{} in its environment".format(
+                          klipper["pri"], klipper["class"], klipper["qos_env"])))
+    else:
+        lines.append(("[i]", "host scheduling posture: klippy not running "
+                             "(klipperformac timing reads a live stack)"))
+    starved = sum(budget["counts"][key] for key, _ in HOST_ERRORS
+                  if key != "lost_communication")
+    lines.append(("[ok]" if not starved else "[!]",
+                  "klippy.log: {} starvation error(s), max srtt {}s, max "
+                  "buffer_time {}s over {} file(s)".format(
+                      starved, budget["srtt_max"], budget["buffer_time_max"],
+                      len(budget["log_files"]))))
+    on_battery = power["external_connected"] is False
+    lpm = power["battery_lowpowermode"]
+    if on_battery:
+        # The old line promised "system sleep on battery cannot be fully
+        # prevented" without saying why: `caffeinate -s` asserts prevent-system-
+        # sleep, which the man page and this Mac both limit to AC power. So on
+        # battery only the idle-sleep assertion holds and closing the lid still
+        # ends the print - and Low Power Mode is a second, quieter killer.
+        # Informational like it always was: `doctor` on a laptop on the couch is
+        # not a failed install, but printing there is (see `timing`).
+        lines.append(("[!]", "on battery: caffeinate's system-sleep assertion "
+                             "is AC-only, so only the idle-sleep assertion "
+                             "holds and lid-close still kills the print; Low "
+                             "Power Mode is {} (it clocks the CPU down and "
+                             "coalesces timers)".format(
+                                 "ON" if lpm else ("off" if lpm == 0
+                                                   else "unknown"))))
+    else:
+        lines.append(("[ok]" if power["external_connected"] is not None
+                      else "[i]",
+                      "power: {}, battery Low Power Mode {}, CPU speed limit "
+                      "{}%".format(
+                          "on AC" if power["external_connected"] else "unknown",
+                          "off" if lpm == 0 else ("ON" if lpm else "unknown"),
+                          power["cpu_speed_limit"])))
+    lines.append(("[ok]" if power["caffeinate_assert_held"] is not False
+                  else "[!]",
+                  "sleep guard: caffeinate {} holding "
+                  "PreventUserIdleSystemSleep".format(
+                      "is" if power["caffeinate_assert_held"] else
+                      ("was not checked"
+                       if power["caffeinate_assert_held"] is None
+                       else "is NOT"))))
+    for option in report["linux_only_options"]:
+        # Never rewritten, only named: printer.cfg is the user's (AGENTS.md 2).
+        lines.append(("[!]", "printer.cfg carries '{}': a Linux-only option "
+                             "this Klipper does not know, so klippy halts with "
+                             "\"Option ... is not valid in section ...\" "
+                             "(klippy/configfile.py:440). Remove it - macOS has "
+                             "no SCHED_FIFO and negative nice is root-only; "
+                             "step timing belongs to the MCU. See: "
+                             "klipperformac timing".format(option)))
+    lines += [("[!]", problem) for problem in report["problems"]]
+    return lines
+
+
 def cmd_doctor(args):
     ok = True
     for p in installer.check_prereqs(strict=False):
@@ -1105,14 +1789,10 @@ def cmd_doctor(args):
     else:
         print("[!] Not set up (run klipperformac setup)")
         ok = False
-    try:
-        batt = subprocess.run(["pmset", "-g", "batt"],
-                              capture_output=True).stdout.decode()
-    except Exception:
-        batt = ""
-    if "Battery" in batt and "AC" not in batt:
-        print("[!] Running on battery: system sleep on battery cannot be fully "
-              "prevented; prints may die if the lid closes or battery empties.")
+    # The power question is answered by _timing_report() below (ioreg's
+    # ExternalConnected, not `pmset -g batt`, whose wording varies with whether
+    # the battery is charging) - one read, one source of truth for doctor,
+    # `timing` and the GUI.
     state = process.running()
     if state:
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
@@ -1132,6 +1812,21 @@ def cmd_doctor(args):
         else:
             print("[!] klipper state: {} - the printer cannot move "
                   "(klipperformac logs)".format(klippy))
+            ok = False
+    # Host scheduling posture: macOS gives klippy no real-time priority (no
+    # SCHED_FIFO, negative nice is root-only), so the remaining risk is made
+    # visible instead of promised away. Same report `klipperformac timing`
+    # prints, so the two commands can never disagree about one machine.
+    try:
+        sched = _timing_report()
+    except Exception as e:
+        # Telemetry is never a reason doctor dies: say what could not be read.
+        print("[i]  host scheduling posture: not measured ({})".format(e))
+        sched = None
+    if sched is not None:
+        for tag, text in _doctor_scheduling_lines(sched):
+            print("{} {}".format(tag, text))
+        if not sched["ok"]:
             ok = False
     st_shaper = shaper.readiness()
     if st_shaper["needed"] and not st_shaper["healthy"]:
@@ -1154,6 +1849,21 @@ def cmd_doctor(args):
             ok = False
         else:
             print("[i]  camera: " + cam_msg)
+    # Backups: the one question doctor can answer that nothing else does - "if
+    # this Mac died tonight, is there anything to restore from?" Printed as
+    # ADVISORY lines that never flip `ok`, deliberately: `doctor`'s exit code is
+    # the install-correctness gate (AGENTS.md 4, and `make release-check` runs
+    # it), and a healthy install whose owner has simply not run `backup create`
+    # yet is not a broken install. Same reasoning as the on-battery line above,
+    # and the same reason the camera lines only bite when a camera is configured.
+    # The [!] tag is still the honest signal the user acts on.
+    from . import backup as _backup          # local: cli.py must not need it
+    try:
+        for bak_ok, bak_msg in _backup.doctor_lines():
+            print(("[ok] " if bak_ok else "[!] ") + bak_msg)
+    except Exception as e:
+        # A doctor that stops printing halfway is worse than a missing line.
+        print("[!]  backups: not reported ({})".format(e))
     sys.exit(0 if ok else 1)
 
 
@@ -1375,6 +2085,24 @@ def main(argv=None):
                    help="save the current config as a version")
     p.add_argument("--import", dest="import_", metavar="PATH")
     p.add_argument("--import-name", metavar="NAME")
+    p = sub.add_parser("backup",
+                       help="archive / verify / restore the whole data folder")
+    p.add_argument("action", choices=("create", "list", "verify", "restore",
+                                      "prune"))
+    p.add_argument("--from", dest="from_", metavar="NAME",
+                   help="with verify/restore: a name from "
+                        "'klipperformac backup list', or 'latest'")
+    p.add_argument("--with-logs", "--include-logs", dest="with_logs",
+                   action="store_true",
+                   help="with create: also archive data/logs (big; off by "
+                        "default)")
+    p.add_argument("--allow-running", action="store_true",
+                   help="with create: snapshot a running stack anyway (its "
+                        "sqlite database may be copied half-written)")
+    p.add_argument("--keep", type=int, metavar="N",
+                   help="with prune: keep the newest N backups (default 10)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="with prune: show what would be deleted")
     p = sub.add_parser("gcode", help="send gcode to Klipper or query status")
     p.add_argument("script", nargs="*")
     p.add_argument("--status", action="store_true")
@@ -1393,6 +2121,11 @@ def main(argv=None):
                    help="with config: show current settings")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
+    p = sub.add_parser("timing",
+                       help="read-only scheduling + power telemetry: what "
+                            "macOS is doing to klippy right now")
+    p.add_argument("--json", action="store_true",
+                   help="one machine-readable object (the GUI reads this)")
     sub.add_parser("tui", help="interactive dashboard (default with no args)")
     p = sub.add_parser("uninstall", help="remove the app; asks before deleting "
                                          "the data folder")
@@ -1409,7 +2142,9 @@ def main(argv=None):
         "lan": cmd_lan,
         "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
+        "timing": cmd_timing,
         "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
+        "backup": cmd_backup,
         "cam": cmd_cam,
         "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
     }
