@@ -9,7 +9,10 @@ the same job nginx does in a standard Klipper install — stdlib only.
 The proxy is the thing a browser talks to, so everything it puts on the wire
 (status line, header block, body framing) is built from sanitized values:
 neither Moonraker nor the browser may decide how the *other* side's HTTP gets
-parsed.
+parsed. That includes who the caller is: the relay always dials loopback, so
+the forwarding headers are written here from the peer address of the accepted
+socket -- what Moonraker's [authorization] sees -- and any copy the browser
+sent is dropped rather than appended to.
 """
 import http.client
 import ipaddress
@@ -19,6 +22,7 @@ import select
 import socket
 import socketserver
 import sys
+import threading
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler
 
@@ -30,6 +34,17 @@ API_PREFIXES = (
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate",
               "proxy-authorization", "te", "trailer", "transfer-encoding",
               "upgrade"}
+# The headers that decide who Moonraker believes the caller *is*. A browser
+# writes any value it likes into them, so none of them may cross this hop as
+# sent: each is dropped and then re-written from the peer address of the
+# accepted socket (see UIPandler._forwarded_headers). This list has to cover
+# every alias upstream reads, because Tornado prefers X-Real-Ip over
+# X-Forwarded-For and X-Scheme over X-Forwarded-Proto -- leaving one of them
+# client-writable would leave the whole loopback-trust bypass open.
+FORWARDED_HEADERS = frozenset({
+    "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host",
+    "x-real-ip", "x-scheme", "forwarded",
+})
 # Responses that by definition carry no body: they must not be given a length.
 NO_BODY_STATUS = frozenset({100, 101, 102, 103, 204, 304})
 
@@ -41,14 +56,42 @@ NO_BODY_STATUS = frozenset({100, 101, 102, 103, 204, 304})
 PORT_TOKEN = re.compile(r"\A(?:0|[1-9][0-9]{0,4})\Z")
 DIGITS = re.compile(r"\A[0-9]+\Z")
 CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+# Only a bare origin ever goes into X-Forwarded-Host: the browser's Host header
+# is the client's to write, and anything outside this set is either junk or an
+# attempt to smear a second header into the request this proxy builds.
+HOST_TOKEN = re.compile(r"\A[A-Za-z0-9._\-]{1,253}(?::[0-9]{1,5})?\Z")
 
-MAX_BODY = 512 << 20          # the relay buffers the body, so bound it
+# The relay buffers a request body in full before it re-sends it, so this cap IS
+# the per-connection memory ceiling. 512 MiB made a single POST enough to OOM a
+# laptop, and Moonraker's own upload path never wants a file that large; 100 MiB
+# still covers any gcode bundle a slicer can produce. Anything above it is
+# refused with 413 *before* a byte of the body is read.
+MAX_BODY = 100 << 20
 MAX_CHUNKS = 1 << 16          # chunked framing must not run away either
 MAX_TRAILERS = 64
 WS_HANDSHAKE_MAX = 1 << 20    # the 101 answer is copied, never buffered forever
 READ_AHEAD = 65536
+# socketserver.ThreadingTCPServer gives every connection its own thread, so the
+# ceiling on this process is (threads x (read-ahead + buffered body)). Browsers
+# self-limit to ~6 concurrent connections per origin, so 64 is far above honest
+# use and far above a hostile burst: past the cap a connection is answered with
+# a clean 503 and closed without ever costing a thread. The worst case that
+# remains is MAX_CONCURRENT x MAX_BODY of buffered body -- reachable only by
+# that many simultaneous maximal uploads, i.e. gigabytes they must also send --
+# and both numbers are the knobs to turn down together if that ever matters.
+MAX_CONCURRENT = 64
+OVERLOAD_RETRY_SECONDS = 5
 USAGE = ("usage: python -m klipperformac.proxy <port> <docroot> "
          "<moonraker_port> [bind_address]")
+
+
+class _BodyTooLarge(Exception):
+    """A chunked body passed MAX_BODY: answered 413, not 400.
+
+    A runaway size and a malformed frame are different failures, and the retry
+    semantics differ (400 says "do not resend this", 413 says "resend it
+    smaller"), so the reason travels as its own exception instead of as None.
+    """
 
 
 def _usage(message):
@@ -292,6 +335,9 @@ class UIPandler(SimpleHTTPRequestHandler):
         The relay forwards a fixed Content-Length, so the chunks have to be
         decoded here: leaving them in the stream makes the remainder look like
         a second pipelined request, and the upstream just waits for a body.
+        Passing MAX_BODY raises _BodyTooLarge rather than returning None, so
+        the caller can answer 413 instead of accusing the client of bad
+        framing -- and stops reading at all once the body is too big.
         """
         parts, total, chunks = [], 0, 0
         while True:
@@ -315,7 +361,7 @@ class UIPandler(SimpleHTTPRequestHandler):
                 return None
             total += size
             if total > MAX_BODY:
-                return None
+                raise _BodyTooLarge(total)
             while size:
                 piece = self.rfile.read(min(size, 65536))
                 if not piece:
@@ -347,7 +393,11 @@ class UIPandler(SimpleHTTPRequestHandler):
             if lengths:            # RFC 9112 6.1: ambiguous framing, refuse it
                 self.send_error(400, "conflicting body framing")
                 return None, True
-            body = self._read_chunked()
+            try:
+                body = self._read_chunked()
+            except _BodyTooLarge:
+                self.send_error(413, "request entity too large")
+                return None, True
             if body is None:
                 self.send_error(400, "malformed chunked body")
                 return None, True
@@ -364,6 +414,43 @@ class UIPandler(SimpleHTTPRequestHandler):
             return None, True
         return self.rfile.read(size), False
 
+    def _forwarded_headers(self):
+        """Say who actually asked, in the only headers this proxy can vouch for.
+
+        The relay always dials 127.0.0.1, so with no forwarding information
+        Moonraker's `request.remote_ip` is this proxy's own address for every
+        caller: [authorization].trusted_clients (127.0.0.1, ::1) matches and no
+        API key is ever demanded, from anyone, on any interface. Re-writing the
+        identity here from `self.client_address` -- the peer of the accepted
+        socket, which no client can write -- makes upstream's own trust rules
+        apply to the real caller: a browser on this Mac still resolves to
+        loopback and keeps working key-free, a LAN client is judged against
+        [authorization] as its own address, and per-IP login throttling and
+        log lines describe the machine that actually connected.
+
+        X-Forwarded-Proto and X-Forwarded-Host are ours for the same reason:
+        this hop is plain HTTP (there is no TLS here to report otherwise) and
+        the browser-facing origin is dropped from Host below, so anything else
+        on the wire would be a client's claim about itself.
+        """
+        try:
+            peer = str(self.client_address[0])
+        except (AttributeError, IndexError, TypeError):
+            peer = ""
+        headers = {}
+        # _oneline() is belt-and-braces here (an address tuple comes from the
+        # kernel, not the peer) but a header value must never carry a control
+        # byte, so no value is ever written unfiltered.
+        value = _oneline(peer, limit=64)
+        if value:
+            headers["X-Forwarded-For"] = value
+            headers["X-Real-Ip"] = value
+        headers["X-Forwarded-Proto"] = "http"
+        origin = _oneline(self.headers.get("Host", ""), limit=253)
+        if HOST_TOKEN.match(origin):
+            headers["X-Forwarded-Host"] = origin
+        return headers
+
     def _forward_headers(self, body):
         """Client headers minus what must never cross a proxy hop (RFC 9112 9.6).
 
@@ -372,13 +459,20 @@ class UIPandler(SimpleHTTPRequestHandler):
         request side now uses the same HOP_BY_HOP table the response side has
         always applied -- including the credentials in Proxy-Authorization,
         which otherwise travel to Moonraker in clear text for no reason.
+
+        Every forwarding header is dropped with them and then re-written by
+        _forwarded_headers(): a client that could keep its own X-Forwarded-For
+        (or X-Real-Ip, which upstream reads first) would get to choose the
+        address Moonraker trusts.
         """
         headers = {}
         for k, v in self.headers.items():
             low = k.lower()
-            if low in HOP_BY_HOP or low == "host" or low == "content-length":
+            if (low in HOP_BY_HOP or low in FORWARDED_HEADERS
+                    or low == "host" or low == "content-length"):
                 continue
             headers[k] = v
+        headers.update(self._forwarded_headers())
         if body is not None:
             headers["Content-Length"] = str(len(body))
         return headers
@@ -476,14 +570,15 @@ class UIPandler(SimpleHTTPRequestHandler):
     def _proxy_ws(self):
         """Tunnel one websocket upgrade: handshake upstream, then raw bytes.
 
-        The handshake is relayed verbatim -- Upgrade and the Sec-WebSocket-*
-        fields are exactly the hop-by-hop headers this hop must not strip. The
-        upstream's answer is forwarded to the browser *before* any client frame
-        that was coalesced into the handshake segment is released: otherwise
-        head and frame reach the upstream in one segment and a server that
-        reads the handshake line-by-line loses the frame as trailing body, so
-        the socket never gets off the ground (curl, python clients and a fast
-        reconnect all write it this way).
+        The handshake keeps its framing headers -- Upgrade and the
+        Sec-WebSocket-* fields are exactly the hop-by-hop headers this hop must
+        not strip -- while the identity headers are re-written the way the HTTP
+        half rewrites them. The upstream's answer is forwarded to the browser
+        *before* any client frame that was coalesced into the handshake segment
+        is released: otherwise head and frame reach the upstream in one segment
+        and a server that reads the handshake line-by-line loses the frame as
+        trailing body, so the socket never gets off the ground (curl, python
+        clients and a fast reconnect all write it this way).
         """
         try:
             up = socket.create_connection(("127.0.0.1", self.upstream_port),
@@ -493,7 +588,16 @@ class UIPandler(SimpleHTTPRequestHandler):
             return
         head = "{} {} {}\r\n".format(self.command, self.path,
                                      self.request_version)
+        # The upgrade request line keeps its framing headers, but the identity
+        # headers are ours: Moonraker authenticates a websocket handshake with
+        # the same remote_ip as a REST call, so a client that could keep its own
+        # X-Forwarded-For here would hold an API key bypass for the whole
+        # control channel, not just for one request.
         for k, v in self.headers.items():
+            if k.lower() in FORWARDED_HEADERS:
+                continue
+            head += "{}: {}\r\n".format(k, v)
+        for k, v in self._forwarded_headers().items():
             head += "{}: {}\r\n".format(k, v)
         head += "\r\n"
         self.close_connection = True
@@ -540,8 +644,22 @@ class UIPandler(SimpleHTTPRequestHandler):
 
     # --- routing ---------------------------------------------------------------
     def _wants_upgrade(self):
-        return (self.path == "/websocket"
-                or self.headers.get("Upgrade", "").lower() == "websocket")
+        """Which requests may open the raw tunnel, and which must not.
+
+        The tunnel copies bytes in both directions with no HTTP framing on the
+        other side, so it is the one path through this handler that is *not*
+        governed by API_PREFIXES: an Upgrade on a document-root path would
+        therefore hand a static target to Moonraker (a `/printer.cfg` GET came
+        back from Tornado's 404, not from the file server, which is both an
+        allowlist bypass and a way to ask upstream anything it happens to
+        answer). So the tunnel is reserved for a proxied route: /websocket
+        itself, or an API path that asks for an upgrade.
+        """
+        if self.path == "/websocket":
+            return True
+        return (self.is_api()
+                and self.headers.get("Upgrade", "").strip().lower()
+                == "websocket")
 
     def do_GET(self):
         if self._malformed_target():
@@ -625,6 +743,66 @@ class Server(socketserver.ThreadingTCPServer):
     # is a fresh connection), and everything past the backlog is reset by the
     # kernel instead of queued.
     request_queue_size = 128
+    max_concurrent = MAX_CONCURRENT
+
+    def __init__(self, *args, **kwargs):
+        # Read as a class attribute (so a subclass or a test can retune it) but
+        # stored per server: the count of live slots must survive reloads of
+        # this module, not be shared through a module-level global.
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(self.max_concurrent)
+
+    def process_request(self, request, client_address):
+        """Hand a connection to a thread, or answer 503 without one.
+
+        The accept loop is single-threaded, so waiting for a free slot here
+        would stall every other client: take it only when one is free right
+        now, and otherwise say "busy" in a well-formed way and hang up. That is
+        an honest answer a browser retries, and it is what keeps a burst -- or a
+        hostile LAN -- from growing this process until macOS jetsams it.
+        """
+        if not self._slots.acquire(blocking=False):
+            self._reject_overloaded(request)
+            self.shutdown_request(request)
+            return
+        try:
+            socketserver.ThreadingTCPServer.process_request(
+                self, request, client_address)
+        except BaseException:
+            # The thread never ran, so nothing will release this slot.
+            self._release_slot()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            socketserver.ThreadingTCPServer.process_request_thread(
+                self, request, client_address)
+        finally:
+            self._release_slot()
+
+    def _release_slot(self):
+        try:
+            self._slots.release()
+        except ValueError:
+            # A BoundedSemaphore refuses to be released more often than
+            # acquired; that would be a bookkeeping bug, but killing the accept
+            # loop over it takes the whole UI down for one miscounted socket.
+            pass
+
+    @staticmethod
+    def _reject_overloaded(request):
+        """One complete, self-framed 503, written before the socket closes."""
+        body = b"klipperformac: the web proxy is at its connection limit\n"
+        head = ("HTTP/1.1 503 Service Unavailable\r\n"
+                "Content-Type: text/plain; charset=utf-8\r\n"
+                "Content-Length: {}\r\n"
+                "Connection: close\r\n"
+                "Retry-After: {}\r\n\r\n").format(
+                    len(body), OVERLOAD_RETRY_SECONDS)
+        try:
+            request.sendall(head.encode("latin-1") + body)
+        except OSError:
+            pass                      # a peer that already left is not an error
 
 
 def main(argv):
