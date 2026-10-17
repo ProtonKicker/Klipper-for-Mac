@@ -5,6 +5,7 @@ enum SwiftLogicChecks {
     static func main() {
         testSerialReportDecoder()
         testSerialReportDecoderPreambleAndNoise()
+        testSerialProbePolicy()
         testMoonrakerParsesVirtualSDcardProgress()
         testMoonrakerToleratesPartialQuery()
         testMoonrakerRejectsBrokenServerInfo()
@@ -53,6 +54,31 @@ enum SwiftLogicChecks {
         """
         expect(!SerialReportDecoder.looksLikeLegacyCLI(usageOnly, exitCode: 2),
                "generic usage noise without --json should not be treated as legacy")
+    }
+
+    private static func testSerialProbePolicy() {
+        let report = SerialProbePolicy.classify(
+            output: SerialReportDecoder.contractFixture, exitCode: 0)
+        guard case .report(let decoded) = report else {
+            expect(false, "fixture should classify as a report")
+            return
+        }
+        expect(decoded.mcus.first?.mcu == "mcu",
+               "report classification should keep decoded rows")
+
+        let legacy = """
+        usage: klipperformac serial [-h] [--set PATH [MCU]]
+        klipperformac serial: error: unrecognized arguments: --json
+        """
+        expect(SerialProbePolicy.classify(output: legacy, exitCode: 2) == .legacy,
+               "legacy argv rejection should classify as legacy")
+
+        let keep = """
+        usage: klipperformac serial [-h]
+        klipperformac serial: error: timed out talking to the CLI helper
+        """
+        expect(SerialProbePolicy.classify(output: keep, exitCode: 2) == .keep,
+               "generic noise should keep the last honest pane")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

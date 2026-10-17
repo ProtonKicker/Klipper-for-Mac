@@ -33,4 +33,28 @@ final class SerialReportDecoderTests: XCTestCase {
         XCTAssertFalse(SerialReportDecoder.looksLikeLegacyCLI(output, exitCode: 0))
         XCTAssertNil(SerialReportDecoder.decode(output))
     }
+
+    func testSerialProbePolicyClassifiesDecodedReportAndLegacyAndKeep() {
+        switch SerialProbePolicy.classify(output: SerialReportDecoder.contractFixture,
+                                          exitCode: 0) {
+        case .report(let report):
+            XCTAssertEqual(report.mcus.first?.mcu, "mcu")
+        default:
+            XCTFail("fixture should classify as a decoded report")
+        }
+
+        let legacy = """
+        usage: klipperformac serial [-h] [--set PATH [MCU]]
+        klipperformac serial: error: unrecognized arguments: --json
+        """
+        XCTAssertEqual(SerialProbePolicy.classify(output: legacy, exitCode: 2),
+                       .legacy)
+
+        let keep = """
+        usage: klipperformac serial [-h]
+        klipperformac serial: error: timed out talking to the CLI helper
+        """
+        XCTAssertEqual(SerialProbePolicy.classify(output: keep, exitCode: 2),
+                       .keep)
+    }
 }

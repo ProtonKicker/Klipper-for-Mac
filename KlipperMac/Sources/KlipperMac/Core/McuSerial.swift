@@ -196,6 +196,30 @@ struct SerialReport: Equatable {
     var isEmpty: Bool { mcus.isEmpty }
 }
 
+/// The app-model decision after one `serial --json` probe.
+///
+/// This lives next to the decoder because the policy is really about the wire
+/// contract: a decoded report is `.report`, an argv-level `--json` rejection is
+/// `.legacy`, and everything else is `.keep` so the GUI preserves the last
+/// honest answer instead of downgrading on transient noise.
+enum SerialProbeOutcome: Equatable {
+    case keep
+    case legacy
+    case report(SerialReport)
+}
+
+enum SerialProbePolicy {
+    static func classify(output: String, exitCode: Int32?) -> SerialProbeOutcome {
+        if let report = SerialReportDecoder.decode(output) {
+            return .report(report)
+        }
+        if SerialReportDecoder.looksLikeLegacyCLI(output, exitCode: exitCode) {
+            return .legacy
+        }
+        return .keep
+    }
+}
+
 /// Defensive decode. Returns nil for anything that is not this contract —
 /// including an old CLI answering `error: unrecognized arguments: --json` —
 /// which is exactly the signal the caller needs to fall back to the single

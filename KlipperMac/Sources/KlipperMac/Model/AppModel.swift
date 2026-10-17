@@ -301,18 +301,16 @@ final class AppModel: ObservableObject {
         do {
             let r = try await CLIRunner.shared.run(["serial", "--json"],
                                                    timeout: CLITimeout.serialProbe)
-            guard let report = SerialReportDecoder.decode(r.output) else {
-                // Old CLIs reject `--json` at argv parse time; a timeout or a
-                // transient mixed-output decode miss is not the same thing and
-                // should keep the last honest pane instead of downgrading it.
-                if SerialReportDecoder.looksLikeLegacyCLI(r.output, exitCode: r.exit) {
-                    serialJSONSupported = false
-                    return .legacy
-                }
+            switch SerialProbePolicy.classify(output: r.output, exitCode: r.exit) {
+            case .keep:
                 return .keep
+            case .legacy:
+                serialJSONSupported = false
+                return .legacy
+            case .report(let report):
+                serialJSONSupported = true
+                return .report(report)
             }
-            serialJSONSupported = true
-            return .report(report)
         } catch {
             // Timeout, or the CLI vanished mid-poll. A failed probe is not a
             // missing board: keep the last honest answer and stay silent — the
