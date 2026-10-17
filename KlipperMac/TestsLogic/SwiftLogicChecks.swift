@@ -6,6 +6,7 @@ enum SwiftLogicChecks {
         testSerialReportDecoder()
         testSerialReportDecoderPreambleAndNoise()
         testSerialProbePolicy()
+        testAppFeedback()
         testMoonrakerParsesVirtualSDcardProgress()
         testMoonrakerToleratesPartialQuery()
         testMoonrakerRejectsBrokenServerInfo()
@@ -80,6 +81,29 @@ enum SwiftLogicChecks {
         """
         expect(SerialProbePolicy.classify(output: keep, exitCode: 2) == .keep,
                "generic noise should keep the last honest pane")
+    }
+
+    private static func testAppFeedback() {
+        expect(AppFeedback.bannerMessage("   hello \n") == "hello",
+               "banner message should trim surrounding whitespace")
+        expect(AppFeedback.bannerMessage("   \n\t ") == nil,
+               "blank banner text should disappear")
+        let long = String(repeating: "x", count: 450)
+        expect(AppFeedback.bannerMessage(long)?.count == 400,
+               "banner message should cap toast length")
+
+        let multiline = "\n   \n  first useful line \nsecond line"
+        expect(AppFeedback.firstLine(multiline) == "first useful line",
+               "firstLine should skip blank and whitespace-only lines")
+
+        expect(AppFeedback.camToast(action: "snapshot", output: "") == "Saved snapshot",
+               "snapshot without helper output should still confirm success")
+        expect(AppFeedback.camToast(action: "on", output: "ask once in System Settings")
+               == "macOS is asking for camera access — click OK.",
+               "camera prompt guidance should be preserved")
+        expect(AppFeedback.camToast(action: "other", output: "\n  \nline one\nline two")
+               == "line one",
+               "generic camera actions should use the first meaningful line")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

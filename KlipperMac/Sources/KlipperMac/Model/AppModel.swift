@@ -326,8 +326,7 @@ final class AppModel: ObservableObject {
     }
 
     private func say(_ text: String, error: Bool = false) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        notifier.message = trimmed.isEmpty ? nil : String(trimmed.prefix(400))
+        notifier.message = AppFeedback.bannerMessage(text)
         notifier.isError = error
         clearTask?.cancel()
         clearTask = Task { [weak self] in
@@ -377,8 +376,8 @@ final class AppModel: ObservableObject {
             }
         } catch {
             say(Self.cliErrorMessage(error,
-                                     notFound: "Klipper CLI not found — install it first:\n"
-                                     + Self.installCommand),
+                                     notFound: AppFeedback.cliNotFoundInstallMessage(
+                                        Self.installCommand)),
                 error: true)
             exit = -1
         }
@@ -458,7 +457,7 @@ final class AppModel: ObservableObject {
         do {
             let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             good = r.exit == 0
-            let first = Self.firstLine(r.output)
+            let first = AppFeedback.firstLine(r.output)
             if good {
                 toast = ok ?? (first.isEmpty ? "Done" : first)
             } else {
@@ -466,8 +465,8 @@ final class AppModel: ObservableObject {
             }
         } catch {
             toast = Self.cliErrorMessage(error,
-                                         notFound: "Klipper CLI not found — install it first:\n"
-                                         + Self.installCommand)
+                                         notFound: AppFeedback.cliNotFoundInstallMessage(
+                                            Self.installCommand))
         }
         busy = false
         say(toast, error: !good)
@@ -520,9 +519,9 @@ final class AppModel: ObservableObject {
         do {
             let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             ok = r.exit == 0
-            toast = ok ? Self.camToast(args.first ?? "", output: r.output)
-                       : (Self.firstLine(r.output).isEmpty ? "Camera command failed."
-                                                           : Self.firstLine(r.output))
+            let first = AppFeedback.firstLine(r.output)
+            toast = ok ? AppFeedback.camToast(action: args.first ?? "", output: r.output)
+                       : (first.isEmpty ? "Camera command failed." : first)
         } catch {
             toast = Self.cliErrorMessage(error, notFound: Self.camListNoCLI)
             say(toast, error: true)
@@ -534,30 +533,6 @@ final class AppModel: ObservableObject {
         say(toast, error: !ok)
         await refresh(reloadEnv: true)
         return ok
-    }
-
-    static func firstLine(_ text: String) -> String {
-        text.split(separator: "\n").first.map(String.init)?
-            .trimmingCharacters(in: .whitespaces) ?? ""
-    }
-
-    static func camToast(_ action: String, output: String) -> String {
-        let first = firstLine(output)
-        switch action {
-        case "on":
-            if first.contains("ask once") { return "macOS is asking for camera access — click OK." }
-            return output.contains("restart")
-                ? "Camera is on — restart the stack once to see it in the web UI."
-                : "Camera is on"
-        case "off":
-            return "Camera is off"
-        case "snapshot":
-            return first  // "Saved: <path>" — short and the point of the action
-        case "config":
-            return "Saved — turn the camera off and on to apply."
-        default:
-            return first.isEmpty ? "Done" : first
-        }
     }
 
     /// A bare CLI process cannot surface the macOS camera prompt — the request
