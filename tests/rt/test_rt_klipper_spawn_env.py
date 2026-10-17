@@ -157,12 +157,16 @@ def test_a_shell_that_exported_the_switch_does_not_boost_the_whole_stack(txn,
 def test_klippy_keeps_the_build_env_it_was_given(txn):
     """The CPATH header shim (compat.build_env) and the QoS switch are separate
     concerns: klippy's env is the ambient env plus exactly those two keys and
-    nothing else invented on the way."""
+    nothing else invented on the way. Written ambient-independently: git hooks
+    may or may not already carry CPATH in os.environ."""
     txn.p.start()
     env = txn.ps.one("klippy.py")["kwargs"]["env"]
-    assert "include" in env["CPATH"]
     import os
-    assert set(env) - set(os.environ) == {"CPATH", "KLIPPERFORMAC_QOS"}
+    assert "include" in env["CPATH"]
+    assert set(env) - set(os.environ) <= {"CPATH", "KLIPPERFORMAC_QOS"}
+    assert env.get("KLIPPERFORMAC_QOS") == "ui"
+    # nothing of the ambient env was dropped on the way through
+    assert not set(os.environ) - set(env)
 
 
 def test_the_shim_reaches_the_venv_klippy_actually_uses(txn, monkeypatch):
