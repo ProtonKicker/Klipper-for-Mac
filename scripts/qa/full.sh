@@ -3,9 +3,11 @@
 # scripts/qa/full.sh -- Tier 2 of the Klipper-for-Mac quality gate.
 #
 #   1. delegates to tier 1 in full (scripts/qa/fast.sh: sh/swift/ruff/compile/tests)
-#   2. the ENTIRE offline suite: tests/, -m "not live and not hardware"
+#   2. the real Swift package tests, when the local Apple toolchain can run them
+#      (advisory/skip on CLT-only Macs; required with QA_REQUIRE_SWIFTPM=1)
+#   3. the ENTIRE offline suite: tests/, -m "not live and not hardware"
 #      (~3 min on a Mac, no hardware attached, no writes to the running stack)
-#   3. shellcheck on every shell script, when shellcheck is installed
+#   4. shellcheck on every shell script, when shellcheck is installed
 #      (brew install shellcheck -- see QA.md; skipped with a notice if missing,
 #       made mandatory with QA_REQUIRE_SHELLCHECK=1 -- CI sets that)
 #
@@ -17,8 +19,11 @@
 #
 # ENV OVERRIDES  (everything fast.sh accepts is passed through untouched)
 #   PYTHON=<path>                 interpreter for the suite
-#   QA_ONLY=suite,shellcheck      skip tier 1 and run only the named tier-2 steps
+#   QA_ONLY=swiftpkg,suite,shellcheck
+#                                 skip tier 1 and run only the named tier-2 steps
 #                                 (`make test-offline` uses QA_ONLY=suite)
+#   QA_REQUIRE_SWIFTPM=1          fail instead of skipping when `swift test`
+#                                 is blocked by the local Apple toolchain state
 #   QA_REQUIRE_SHELLCHECK=1       fail instead of skipping when shellcheck is absent
 #   QA_SHELLCHECK_FAILS_GATE=1    a shellcheck finding fails the tier (default: advisory)
 #   SHELLCHECK=<cmd>              shellcheck invocation override
@@ -58,6 +63,27 @@ qa_enabled fast || run_tier1=0
 if [ "$run_tier1" -eq 1 ]; then
     printf '\n### TIER 1 (scripts/qa/fast.sh)\n'
     sh scripts/qa/fast.sh || qa_note_fail tier1
+fi
+
+# ============================================================= step: suite ==
+if qa_enabled swiftpkg; then
+    printf '\n### TIER 2 -- swift package tests\n'
+    if sh scripts/qa/swift_package_tests.sh; then
+        printf '  swift package tests: PASS\n'
+    else
+        rc=$?
+        if [ "$rc" -eq 3 ]; then
+            if [ "${QA_REQUIRE_SWIFTPM:-0}" = 1 ]; then
+                printf '  FAIL swift package tests are required here but the toolchain is blocked.\n'
+                qa_note_fail swiftpkg-blocked
+            else
+                printf '  [skip] swift package tests blocked on this Mac -- advisory tier, not a failure.\n'
+                printf '         Make it mandatory here: QA_REQUIRE_SWIFTPM=1 scripts/qa/full.sh\n'
+            fi
+        else
+            qa_note_fail "swiftpkg(rc=$rc)"
+        fi
+    fi
 fi
 
 # ============================================================= step: suite ==

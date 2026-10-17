@@ -67,6 +67,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Hardened the camera list parser to accept only tabular `cam list` device rows and ignore mixed guidance/noise lines
 - [x] Added a dedicated `swift_future_tests.sh` guard and wired it into `qa-fast` so future SwiftPM tests keep parsing cleanly even while `swift test` is blocked on this Mac
 - [x] Expanded future SwiftPM coverage for generic `serial --json` usage noise, partial Moonraker object trees, and the `error` readiness state
+- [x] Added a dedicated `swift_package_tests.sh` probe and wired it into `qa-full` so real `swift test` runs automatically when the Apple toolchain is ready and otherwise reports a precise blocked reason
+- [x] Added a `make test-swiftpkg` entry point so the local Swift package-test/toolchain state can be checked directly
 
 ## Landed Fixes
 
@@ -217,6 +219,18 @@ Continue the robustness-testing loop from the saved transcript:
 
 38. `scripts/qa/fast.sh`
    - run the new future-test parse guard as part of the normal Swift step so direct-harness and future-test coverage stay in lockstep
+
+39. `scripts/qa/swift_package_tests.sh`
+   - probe whether this Mac can really run `swift test --package-path KlipperMac`
+   - print the active developer dir, the missing platform-path failure, and whether a full `Xcode*.app` exists under `/Applications`
+   - exit with a distinct blocked status so QA can treat toolchain absence as an explicit advisory state instead of a silent omission
+
+40. `scripts/qa/full.sh`
+   - add a `swiftpkg` tier that runs real Swift package tests when possible
+   - skip with a precise notice by default on CLT-only Macs, and fail instead when `QA_REQUIRE_SWIFTPM=1`
+
+41. `Makefile`
+   - add `make test-swiftpkg` as a thin wrapper around the new Swift package-test QA tier
 
 ## Tests Added
 
@@ -410,6 +424,13 @@ Continue the robustness-testing loop from the saved transcript:
   - `sh scripts/qa/swift_future_tests.sh` -> PASS
   - `make qa-fast` -> PASS (`161 passed`)
   - `qa-fast` Swift step now reports both `OK direct swift logic checks` and `OK future SwiftPM tests parse`
+- latest Swift package-test probe rerun:
+  - `sh scripts/qa/swift_package_tests.sh` -> blocked with:
+    - active developer dir `/Library/Developer/CommandLineTools`
+    - no `Xcode*.app` under `/Applications`
+    - `xcrun --sdk macosx --show-sdk-platform-path` cannot resolve `PlatformPath`
+  - `make qa-full` -> PASS
+  - `qa-full` now includes a `swift package tests` tier and reports the blocked reason explicitly on this Mac
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

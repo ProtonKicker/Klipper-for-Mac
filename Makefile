@@ -2,7 +2,7 @@
 # Klipper-for-Mac -- the quality gate. One entry point for every check.
 #
 #   make              -> qa-fast   (~10 s: syntax + lint + fast tests)
-#   make qa-full      -> everything offline (~3 min)
+#   make qa-full      -> offline suite + optional SwiftPM probe (~3-5 min)
 #   make help         -> target list
 #
 # Portability rules this file obeys, so it behaves the same on a fresh Mac, on
@@ -62,6 +62,10 @@ lint-swift:
 .PHONY: test-offline
 test-offline:
 	@QA_ONLY=suite sh $(QA)/full.sh
+
+.PHONY: test-swiftpkg
+test-swiftpkg:
+        @QA_ONLY=swiftpkg sh $(QA)/full.sh
 
 # --------------------------------------------------------------- test-live --
 # Guarded: these tests talk to the user's ACTUAL stack and/or a board on USB.
@@ -173,11 +177,12 @@ help:
 	  'Klipper-for-Mac quality gate (interpreter: $(PY))' \
 	  '' \
 	  '  make                 qa-fast  -- tier 1: sh/swift syntax + ruff + compileall + fast tests (~10s)' \
-	  '  make qa-full         tier 2: qa-fast + the whole offline suite + shellcheck (~3min)' \
+          '  make qa-full         tier 2: qa-fast + Swift package tests when toolchain-ready + the offline suite + shellcheck' \
 	  '  make lint-py         ruff check klipperformac only' \
 	  '  make lint-sh         bash -n every shell script only' \
 	  '  make lint-swift      swiftc -parse on KlipperMac/Sources only' \
 	  '  make test-offline    the full offline pytest suite (~3min, no hardware)' \
+          '  make test-swiftpkg   run/diagnose swift test for KlipperMac' \
 	  '  make test-live       opt-in: tests marked live/hardware (needs the real stack)' \
 	  '  make doctor          klipperformac doctor (env + pristine-upstream proof)' \
 	  '  make build-gui       build the .app via KlipperMac/build-app.sh' \
