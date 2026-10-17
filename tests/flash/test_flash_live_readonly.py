@@ -135,3 +135,30 @@ def test_the_real_upstream_checkout_is_untouched_by_the_probe(real_home):
     real_home.flash.serial_plan("/tmp/none.bin", "/dev/cu.usbmodem14101",
                                 tool="auto")
     assert (script.stat().st_mtime_ns, script.stat().st_size) == before
+
+
+def test_probe_reads_the_real_bench_board_when_the_stack_is_down(real_home):
+    """The direct MCU handshake is the live proof `flash detect` deliberately
+    does not claim: stop the stack, ask the serial link for identify_response,
+    then bring everything back before returning."""
+    flash = real_home.flash
+    process = real_home.process
+    report = flash.detect_boards()
+    rows = [t for t in report["targets"]
+            if t.get("kind") == "serial" and t.get("path", "").startswith("/dev/cu.")]
+    if not rows:
+        pytest.skip("no serial board is present to probe")
+    port = rows[0]["path"]
+    was_up = bool(process.running())
+    if was_up:
+        assert process.stop(), "could not stop the stack before flash probe"
+    try:
+        probe = flash.probe_report(port)
+        assert probe["ok"] is True, probe
+        assert probe["resolved_port"] == port
+        assert probe["mcu"], probe
+        assert probe["clock_freq"] is not None, probe
+        assert probe["version"], probe
+    finally:
+        if was_up:
+            assert process.start(), "could not restart the stack after flash probe"

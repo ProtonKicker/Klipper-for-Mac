@@ -43,6 +43,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added `flash probe --json` plus identity-key coverage so bench automation can consume direct MCU handshake evidence
 - [x] Fixed the powerloss live-test harness/fixture path so the live tier can actually talk to Moonraker inside `tests/powerloss/`
 - [x] Recovered the live bench from "startup" to `klippy ready`, then re-ran doctor, selftest, and the full live tier
+- [x] Added a real opt-in hardware test for `flash probe` that stops the stack, handshakes the bench board, and restores the stack
 
 ## Landed Fixes
 
@@ -176,6 +177,10 @@ Continue the robustness-testing loop from the saved transcript:
 - `tests/powerloss/test_ready_precondition.py`
   - `LiveHarness.wait_ready()` follows Moonraker's nested `/printer/info` payload
 
+- `tests/flash/test_flash_live_readonly.py`
+  - live `flash probe` handshake against the real bench board while the stack is temporarily down
+  - stack restore in `finally` so the rest of the live tier still runs
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -205,6 +210,8 @@ Continue the robustness-testing loop from the saved transcript:
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
+- live flash readonly tier:
+  - `6 passed` in `tests/flash/test_flash_live_readonly.py`
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
@@ -227,7 +234,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac status` -> `klippy ready`
   - `./bin/klipperformac doctor` -> PASS with `[ok] klipper state: ready`
   - `./bin/klipperformac selftest` -> PASS
-  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `22 passed, 3 skipped`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `23 passed, 3 skipped`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -236,7 +243,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 22 passed
+- 23 passed
 - 3 skipped
 
 Current skips are limited to the per-MCU live probe file, which says:
@@ -261,7 +268,6 @@ Evidence:
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
-- [ ] Add a live `flash probe` hardware test to the opt-in tier now that the bench handshake is healthy again
 - [ ] Decide whether to dedupe BOOTSEL volume + USB bootloader double-reporting in `flash detect`
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
 - [ ] Expand the new Swift coverage into `StackSnapshot` / `Moonraker.status()` degraded-state cases and transient CLI noise
