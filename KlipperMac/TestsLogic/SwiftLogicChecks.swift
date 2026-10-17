@@ -210,14 +210,22 @@ enum SwiftLogicChecks {
 
     private static func testCameraFeedback() {
         expect(CameraFeedback.statePresentation(isOnline: true)
-               == CameraStatePresentation(text: "Camera is on", kind: .on),
+               == CameraStatePresentation(text: "Camera is on",
+                                          kind: .on,
+                                          tone: .positive,
+                                          opacity: 1),
                "camera state should show on when the helper is online")
         expect(CameraFeedback.statePresentation(isOnline: false)
-               == CameraStatePresentation(text: "Camera is off", kind: .off),
+               == CameraStatePresentation(text: "Camera is off",
+                                          kind: .off,
+                                          tone: .neutral,
+                                          opacity: 1),
                "camera state should show off when the helper is offline")
         expect(CameraFeedback.statePresentation(isOnline: nil)
                == CameraStatePresentation(text: "Camera status unknown — press Refresh",
-                                          kind: .unknown),
+                                          kind: .unknown,
+                                          tone: .neutral,
+                                          opacity: 0.45),
                "camera state should guide the user to refresh when status is unknown")
 
         expect(CameraFeedback.placeholderText(isCLIInstalled: false, camOnline: nil)

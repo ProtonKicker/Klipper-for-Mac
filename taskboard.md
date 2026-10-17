@@ -75,6 +75,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Fixed `update --pin` so invalid refs are rejected before they are written to lockfile.json, keeping junk pins from persisting into later setup/update runs
 - [x] Made the proxy server explicitly quiet at the `socketserver` layer so dead upstreams and bad clients no longer dump background worker tracebacks into otherwise-green QA runs
 - [x] Extracted the MCU row's read-only status help text and presence-dot presentation into the core row model so more of the remaining SwiftUI-only rendering surface is testable without the view
+- [x] Extracted the camera pane's status-dot styling into `CameraFeedback` so the on/off/unknown indicator presentation is now model-driven end to end
 
 ## Landed Fixes
 
@@ -262,6 +263,9 @@ Continue the robustness-testing loop from the saved transcript:
 48. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
    - extract read-only picker status presentation so the `CAN / fixed` label and its help text come from pure row policy instead of a hard-coded SwiftUI string
    - extract identity indicator presentation so the presence-dot visibility/tone/opacity are testable without the view layer
+
+49. `KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift`
+   - extend camera state presentation to include indicator tone/opacity so the Camera pane's dot styling is no longer view-owned
 
 ## Tests Added
 
@@ -484,6 +488,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS
   - the remaining row view now reads the indicator/help presentation from the model instead of owning those user-facing rules itself
+- latest camera indicator presentation rerun:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS
+  - the Camera pane now reads both status text and indicator styling from `CameraFeedback`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

@@ -97,13 +97,11 @@ struct CameraView: View {
     }
 
     private var dotColor: Color {
-        switch statePresentation.kind {
-        case .on:
+        switch statePresentation.tone {
+        case .positive:
             return .green
-        case .off:
-            return .secondary
-        case .unknown:
-            return Color.secondary.opacity(0.45)
+        case .neutral:
+            return Color.secondary.opacity(statePresentation.opacity)
         }
     }
 

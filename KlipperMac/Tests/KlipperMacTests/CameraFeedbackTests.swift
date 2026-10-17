@@ -4,12 +4,20 @@ import XCTest
 final class CameraFeedbackTests: XCTestCase {
     func testStatePresentationCoversOnOffAndUnknown() {
         XCTAssertEqual(CameraFeedback.statePresentation(isOnline: true),
-                       CameraStatePresentation(text: "Camera is on", kind: .on))
+                       CameraStatePresentation(text: "Camera is on",
+                                               kind: .on,
+                                               tone: .positive,
+                                               opacity: 1))
         XCTAssertEqual(CameraFeedback.statePresentation(isOnline: false),
-                       CameraStatePresentation(text: "Camera is off", kind: .off))
+                       CameraStatePresentation(text: "Camera is off",
+                                               kind: .off,
+                                               tone: .neutral,
+                                               opacity: 1))
         XCTAssertEqual(CameraFeedback.statePresentation(isOnline: nil),
                        CameraStatePresentation(text: "Camera status unknown — press Refresh",
-                                               kind: .unknown))
+                                               kind: .unknown,
+                                               tone: .neutral,
+                                               opacity: 0.45))
     }
 
     func testPlaceholderTextGuidesInstallRefreshAndStart() {

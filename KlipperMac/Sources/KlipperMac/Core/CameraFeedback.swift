@@ -6,9 +6,16 @@ enum CameraStateKind: Equatable {
     case unknown
 }
 
+enum CameraIndicatorTone: Equatable {
+    case positive
+    case neutral
+}
+
 struct CameraStatePresentation: Equatable {
     let text: String
     let kind: CameraStateKind
+    let tone: CameraIndicatorTone
+    let opacity: Double
 }
 
 struct CameraDeviceListPresentation: Equatable {
@@ -25,12 +32,20 @@ enum CameraFeedback {
     static func statePresentation(isOnline: Bool?) -> CameraStatePresentation {
         switch isOnline {
         case .some(true):
-            return CameraStatePresentation(text: "Camera is on", kind: .on)
+            return CameraStatePresentation(text: "Camera is on",
+                                           kind: .on,
+                                           tone: .positive,
+                                           opacity: 1)
         case .some(false):
-            return CameraStatePresentation(text: "Camera is off", kind: .off)
+            return CameraStatePresentation(text: "Camera is off",
+                                           kind: .off,
+                                           tone: .neutral,
+                                           opacity: 1)
         case .none:
             return CameraStatePresentation(text: "Camera status unknown — press Refresh",
-                                           kind: .unknown)
+                                           kind: .unknown,
+                                           tone: .neutral,
+                                           opacity: 0.45)
         }
     }
 
