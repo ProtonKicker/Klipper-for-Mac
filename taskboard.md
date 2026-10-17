@@ -54,6 +54,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a doctor/selftest firmware-consistency check that compares the live MCU's reported firmware revision against the installed Klipper checkout revision
 - [x] Hardened `detect.all_identities()` / `flash.identity_rows()` against the post-restart window where `/dev/cu.usbmodem*` is already back but the first `ioreg` pass still returns no usable USB identity rows
 - [x] Expanded the direct Swift logic harness and future SwiftPM tests around degraded Moonraker payloads, shutdown/startup readiness notes, and transient serial CLI noise
+- [x] Surfaced live firmware provenance from `klippy.log` in `doctor` / `selftest` and added a live check that the direct probe's build string matches klippy's latest `Loaded MCU` record
 
 ## Landed Fixes
 
@@ -161,6 +162,11 @@ Continue the robustness-testing loop from the saved transcript:
 26. `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
    - mirror the direct harness coverage into future SwiftPM tests for Moonraker parsing, degraded printer-state notes, and `StackSnapshot.overall`
 
+27. `klipperformac/cli.py`
+   - parse the latest `Loaded MCU '...' (...)` lines out of `klippy.log`
+   - show the loaded MCU build provenance in `doctor` and `selftest`
+   - fail `doctor` if klippy's runtime MCU version disagrees with klippy.log's latest loaded-MCU record while the printer claims ready
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -248,6 +254,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
   - future SwiftPM coverage for Moonraker parsing, malformed optional fields, degraded readiness notes, and stack-overall state
 
+- `tests/flash/test_flash_live_readonly.py`
+  - live build-provenance check: direct `flash probe` build string matches klippy.log's latest `Loaded MCU` record
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -289,6 +298,9 @@ Continue the robustness-testing loop from the saved transcript:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/Moonraker.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift` -> PASS
   - `swiftc -parse KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift` -> PASS
+- focused firmware provenance regressions:
+  - `15 passed` in `tests/climcu/test_mcu_runtime_report.py`
+  - `7 passed, 1 skipped` in `tests/flash/test_flash_live_readonly.py`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -349,6 +361,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-fast` -> PASS
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swift test --package-path KlipperMac` is still blocked because this Mac only has Command Line Tools active and no `Xcode*.app` is installed under `/Applications`
+- after the firmware provenance pass:
+  - `./bin/klipperformac doctor` -> `[ok] mcu [mcu]: klippy.log last loaded 461c4e3 (gcc: Arm GNU Toolchain 14.2...)`
+  - `./bin/klipperformac selftest` -> same loaded-MCU provenance line
+  - `make qa-full` -> `3126 passed, 29 deselected`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `29 passed`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -358,7 +375,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 28 passed
+- 29 passed
 
 ## Live Bench Notes
 
@@ -368,6 +385,7 @@ Current best read:
 - the stack is back to `klippy ready`
 - the remaining live work is now expansion/improvement work, not bench recovery
 - the previously flaky post-restart USB identity gap is now covered by a bounded retry and no longer causes a live-tier skip
+- the loaded-MCU version and build toolchain are now surfaced directly from `klippy.log`, not left as a manual checklist item
 
 Evidence:
 
@@ -375,10 +393,10 @@ Evidence:
 - `./bin/klipperformac status` now shows `klippy ready`
 - `./bin/klipperformac doctor` now passes with the stack up
 - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes fully again
+- `./bin/klipperformac doctor` and `selftest` now both print the latest `Loaded MCU` provenance line from `klippy.log`
 
 ## Next Suggested Moves
 
-- [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
 - [ ] Expand the direct Swift harness and future `swift test` coverage into more app-model cases (`probeSerialReport` keep/legacy/report policy, stack-reader edge states, UI warning presentation)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac

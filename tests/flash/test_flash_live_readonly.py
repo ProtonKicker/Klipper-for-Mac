@@ -41,18 +41,20 @@ def real_home(monkeypatch):
     if not paths.KLIPPER.is_dir():
         pytest.skip("no real install at {} to probe".format(REAL_HOME))
     detect = importlib.reload(importlib.import_module("klipperformac.detect"))
+    cli = importlib.reload(importlib.import_module("klipperformac.cli"))
     process = importlib.reload(
         importlib.import_module("klipperformac.process"))
     flash = importlib.reload(importlib.import_module("klipperformac.flash"))
-    return SimplePaths(paths, detect, process, flash)
+    return SimplePaths(paths, detect, cli, process, flash)
 
 
 class SimplePaths:
     """The reloaded quartet, as attributes (kept explicit so a skip is loud)."""
 
-    def __init__(self, paths, detect, process, flash):
+    def __init__(self, paths, detect, cli, process, flash):
         self.paths = paths
         self.detect = detect
+        self.cli = cli
         self.process = process
         self.flash = flash
 
@@ -213,3 +215,32 @@ def test_probe_version_matches_the_running_stacks_firmware(real_home):
         assert process.start(), "could not restart the stack after flash probe"
         assert _printer_info(real_home.paths.MOONRAKER_PORT) is not None, \
             "moonraker did not come back after version comparison probe"
+
+
+def test_probe_build_versions_match_the_latest_klippy_log_load_record(real_home):
+    """The direct serial probe and klippy.log should agree on the firmware
+    build string the bench board is actually running."""
+    flash = real_home.flash
+    cli = real_home.cli
+    process = real_home.process
+    log_info = cli._mcu_log_provenance()
+    record = log_info.get("mcu")
+    if not record:
+        pytest.skip("klippy.log has no recent Loaded MCU line for [mcu]")
+    report = flash.detect_boards()
+    rows = [t for t in report["targets"]
+            if t.get("kind") == "serial" and t.get("path", "").startswith("/dev/cu.")]
+    if not rows:
+        pytest.skip("no serial board is present to probe")
+    port = rows[0]["path"]
+    assert process.stop(), "could not stop the stack before flash probe"
+    try:
+        probe = flash.probe_report(port)
+        assert probe["ok"] is True, probe
+        assert probe.get("version") == record["version"], (probe, record)
+        assert probe.get("build_versions") == record["build_versions"], \
+            (probe, record)
+    finally:
+        assert process.start(), "could not restart the stack after build comparison probe"
+        assert _printer_info(real_home.paths.MOONRAKER_PORT) is not None, \
+            "moonraker did not come back after build comparison probe"

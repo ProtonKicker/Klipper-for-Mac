@@ -201,3 +201,41 @@ def test_firmware_mismatch_is_only_red_while_klippy_claims_ready(cstack):
     assert cstack.cli._mcu_firmware_lines_fail(mismatch, "startup") is False
     assert cstack.cli._mcu_firmware_lines_fail(match, "ready") is False
     assert cstack.cli._mcu_firmware_lines_fail([], "ready") is False
+
+
+def test_parse_loaded_mcu_line_reads_version_and_build_versions(cstack):
+    line = ("Loaded MCU 'mcu' 143 commands (461c4e3 / gcc: "
+            "(Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119)")
+    parsed = cstack.cli._parse_loaded_mcu_line(line)
+    assert parsed == {
+        "mcu": "mcu",
+        "version": "461c4e3",
+        "build_versions": "gcc: (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119",
+    }
+
+
+def test_mcu_log_provenance_lines_report_the_latest_loaded_build(
+        cstack, attached, printer_cfg, facts, probe):
+    printer_cfg(facts.CFG_SINGLE)
+    attached([facts.MASTER], [])
+    probe({"/printer/objects/query?mcu=mcu_version":
+           _answer("mcu", "461c4e3")})
+    rows = cstack.cli._mcu_runtime_rows()
+    lines = cstack.cli._mcu_log_provenance_lines(rows=rows, log_info={
+        "mcu": {"mcu": "mcu", "version": "461c4e3",
+                 "build_versions": "gcc: test", "log_file": "/tmp/klippy.log"}
+    })
+    assert lines == [("[ok] ",
+                      "mcu [mcu]: klippy.log last loaded 461c4e3 (gcc: test)",
+                      "match")]
+
+
+def test_mcu_log_provenance_mismatch_is_a_ready_only_failure(cstack):
+    mismatch = [("[!] ", "mcu [mcu]: klippy.log last loaded oldbuild, but "
+                 "runtime says 461c4e3", "mismatch")]
+    match = [("[ok] ", "mcu [mcu]: klippy.log last loaded 461c4e3 "
+              "(gcc: test)", "match")]
+    assert cstack.cli._mcu_log_lines_fail(mismatch, "ready") is True
+    assert cstack.cli._mcu_log_lines_fail(mismatch, "startup") is False
+    assert cstack.cli._mcu_log_lines_fail(match, "ready") is False
+    assert cstack.cli._mcu_log_lines_fail([], "ready") is False

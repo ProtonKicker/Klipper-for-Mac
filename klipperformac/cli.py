@@ -1473,6 +1473,40 @@ def _mcu_firmware_match_lines(rows=None, expected=None):
     return lines
 
 
+def _mcu_log_provenance_lines(rows=None, log_info=None):
+    """Extra lines from klippy.log's latest Loaded-MCU records."""
+    rows = [] if rows is None else rows
+    log_info = _mcu_log_provenance() if log_info is None else log_info
+    lines = []
+    for row in rows:
+        if row["verdict"] != "ok":
+            continue
+        info = log_info.get(row["mcu"])
+        if not info:
+            continue
+        if info["version"] == row["detail"]:
+            lines.append((
+                "[ok] ",
+                "mcu {}: klippy.log last loaded {} ({})".format(
+                    row["section"], info["version"], info["build_versions"]),
+                "match",
+            ))
+        else:
+            lines.append((
+                "[!] ",
+                "mcu {}: klippy.log last loaded {}, but runtime says {}".format(
+                    row["section"], info["version"], row["detail"]),
+                "mismatch",
+            ))
+    return lines
+
+
+def _mcu_log_lines_fail(lines, klippy):
+    """Whether a klippy.log/runtime mismatch should turn doctor red."""
+    return any(verdict == "mismatch" and klippy == "ready"
+               for _tag, _text, verdict in (lines or []))
+
+
 def cmd_serial(args):
     """`serial` / `serial --json` / `serial --set PATH [MCUNAME]`.
 
@@ -2705,6 +2739,8 @@ def cmd_selftest(args):
             print(tag + text)
         for tag, text, _verdict in _mcu_firmware_match_lines(rows=rows):
             print(tag + text)
+        for tag, text, _verdict in _mcu_log_provenance_lines(rows=rows):
+            print(tag + text)
     except Exception as e:
         print("[i]  mcu sections: not reported ({})".format(e))
 
@@ -2744,6 +2780,8 @@ PRI_NORMAL = 31        # an unthrottled process reads 31 here (measured)
 PRI_THROTTLED = 20     # UTILITY-class QoS lands in 20..30 (measured)
 _THERM_TIMEOUT = 2.0   # `pmset -g therm` streams and never exits by itself
 _LOG_BUDGET = 8 << 20  # at most 8 MiB of klippy.log: the command stays cheap
+_LOADED_MCU_RE = re.compile(
+    r"^Loaded MCU '([^']+)' \d+ commands \((.*)\)$")
 _MACOS_MAX_PID = 99999  # macOS pids stop here; see process.py's _MAX_PID note
 
 # The starvation error strings, as klippy prints them (extras/error_mcu.py:34-46
@@ -2955,6 +2993,45 @@ def _read_log_tail(path, budget):
             return _decode(f.read()), False
     except OSError:
         return "", False
+
+
+def _parse_loaded_mcu_line(line):
+    """{'mcu','version','build_versions'} from one 'Loaded MCU ...' line."""
+    m = _LOADED_MCU_RE.match((line or "").strip())
+    if not m:
+        return None
+    payload = m.group(2)
+    if " / " not in payload:
+        return None
+    version, build_versions = payload.split(" / ", 1)
+    version = version.strip()
+    build_versions = build_versions.strip()
+    if not version or not build_versions:
+        return None
+    return {"mcu": m.group(1).strip(), "version": version,
+            "build_versions": build_versions}
+
+
+def _mcu_log_provenance(files=None, budget=_LOG_BUDGET):
+    """Latest Loaded-MCU records per mcu from klippy.log, newest first."""
+    left = budget
+    out = {}
+    for path in _klippy_log_files() if files is None else files:
+        if left <= 0:
+            break
+        text, _cut = _read_log_tail(path, left)
+        if text:
+            left -= len(text.encode(errors="replace"))
+        for raw in reversed(text.splitlines()):
+            parsed = _parse_loaded_mcu_line(raw)
+            if not parsed:
+                continue
+            name = parsed["mcu"]
+            if name in out:
+                continue
+            parsed["log_file"] = str(path)
+            out[name] = parsed
+    return out
 
 
 def _host_budget(files=None, budget=_LOG_BUDGET):
@@ -3448,18 +3525,24 @@ def cmd_doctor(args):
             mcu_rows = _mcu_runtime_rows()
             mcu_lines = _mcu_report_lines(rows=mcu_rows)
             fw_lines = _mcu_firmware_match_lines(rows=mcu_rows)
+            log_lines = _mcu_log_provenance_lines(rows=mcu_rows)
         except Exception as e:
             # A doctor that stops printing halfway is worse than a missing line.
             print("[i]  mcu sections: not reported ({})".format(e))
             mcu_lines = []
             fw_lines = []
+            log_lines = []
         for tag, text, verdict in mcu_lines:
             print(tag + text)
         for tag, text, verdict in fw_lines:
             print(tag + text)
+        for tag, text, verdict in log_lines:
+            print(tag + text)
         if _mcu_lines_fail(mcu_lines, klippy):
             ok = False
         if _mcu_firmware_lines_fail(fw_lines, klippy):
+            ok = False
+        if _mcu_log_lines_fail(log_lines, klippy):
             ok = False
     # Host scheduling posture: macOS gives klippy no real-time priority (no
     # SCHED_FIFO, negative nice is root-only), so the remaining risk is made
