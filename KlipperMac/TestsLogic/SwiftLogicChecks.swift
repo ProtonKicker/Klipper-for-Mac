@@ -155,6 +155,12 @@ enum SwiftLogicChecks {
                == InlineWarningPresentation(message: "name cannot be set from here — edit printer.cfg",
                                             tone: .warning),
                "bad section names should surface a warning footer")
+        expect(badSection?.badgePresentations.last
+               == RowBadgePresentation(text: "bad section",
+                                       tone: .warning,
+                                       help: McuConflict.badSectionName.tooltip,
+                                       showsWarningIcon: true),
+               "bad section names should surface a warning badge presentation")
 
         let fixed = rows.first { $0.mcu == "rpi" }
         expect(fixed?.pickerStatusLabel == "CAN / fixed",
@@ -165,6 +171,21 @@ enum SwiftLogicChecks {
                "non-USB-configured rows should explain the read-only picker")
         expect(fixed?.pickerHelpText.contains(fixed?.section ?? "") == true,
                "picker help should keep the section context")
+
+        let master = rows.first { $0.mcu == "mcu" }
+        expect(master?.badgePresentations.first
+               == RowBadgePresentation(text: "timing master",
+                                       tone: .accent,
+                                       help: nil,
+                                       showsWarningIcon: false),
+               "master rows should surface their accent badge presentation")
+
+        let missing = rows.first { $0.mcu == "tool" }
+        expect(missing?.identityPresentation
+               == IdentityPresentation(
+                    text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
+                    present: false),
+               "identity presentation should keep the offline text and presence flag")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

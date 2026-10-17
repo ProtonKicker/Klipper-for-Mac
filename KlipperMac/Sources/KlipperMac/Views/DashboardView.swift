@@ -360,10 +360,9 @@ private struct McuSerialRow: View {
                 Text(verbatim: row.displayName)
                     .font(.callout.weight(.medium))
                     .help(row.section)
-                if row.isMaster {
-                    pill("timing master", tint: FlatPalette.blue)
+                ForEach(Array(row.badgePresentations.enumerated()), id: \.offset) { _, badge in
+                    pill(badge)
                 }
-                conflictBadge
                 Spacer(minLength: 8)
                 if row.offersPortPicker {
                     portPicker
@@ -380,15 +379,16 @@ private struct McuSerialRow: View {
                 // and Text's default initialiser would read "usb_a_b" as
                 // markdown and italicise the middle of it.
                 Text(verbatim: row.configuredLine)
-                if let present = row.isPresent {
+                let identity = row.identityPresentation
+                if let present = identity.present {
                     HStack(spacing: 4) {
                         Circle()
                             .fill(present ? Color.green : Color.red.opacity(0.7))
                             .frame(width: 7, height: 7)
-                        Text(verbatim: row.identityLine)
+                        Text(verbatim: identity.text)
                     }
                 } else {
-                    Text(verbatim: row.identityLine)
+                    Text(verbatim: identity.text)
                 }
                 if let footer = row.footerPresentation {
                     Text(footer.message)
@@ -430,27 +430,36 @@ private struct McuSerialRow: View {
         }
     }
 
-    @ViewBuilder private var conflictBadge: some View {
-        if let tip = row.conflictTooltip {
-            HStack(spacing: 4) {
+    private func pill(_ badge: RowBadgePresentation) -> some View {
+        HStack(spacing: 4) {
+            if badge.showsWarningIcon {
                 FlatIcon(kind: .warning, size: 12, color: FlatPalette.amber)
-                Text(row.conflictLabel)
-                    .font(.caption2.weight(.medium))
             }
-            .foregroundStyle(FlatPalette.amber)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(FlatPalette.amber.opacity(0.14)))
-            .help(tip)
+            Text(badge.text)
+                .font(.caption2.weight(.medium))
+        }
+        .foregroundStyle(badgeForeground(badge.tone))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(badgeBackground(badge.tone)))
+        .help(badge.help ?? "")
+    }
+
+    private func badgeForeground(_ tone: RowBadgeTone) -> Color {
+        switch tone {
+        case .accent:
+            return FlatPalette.blue
+        case .warning:
+            return FlatPalette.amber
         }
     }
 
-    private func pill(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.14)))
+    private func badgeBackground(_ tone: RowBadgeTone) -> Color {
+        switch tone {
+        case .accent:
+            return FlatPalette.blue.opacity(0.14)
+        case .warning:
+            return FlatPalette.amber.opacity(0.14)
+        }
     }
 }

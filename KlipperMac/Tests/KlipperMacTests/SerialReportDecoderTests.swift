@@ -68,6 +68,12 @@ final class SerialReportDecoderTests: XCTestCase {
                        InlineWarningPresentation(
                         message: "name cannot be set from here — edit printer.cfg",
                         tone: .warning))
+        XCTAssertEqual(badSection?.badgePresentations.last,
+                       RowBadgePresentation(
+                        text: "bad section",
+                        tone: .warning,
+                        help: McuConflict.badSectionName.tooltip,
+                        showsWarningIcon: true))
 
         let fixed = rows.first { $0.mcu == "rpi" }
         XCTAssertEqual(fixed?.pickerStatusLabel, "CAN / fixed")
@@ -76,5 +82,19 @@ final class SerialReportDecoderTests: XCTestCase {
                         message: "set here in printer.cfg, not from a USB picker",
                         tone: .neutral))
         XCTAssertTrue(fixed?.pickerHelpText.contains(fixed?.section ?? "") == true)
+
+        let master = rows.first { $0.mcu == "mcu" }
+        XCTAssertEqual(master?.badgePresentations.first,
+                       RowBadgePresentation(
+                        text: "timing master",
+                        tone: .accent,
+                        help: nil,
+                        showsWarningIcon: false))
+
+        let missing = rows.first { $0.mcu == "tool" }
+        XCTAssertEqual(missing?.identityPresentation,
+                       IdentityPresentation(
+                        text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
+                        present: false))
     }
 }

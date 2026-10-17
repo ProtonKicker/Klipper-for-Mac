@@ -61,6 +61,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted banner severity/title and status-badge text/tone into a pure Swift presentation helper and covered them in the direct harness plus future SwiftPM tests
 - [x] Extracted warning-row and progress-label presentation into the pure Swift feedback layer so blank warnings disappear and out-of-range progress labels stay aligned with the clamped progress bar
 - [x] Extracted per-MCU row footer/picker presentation into the core MCU model so the dashboard's CAN/fixed, bad-section, and picker-help rules are testable without SwiftUI
+- [x] Extracted per-MCU badge and identity presentation into the core row model so timing-master/conflict pills and presence text are testable without SwiftUI
+- [x] Fixed a SwiftUI result-builder compatibility failure in `Components.swift` so `make build-gui` works again on this Mac
 
 ## Landed Fixes
 
@@ -194,6 +196,13 @@ Continue the robustness-testing loop from the saved transcript:
 33. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
    - extract per-row picker label, picker help, and footer presentation so the dashboard can render MCU row guidance from model policy instead of hard-coded view strings
 
+34. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
+   - extract per-row badge presentation so timing-master and conflict pills come from pure model data instead of SwiftUI conditionals
+   - extract identity presence presentation so the row model owns the text plus present/absent signal the dashboard renders
+
+35. `KlipperMac/Sources/KlipperMac/Views/Components.swift`
+   - move badge/banner presentation locals out of SwiftUI result-builder bodies so older local toolchains compile the GUI cleanly again
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -298,6 +307,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
   - future SwiftPM coverage for per-MCU row picker/footer presentation policy
 
+- `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
+  - future SwiftPM coverage for per-MCU master/conflict badge presentation and identity presence presentation
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -361,6 +373,10 @@ Continue the robustness-testing loop from the saved transcript:
 - focused MCU row presentation verification:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift KlipperMac/Sources/KlipperMac/Core/McuSerial.swift KlipperMac/Sources/KlipperMac/Views/DashboardView.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift` -> PASS
+- latest row-presentation + GUI compatibility rerun:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS (`161 passed`)
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

@@ -2,18 +2,22 @@ import SwiftUI
 
 struct StatusBadge: View {
     let overall: StackSnapshot.Overall
+    private var presentation: StatusBadgePresentation {
+        AppFeedback.statusBadgePresentation(overall: overall)
+    }
 
-    var body: some View {
-        let presentation = AppFeedback.statusBadgePresentation(overall: overall)
-        let color: Color
+    private var color: Color {
         switch presentation.tone {
         case .positive:
-            color = .green
+            return .green
         case .warning:
-            color = .orange
+            return .orange
         case .neutral:
-            color = .secondary
+            return .secondary
         }
+    }
+
+    var body: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
@@ -29,13 +33,21 @@ struct StatusBadge: View {
 struct MessageBanner: View {
     @ObservedObject var notifier: Notifier
 
+    private var banner: BannerPresentation? {
+        AppFeedback.bannerPresentation(message: notifier.message,
+                                       isError: notifier.isError)
+    }
+
+    private var iconColor: Color {
+        banner?.tone == .warning ? FlatPalette.amber : FlatPalette.green
+    }
+
+    private var iconKind: FlatIconKind {
+        banner?.tone == .warning ? .warning : .check
+    }
+
     var body: some View {
-        if let banner = AppFeedback.bannerPresentation(message: notifier.message,
-                                                       isError: notifier.isError) {
-            let iconColor: Color = banner.tone == .warning ? FlatPalette.amber
-                                                            : FlatPalette.green
-            let iconKind: FlatIconKind = banner.tone == .warning ? .warning
-                                                                 : .check
+        if let banner {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     FlatIcon(kind: iconKind, size: 14, color: iconColor)

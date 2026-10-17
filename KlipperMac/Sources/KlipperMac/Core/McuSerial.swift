@@ -93,6 +93,23 @@ struct McuIdentity: Equatable {
     let present: Bool
 }
 
+enum RowBadgeTone: Equatable {
+    case accent
+    case warning
+}
+
+struct RowBadgePresentation: Equatable {
+    let text: String
+    let tone: RowBadgeTone
+    let help: String?
+    let showsWarningIcon: Bool
+}
+
+struct IdentityPresentation: Equatable {
+    let text: String
+    let present: Bool?
+}
+
 struct McuRow: Identifiable, Equatable {
     /// Name used to address the section on the command line
     /// (`serial --set PATH <mcu>`), so it doubles as the row identity.
@@ -188,6 +205,23 @@ struct McuRow: Identifiable, Equatable {
 
     var conflictLabel: String { conflict?.label ?? "check config" }
 
+    var badgePresentations: [RowBadgePresentation] {
+        var badges: [RowBadgePresentation] = []
+        if isMaster {
+            badges.append(RowBadgePresentation(text: "timing master",
+                                               tone: .accent,
+                                               help: nil,
+                                               showsWarningIcon: false))
+        }
+        if let tip = conflictTooltip {
+            badges.append(RowBadgePresentation(text: conflictLabel,
+                                               tone: .warning,
+                                               help: tip,
+                                               showsWarningIcon: true))
+        }
+        return badges
+    }
+
     var pickerStatusLabel: String? {
         if isAddressable && !offersPortPicker { return "CAN / fixed" }
         return nil
@@ -211,6 +245,10 @@ struct McuRow: Identifiable, Equatable {
                 tone: .neutral)
         }
         return nil
+    }
+
+    var identityPresentation: IdentityPresentation {
+        IdentityPresentation(text: identityLine, present: isPresent)
     }
 }
 
