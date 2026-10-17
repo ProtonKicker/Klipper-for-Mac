@@ -603,6 +603,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/deep/test_clmisc_data_ui.py::test_status_with_nothing_installed_says_stopped tests/deep/test_clmisc_data_ui.py::test_status_reports_an_untracked_but_answering_stack` -> `2 passed`
   - `KLIPPERFORMAC_ALLOW_LIVE=1 env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/climcu/test_live_mcu_probe.py -m "live or hardware"` -> `5 passed`
   - `make qa-fast` -> PASS
+  - push hook `scripts/qa/full.sh` -> `3130 passed, 30 deselected`
   - `./bin/klipperformac doctor` -> PASS with `[i]  stack is not tracked, but Moonraker is answering on port 7125`
   - `./bin/klipperformac selftest` -> `SELFTEST PASSED`
   - `./bin/klipperformac status` -> `running (untracked)`
