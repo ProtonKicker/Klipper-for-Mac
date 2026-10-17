@@ -621,6 +621,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `sh scripts/qa/swift_future_tests.sh` -> PASS
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS
+  - push hook `scripts/qa/full.sh` -> `3133 passed, 30 deselected`
   - the Swift stack reader now treats this install's own listening Moonraker/UI ports as running evidence, keeping GUI status/polling/update gating aligned with the CLI's untracked-live behavior
 
 ## Live Tier Status
