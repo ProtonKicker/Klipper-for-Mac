@@ -255,6 +255,33 @@ def test_single_ioreg_call_per_query(fake_run, iokit):
     assert len(rec.calls) == 1
 
 
+def test_identity_retries_once_when_the_first_ioreg_pass_is_transiently_empty(
+        monkeypatch, iokit):
+    """The live board can reappear in /dev before ioreg repopulates the USB
+    ancestry detect.identity() needs. One bounded retry should recover."""
+    calls = []
+    answers = [
+        subprocess.CompletedProcess(list(detect._IOREG_ARGV), 0,
+                                    iokit.render(iokit.root_tree([])).encode(),
+                                    b""),
+        subprocess.CompletedProcess(list(detect._IOREG_ARGV), 0,
+                                    iokit.one_board().encode(), b""),
+    ]
+
+    def fake_run(argv, **kwargs):
+        calls.append({"argv": list(argv), "kwargs": kwargs})
+        return answers[min(len(calls) - 1, len(answers) - 1)]
+
+    sleeps = []
+    monkeypatch.setattr(detect.subprocess, "run", fake_run)
+    monkeypatch.setattr(detect.time, "sleep", lambda secs: sleeps.append(secs))
+    ident = detect.identity("/dev/cu.usbmodem14101")
+    assert ident is not None
+    assert ident["path"] == iokit.PICO_PATH
+    assert len(calls) == 2
+    assert sleeps and sleeps[0] <= detect._IOREG_EMPTY_RETRY_DELAY
+
+
 # --------------------------------------------------------------- non-printers --
 def test_identity_ignores_bluetooth_port(fake_run, iokit):
     """/dev/cu.Air4SE is an RFCOMM tunnel to headphones. It has a /dev/cu path

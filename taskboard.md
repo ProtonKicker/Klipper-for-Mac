@@ -52,6 +52,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a stack-level printer warning so the top of the dashboard also reflects non-ready klippy states, not only the printer pane
 - [x] Added a live firmware-version agreement test that compares `/printer/info` against a direct `flash probe` handshake and waits for Moonraker to return after probe-driven restarts
 - [x] Added a doctor/selftest firmware-consistency check that compares the live MCU's reported firmware revision against the installed Klipper checkout revision
+- [x] Hardened `detect.all_identities()` / `flash.identity_rows()` against the post-restart window where `/dev/cu.usbmodem*` is already back but the first `ioreg` pass still returns no usable USB identity rows
 
 ## Landed Fixes
 
@@ -149,6 +150,10 @@ Continue the robustness-testing loop from the saved transcript:
    - compare each loaded MCU firmware version against that installed checkout in `doctor` and `selftest`
    - turn a live firmware/checkout mismatch into an explicit doctor failure instead of a manual log-reading task
 
+24. `klipperformac/detect.py`
+   - retry one empty `ioreg` identity pass within the original timeout budget instead of surfacing a transient `[]`
+   - preserve the fast happy path and the 3 s cap while recovering the real post-`FIRMWARE_RESTART` race the bench showed
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -230,6 +235,9 @@ Continue the robustness-testing loop from the saved transcript:
   - reload the real install for live per-MCU probing instead of inheriting stale module state
   - live master-MCU check that the board's firmware matches the installed Klipper checkout revision
 
+- `tests/identity/test_identity_parsing.py`
+  - retry-once regression for the post-restart empty-then-present `ioreg` identity shape
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -265,6 +273,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `54 passed` across `tests/flash/test_flash_probe.py`, `tests/flash/test_flash_cli.py`, and `tests/flash/test_flash_identity_keys.py`
 - focused MCU runtime/checkout regressions:
   - `12 passed` in `tests/climcu/test_mcu_runtime_report.py`
+- focused identity regressions:
+  - `37 passed, 8 deselected` across `tests/identity/test_identity_parsing.py`, `tests/identity/test_identity_live_probe.py`, and `tests/flash/test_flash_live_readonly.py`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -312,8 +322,15 @@ Continue the robustness-testing loop from the saved transcript:
 - latest broad reruns after the firmware-consistency change:
   - `make qa-full` -> `3122 passed, 28 deselected`
   - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `27 passed, 1 skipped`
-  - skipped live case: `tests/flash/test_flash_live_readonly.py::test_the_bench_skr_picos_identity_matches_the_multi_mcu_spec`
-    because `detect.all_identities()` / `flash.identity_rows()` transiently returned `[]` even while the `/dev/cu.usbmodem142101` node stayed present
+  - skipped live case was traced to a real post-`FIRMWARE_RESTART` race:
+    the first poll saw `scan()` still list `/dev/cu.usbmodem142101` while
+    `detect.all_identities()` returned `[]`, and the next poll 0.5 s later
+    returned the expected RP2040 identity row
+- after the identity retry hardening:
+  - `make qa-full` -> `3123 passed, 28 deselected`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `28 passed`
+  - `./bin/klipperformac doctor` -> PASS
+  - `./bin/klipperformac selftest` -> PASS
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -323,7 +340,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 27 passed, 1 skipped
+- 28 passed
 
 ## Live Bench Notes
 
@@ -332,19 +349,18 @@ Current best read:
 - the bench board now answers a direct Klipper handshake again
 - the stack is back to `klippy ready`
 - the remaining live work is now expansion/improvement work, not bench recovery
-- one remaining flaky seam is the transient loss of USB identity data from `ioreg` while the serial node itself stays present
+- the previously flaky post-restart USB identity gap is now covered by a bounded retry and no longer causes a live-tier skip
 
 Evidence:
 
 - `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101 --json` now returns `ok: true`
 - `./bin/klipperformac status` now shows `klippy ready`
 - `./bin/klipperformac doctor` now passes with the stack up
-- `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes except for one identity-read skip
+- `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes fully again
 
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
-- [ ] Investigate why `detect.all_identities()` / `flash.identity_rows()` can transiently return `[]` while the live `/dev/cu.usbmodem*` node still exists
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
 - [ ] Expand the direct Swift harness and future `swift test` coverage into more degraded-state cases (`klippy startup`, partial object trees, transient CLI noise)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac

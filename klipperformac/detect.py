@@ -2,6 +2,7 @@
 import glob
 import re
 import subprocess
+import time
 
 from . import paths
 
@@ -227,6 +228,7 @@ _IOREG_ARGV = ("ioreg", "-p", "IOService", "-l", "-w", "0")
 # this runs on the GUI's serial picker, and a wedged ioreg must not wedge the
 # app. Total failure (no ioreg, timeout, unparsable, garbage) -> no identity.
 IOREG_TIMEOUT_CAP = 3.0
+_IOREG_EMPTY_RETRY_DELAY = 0.2
 
 # `  | +-o <name>  <class <Class>, id 0x..., registered, ...>`. Verified on this
 # Mac: ioreg introduces EVERY child with `+-o ` (no `` `-o `` last-child glyph
@@ -510,30 +512,47 @@ def _usb_ports(timeout=None):
         return []
     if limit <= 0:
         return []
-    try:
-        done = subprocess.run(list(_IOREG_ARGV), capture_output=True,
-                              timeout=limit, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
-        # No ioreg on PATH, timeout (SubprocessError family), bad limit.
-        return []
-    except Exception:  # pragma: no cover - never raise out of this module
-        # Anything else a subprocess call can be talked into by a wrapper, a
-        # sandbox or a test double. "I don't know" is still the right answer.
-        return []
-    try:
-        raw = done.stdout or b""
-        text = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
-        if not text:
+    deadline = time.monotonic() + limit
+    for attempt in range(2):
+        remaining = limit if attempt == 0 else (deadline - time.monotonic())
+        if remaining <= 0:
             return []
-        nodes = _parse_ioreg(text)
-        out = []
-        for i in range(len(nodes)):
-            ident = _identity_fields(nodes, i)
-            if ident is not None:
-                out.append(ident)
-    except Exception:  # pragma: no cover - unreachable unless the parser is wrong
-        return []
-    return out
+        try:
+            done = subprocess.run(list(_IOREG_ARGV), capture_output=True,
+                                  timeout=remaining, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            # No ioreg on PATH, timeout (SubprocessError family), bad limit.
+            return []
+        except Exception:  # pragma: no cover - never raise out of this module
+            # Anything else a subprocess call can be talked into by a wrapper, a
+            # sandbox or a test double. "I don't know" is still the right answer.
+            return []
+        try:
+            raw = done.stdout or b""
+            text = raw if isinstance(raw, str) else raw.decode("utf-8", "replace")
+            if not text:
+                out = []
+            else:
+                nodes = _parse_ioreg(text)
+                out = []
+                for i in range(len(nodes)):
+                    ident = _identity_fields(nodes, i)
+                    if ident is not None:
+                        out.append(ident)
+        except Exception:  # pragma: no cover - unreachable unless the parser is wrong
+            return []
+        if out:
+            return out
+        # The live bench sometimes shows the /dev/cu.usbmodem node immediately
+        # after FIRMWARE_RESTART while the first ioreg pass still lacks the
+        # USB ancestry detect.identity() needs. Spend the remaining budget on
+        # one short retry instead of surfacing a transient [].
+        if attempt == 0:
+            pause = min(_IOREG_EMPTY_RETRY_DELAY,
+                        max(0.0, deadline - time.monotonic()))
+            if pause > 0:
+                time.sleep(pause)
+    return []
 
 
 def _dev_aliases(dev):
