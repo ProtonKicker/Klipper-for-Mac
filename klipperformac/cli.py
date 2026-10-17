@@ -1781,7 +1781,7 @@ def cmd_update(args):
             comp, _, tag = spec.partition("=")
             if comp not in versions.REPOS:
                 _die("Unknown component: " + comp)
-            pins[comp] = tag
+            pins[comp] = installer._validate_ref(comp, tag)
         versions.save_pins(pins)
         print("Pinned: " + ", ".join(args.pin))
         _reprovision(pins)

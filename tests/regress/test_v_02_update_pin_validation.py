@@ -19,10 +19,9 @@ really does go through the installer's validation and that a rejected pin never
 reaches a command line. The venv/pip/c_helper steps are stubbed: they are not
 the subject here and a throwaway home has no venv.
 
-NOT covered as fixed (still open, and it lives in cli.py which this group does
-not own): cmd_update saves the pin to lockfile.json BEFORE provisioning, so the
-junk pin is persisted even though the checkout is safe. Filed for F1: validate
-the --pin value with installer._validate_ref before versions.save_pins().
+Also fixed in cli.py: cmd_update now validates every `--pin` value before it is
+saved to lockfile.json, so a rejected pin never persists and never becomes the
+next setup() run's problem.
 """
 import json
 import subprocess
@@ -213,15 +212,13 @@ def test_a_valid_pin_still_provisions_through_the_cli(stack, installed,
     assert fetched == [("mainsail", "v2.19.0"), ("fluidd", "v1.37.6")]
 
 
-def test_a_junk_pin_is_rejected_again_by_the_next_setup(stack, installed):
-    """Characterization of the still-open half: cli.py persists the pin before
-    provisioning, so lockfile.json keeps the junk. It must still be refused -
-    never handed to git - by whoever reads it next."""
-    run_update(stack, "klipper=a=b=c")
+def test_a_junk_pin_is_not_persisted_to_lockfile(stack, installed):
+    """A rejected `update --pin` must leave lockfile.json naming the previous
+    good ref, not a junk value that setup() would have to reject later."""
+    code, exc = run_update(stack, "klipper=a=b=c")
+    assert exc is None
+    assert isinstance(code, str) and "Invalid klipper pin" in str(code)
     saved = json.loads(stack.paths.LOCKFILE.read_text())
-    assert saved["klipper"] == "a=b=c"
-    with pytest.raises(SystemExit) as exc:
-        stack.installer._validate_ref("klipper", saved["klipper"])
-    assert "Invalid klipper pin" in str(exc.value)
+    assert saved["klipper"] == stack.versions.DEFAULT_PINS["klipper"]
     dest = stack.installer.DESTS["klipper"]
     assert "IRREPLACEABLE" in (dest / "CANARY.txt").read_text()

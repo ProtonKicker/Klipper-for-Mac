@@ -72,6 +72,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a shared `fast_pytest.sh` helper plus `fast_profile.sh` / `make test-fast-profile` so fast-tier timing drift can be profiled without rebuilding the selector by hand
 - [x] Updated the fast-tier over-budget warning to point at the new profiling tool instead of a manual pytest recipe
 - [x] Added a shared proxy test helper that starts throwaway socketservers with a short poll interval so fast-tier proxy regressions no longer spend ~0.5s each in idle shutdown waits
+- [x] Fixed `update --pin` so invalid refs are rejected before they are written to lockfile.json, keeping junk pins from persisting into later setup/update runs
 
 ## Landed Fixes
 
@@ -248,6 +249,9 @@ Continue the robustness-testing loop from the saved transcript:
 45. `tests/proxy_testkit.py`
    - add a shared test-only server launcher that uses a short `serve_forever()` poll interval for throwaway proxy harnesses
    - keep the runtime proxy defaults unchanged while removing socketserver shutdown latency from the fast-tier regressions
+
+46. `klipperformac/cli.py`
+   - validate each `update --pin` value with `installer._validate_ref(...)` before saving pins, so a rejected ref never persists into lockfile.json
 
 ## Tests Added
 
@@ -454,6 +458,11 @@ Continue the robustness-testing loop from the saved transcript:
   - after the proxy harness speedup, the previous 0.5 s proxy teardowns dropped out of the slowest list
   - the current slowest fast-tier cost is now `tests/regress/test_v_02_update_pin_validation.py::test_junk_pin_leaves_that_component_exactly_as_it_was[shell-junk]` at about 2.0 s, followed by preset/config regressions
   - `make qa-full` -> PASS
+- latest update-pin persistence fix rerun:
+  - `tests/regress/test_v_02_update_pin_validation.py` -> PASS
+  - `make qa-fast` -> PASS
+  - `make qa-full` -> PASS
+  - invalid `update --pin` values now leave lockfile.json on the previous good ref instead of persisting junk
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
