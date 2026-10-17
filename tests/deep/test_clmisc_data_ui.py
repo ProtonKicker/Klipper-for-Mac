@@ -731,6 +731,17 @@ def test_status_with_nothing_installed_says_stopped(quiet_status, capfd):
     assert out.strip() == "stopped"
 
 
+def test_status_reports_an_untracked_but_answering_stack(quiet_status,
+                                                         monkeypatch, capfd):
+    monkeypatch.setattr(quiet_status.process, "our_listeners",
+                        lambda: [(quiet_status.paths.MOONRAKER_PORT, 42),
+                                 (quiet_status.paths.WEB_PORT, 43)])
+    quiet_status.cli.cmd_status(status_args())
+    out = capfd.readouterr().out
+    assert out.startswith("running (untracked)\n")
+    assert "still answering although no stack is tracked" in out
+
+
 def test_status_stopped_reads_no_logs_and_writes_nothing(quiet_status, capfd):
     before = tree(quiet_status.data) if quiet_status.data.exists() else {}
     quiet_status.cli.cmd_status(status_args())

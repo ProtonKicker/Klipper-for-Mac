@@ -205,6 +205,27 @@ def test_doctor_survives_telemetry_that_cannot_read(quiet_doctor, monkeypatch,
     assert "not measured" in capsys.readouterr().out
 
 
+def test_doctor_reports_an_untracked_but_answering_stack(quiet_doctor,
+                                                         monkeypatch, capsys):
+    monkeypatch.setattr(quiet_doctor.process, "our_listeners",
+                        lambda: [(quiet_doctor.paths.MOONRAKER_PORT, 42)])
+    monkeypatch.setattr(quiet_doctor.cli, "_klippy_state",
+                        lambda timeout=3: "ready")
+    monkeypatch.setattr(quiet_doctor.cli, "_mcu_runtime_rows", lambda *a, **k: [])
+    monkeypatch.setattr(quiet_doctor.cli, "_mcu_report_lines", lambda *a, **k: [])
+    monkeypatch.setattr(quiet_doctor.cli, "_mcu_firmware_match_lines",
+                        lambda *a, **k: [])
+    monkeypatch.setattr(quiet_doctor.cli, "_mcu_log_provenance_lines",
+                        lambda *a, **k: [])
+    monkeypatch.setattr(quiet_doctor.cli, "_timing_report", _healthy_report)
+    with pytest.raises(SystemExit) as stop:
+        quiet_doctor.cli.cmd_doctor(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert stop.value.code == 0
+    assert "stack is not tracked, but Moonraker is answering on port" in out
+    assert "[ok] klipper state: ready" in out
+
+
 # --------------------------------------------------------------------------
 # the real command, as a child process
 # --------------------------------------------------------------------------

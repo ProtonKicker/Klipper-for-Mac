@@ -148,6 +148,14 @@ def _klippy_state(timeout=3):
     return state if isinstance(state, str) else None
 
 
+def _our_listener_ports():
+    """Ports answered by this install's service processes, tracked or not."""
+    try:
+        return {port for port, _pid in process.our_listeners()}
+    except Exception:
+        return set()
+
+
 def _powerloss_stack_up():
     """Are klipper AND moonraker alive? The power-loss marker is only judged when
     they are not (powerloss.last_stop): a live stack with an open session file is
@@ -473,8 +481,12 @@ def _status_guard_lines():
 def cmd_status(args):
     state = process.running()
     if state is None:
-        print("stopped")
         left = process.our_listeners()
+        live_ports = {port for port, _pid in left}
+        if {paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT} & live_ports:
+            print("running (untracked)")
+        else:
+            print("stopped")
         if left:
             print("  [!] {} still answering although no stack is tracked: "
                   "klipperformac killall".format(
@@ -2714,8 +2726,11 @@ def cmd_selftest(args):
         running = process.running() or {}
     except Exception:
         running = {}
+    live_ports = _our_listener_ports() if not running else set()
+    answered = {paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT} & live_ports
     if not any(running.get(name) for name in ("klipper", "moonraker",
-                                              "web_mainsail", "web_fluidd")):
+                                              "web_mainsail", "web_fluidd")) \
+            and not answered:
         print("[i]  stack appears stopped: selftest will report connection "
               "failures until `klipperformac up`.", flush=True)
     try:
@@ -3183,13 +3198,15 @@ def _timing_report():
     `timing --json` is what the SwiftUI app reads, so a renamed key is a GUI
     bug. All cheap reads; no state change, no restart."""
     state = process.running() or {}
+    live_ports = _our_listener_ports() if not state else set()
+    moonraker_live = bool(state.get("moonraker")) or paths.MOONRAKER_PORT in live_ports
     pid = _tracked_pid("klipper")
     nice, pri = (None, None)
     if pid is not None:
         nice, pri = _sched_posture(pid)
     klipper = {
         "pid": pid,
-        "running": bool(state.get("klipper")),
+        "running": bool(state.get("klipper")) or moonraker_live,
         "nice": nice,
         "pri": pri,
         "class": _pri_class(pri),
@@ -3218,10 +3235,10 @@ def _timing_report():
             thermal.get("CPU_Scheduler_Limit")),
     }
     budget = _host_budget()
-    printer_state = _klippy_state() if state.get("moonraker") else None
+    printer_state = _klippy_state() if moonraker_live else None
     report = {
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "stack_running": bool(state),
+        "stack_running": bool(state) or bool(live_ports),
         "printer_state": printer_state,
         "klipper": klipper,
         "power": power,
@@ -3497,11 +3514,17 @@ def cmd_doctor(args):
     # the battery is charging) - one read, one source of truth for doctor,
     # `timing` and the GUI.
     state = process.running()
+    live_ports = _our_listener_ports() if state is None else set()
+    moonraker_live = bool(state and state.get("moonraker")) \
+        or paths.MOONRAKER_PORT in live_ports
     if state:
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
         if down:
             print("[!] services not running: " + ", ".join(down))
-    if state and state.get("moonraker"):
+    elif moonraker_live:
+        print("[i]  stack is not tracked, but Moonraker is answering on port {}"
+              .format(paths.MOONRAKER_PORT))
+    if moonraker_live:
         # A live python process is not a working printer. With a wrong [mcu]
         # serial klippy sits in `startup` forever and with an invalid section
         # it reports `error` ("Printer is halted") - both used to leave doctor

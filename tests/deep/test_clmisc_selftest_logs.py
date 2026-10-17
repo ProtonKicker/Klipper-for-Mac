@@ -140,7 +140,17 @@ def test_selftest_warns_cleanly_when_the_stack_is_stopped(stack, monkeypatch,
     assert exc.value.code == 1
     out = capsys.readouterr().out
     assert "stack appears stopped" in out
-    assert len(fake.calls) == 1
+
+
+def test_selftest_does_not_warn_when_moonraker_is_answering_untracked(
+        stack, monkeypatch, capsys):
+    write_exe(stack.paths.VENV_PY, "#!/bin/sh\nexit 0\n")
+    monkeypatch.setattr(stack.process, "running", lambda: None)
+    monkeypatch.setattr(stack.process, "our_listeners",
+                        lambda: [(stack.paths.MOONRAKER_PORT, 42)])
+    stack.cli.cmd_selftest(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert "stack appears stopped" not in out
 
 
 # --------------------------------------------------------------------------

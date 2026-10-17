@@ -77,6 +77,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted the MCU row's read-only status help text and presence-dot presentation into the core row model so more of the remaining SwiftUI-only rendering surface is testable without the view
 - [x] Extracted the camera pane's status-dot styling into `CameraFeedback` so the on/off/unknown indicator presentation is now model-driven end to end
 - [x] Extracted the settings pane's component pin text formatting into a pure helper so the pinned-tag / resolved-sha display is testable without the view
+- [x] Hardened `doctor`, `selftest`, and `timing` for the live-but-untracked case where Moonraker is still answering from our ports even though `process.running()` returns no tracked stack
+- [x] Made `status` report `running (untracked)` instead of `stopped` when this install's Moonraker/UI ports are still answering without a tracked state record, and added a regression for that CLI surface
 
 ## Landed Fixes
 
@@ -595,6 +597,15 @@ Continue the robustness-testing loop from the saved transcript:
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
 - `make qa-fast` now runs direct Swift parser/state checks through `scripts/qa/swift_logic.sh`
+- after the untracked-stack detection pass:
+  - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/rt/test_rt_timing_cli.py::test_doctor_reports_an_untracked_but_answering_stack` -> `1 passed`
+  - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/deep/test_clmisc_selftest_logs.py::test_selftest_does_not_warn_when_moonraker_is_answering_untracked` -> `1 passed`
+  - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/deep/test_clmisc_data_ui.py::test_status_with_nothing_installed_says_stopped tests/deep/test_clmisc_data_ui.py::test_status_reports_an_untracked_but_answering_stack` -> `2 passed`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/climcu/test_live_mcu_probe.py -m "live or hardware"` -> `5 passed`
+  - `make qa-fast` -> PASS
+  - `./bin/klipperformac doctor` -> PASS with `[i]  stack is not tracked, but Moonraker is answering on port 7125`
+  - `./bin/klipperformac selftest` -> `SELFTEST PASSED`
+  - `./bin/klipperformac status` -> `running (untracked)`
 
 ## Live Tier Status
 

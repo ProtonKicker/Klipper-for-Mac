@@ -13,6 +13,7 @@ install.
 import pytest
 
 import importlib
+import argparse
 import types
 
 from klipperformac import cli, paths
@@ -83,6 +84,28 @@ def test_the_master_matches_the_installed_klipper_checkout(real_stack):
     lines = real_stack.cli._mcu_firmware_match_lines(rows=rows, expected=expected)
     assert lines, "no firmware-match line was produced for the master MCU"
     assert lines[0][2] == "match", lines
+
+
+def test_doctor_prints_live_firmware_and_log_provenance(real_stack, capsys):
+    """The bench proof at the CLI surface: doctor should print the same
+    firmware-match and klippy.log provenance facts the helpers derive."""
+    if real_stack.cli._klippy_state(timeout=3) != "ready":
+        pytest.skip("klippy is not ready on this bench right now")
+    expected = real_stack.cli._klipper_checkout_version()
+    if not expected:
+        pytest.skip("could not read the installed Klipper checkout revision")
+    record = real_stack.cli._mcu_log_provenance().get("mcu")
+    if not record:
+        pytest.skip("klippy.log has no recent Loaded MCU line for [mcu]")
+
+    with pytest.raises(SystemExit) as stop:
+        real_stack.cli.cmd_doctor(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert stop.value.code == 0, out
+    assert "[ok] mcu [mcu]: firmware matches installed klipper {}".format(
+        expected) in out
+    assert "[ok] mcu [mcu]: klippy.log last loaded {} ({})".format(
+        record["version"], record["build_versions"]) in out
 
 
 def test_the_contract_from_the_real_bench_is_parseable(real_stack, capsys):
