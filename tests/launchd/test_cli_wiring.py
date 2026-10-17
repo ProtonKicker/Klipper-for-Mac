@@ -61,6 +61,17 @@ def prepare_down_path(agent):
     agent.monkey.setattr(cli.cam, "stop", lambda: (False, []))
 
 
+class Clock:
+    def __init__(self, start=1000.0):
+        self.now = start
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 # ------------------------------------------------------------- the parser ---
 def test_login_takes_only_on_off_or_status(agent, capsys):
     for good in ("on", "off", "status"):
@@ -125,6 +136,48 @@ def test_a_start_that_failed_does_not_claim_an_intent(agent):
     assert agent.launchd.want_state() is None
 
 
+def test_up_refuses_a_half_stopped_core_stack(agent, capsys):
+    prepare_up_path(agent)
+    agent.monkey.setattr(agent.cli.process, "running", lambda: {
+        "klipper": False, "moonraker": True, "web_mainsail": True,
+        "web_fluidd": True, "caffeinate": True})
+    code, exc = run_cli(agent, ["up"])
+    assert exc is None and code == 1
+    out = capsys.readouterr().err
+    assert "half stopped" in out.lower()
+    assert "klipperformac restart" in out
+
+
+def test_up_repairs_ui_only_and_records_repair_intent(agent, capsys):
+    prepare_up_path(agent)
+    repaired = []
+    agent.monkey.setattr(agent.cli.process, "running", lambda: {
+        "klipper": True, "moonraker": True, "web_mainsail": False,
+        "web_fluidd": True, "caffeinate": True})
+    agent.monkey.setattr(agent.cli.process, "repair",
+                         lambda state=None: repaired.append(dict(state or {})) or
+                         ["web_mainsail"])
+    agent.launchd.want_clear("test")
+    code, exc = run_cli(agent, ["up"])
+    assert exc is None and code == 0
+    out = capsys.readouterr().out
+    assert "Partially stopped" in out
+    assert repaired and repaired[0]["web_mainsail"] is False
+    assert agent.launchd.want_state()["wanted by"] == "up (repair)"
+
+
+def test_up_when_fully_running_refreshes_the_plain_intent(agent, capsys):
+    prepare_up_path(agent)
+    agent.monkey.setattr(agent.cli.process, "running", lambda: {
+        "klipper": True, "moonraker": True, "web_mainsail": True,
+        "web_fluidd": True, "caffeinate": True})
+    agent.launchd.want_clear("test")
+    code, exc = run_cli(agent, ["up"])
+    assert exc is None and code == 0
+    assert "Already running." in capsys.readouterr().out
+    assert agent.launchd.want_state()["wanted by"] == "up"
+
+
 def test_down_clears_the_intent_before_it_stops_the_stack(agent):
     prepare_down_path(agent)
     agent.installed_plist()
@@ -135,6 +188,37 @@ def test_down_clears_the_intent_before_it_stops_the_stack(agent):
     assert run_cli(agent, ["down"])[1] is None
     assert order == ["want_clear", "stop"], order
     assert agent.launchd.want_state() is None
+
+
+def test_down_fails_when_our_ports_still_answer(agent, capsys):
+    prepare_down_path(agent)
+    agent.installed_plist()
+    agent.launchd.want_set("up")
+    agent.monkey.setattr(agent.cli.process, "our_listeners",
+                         lambda: [(7125, 42), (8081, 43)])
+    code, exc = run_cli(agent, ["down"])
+    assert exc is None and code == 1
+    out = capsys.readouterr().out
+    assert "Still listening" in out
+    assert "port 7125 (pid 42)" in out
+    assert "klipperformac killall" in out
+
+
+def test_restart_orders_guard_stop_then_stack_stop_then_up(agent):
+    prepare_up_path(agent)
+    order = []
+    agent.monkey.setattr(agent.cli.batteryguard, "stop",
+                         lambda timeout=3.0: order.append("guard_stop") or
+                         (True, []))
+    agent.monkey.setattr(agent.cli.process, "stop",
+                         lambda timeout=6.0: order.append("stack_stop") or True)
+    agent.monkey.setattr(agent.cli, "_cmd_up",
+                         lambda args: order.append("up"))
+    agent.monkey.setattr(agent.cli, "_guard_autostart",
+                         lambda: order.append("guard_autostart"))
+    code, exc = run_cli(agent, ["restart"])
+    assert exc is None and code == 0
+    assert order == ["guard_stop", "stack_stop", "up", "guard_autostart"]
 
 
 def test_killall_clears_the_intent_too(agent):
@@ -175,6 +259,34 @@ def test_an_intent_write_that_fails_does_not_break_up(agent, capsys):
     code, exc = run_cli(agent, ["up"])
     assert exc is None and code == 0, (code, exc)
     assert "autostart intent not recorded" in capsys.readouterr().out
+
+
+def test_wait_ready_reports_foreign_port_squatters(agent, capsys):
+    clock = Clock()
+    agent.monkey.setattr(agent.cli, "time", clock)
+    agent.monkey.setattr(agent.cli, "_moonraker_get",
+                         lambda path, timeout=2: None)
+    agent.monkey.setattr(agent.cli.process, "our_listeners", lambda: [])
+    agent.monkey.setattr(agent.cli.process, "port_conflicts",
+                         lambda: [(7125, 99, "foreign moonraker")])
+    assert agent.cli._wait_ready(timeout=1) is False
+    out = capsys.readouterr().out
+    assert "Moonraker did not answer within 1s" in out
+    assert "Port 7125 is answered by pid 99 (foreign moonraker)" in out
+
+
+def test_wait_ready_reports_our_own_silent_listeners(agent, capsys):
+    clock = Clock()
+    agent.monkey.setattr(agent.cli, "time", clock)
+    agent.monkey.setattr(agent.cli, "_moonraker_get",
+                         lambda path, timeout=2: None)
+    agent.monkey.setattr(agent.cli.process, "port_conflicts", lambda: [])
+    agent.monkey.setattr(agent.cli.process, "our_listeners",
+                         lambda: [(7125, 42), (8081, 43)])
+    assert agent.cli._wait_ready(timeout=1) is False
+    out = capsys.readouterr().out
+    assert "Our own processes are alive on port(s) 7125, 8081" in out
+    assert "klipperformac restart" in out
 
 
 # ------------------------------------------------------------ uninstall -----

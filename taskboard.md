@@ -34,6 +34,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Proved the current bench board does not enter bootloader on the host-driven 1200-baud request
 - [x] Productized the macOS RP2040 firmware build path as `klipperformac flash build-rp2040`
 - [x] Verified `flash build-rp2040` succeeds end-to-end on this Mac and caches a fresh UF2
+- [x] Added offline regression coverage for `up`/`down`/`restart` lifecycle edge branches and `_wait_ready()` timeout diagnostics
 
 ## Landed Fixes
 
@@ -94,6 +95,13 @@ Continue the robustness-testing loop from the saved transcript:
   - `build-rp2040` dry-run plan
   - real build command orchestration and artifact caching
 
+- `tests/launchd/test_cli_wiring.py`
+  - `up` half-stopped core refusal
+  - `up` UI-only repair path and already-running path
+  - `restart` call ordering
+  - `down` lingering-listener failure path
+  - `_wait_ready()` timeout diagnostics for squatters and silent listeners
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -111,7 +119,7 @@ Continue the robustness-testing loop from the saved transcript:
 - built through product command:
   - [x] `klipperformac flash build-rp2040`
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-- `make qa-full` now passes at `3096 passed, 25 deselected`
+- `make qa-full` now passes at `3103 passed, 25 deselected`
 - `klipperformac flash doctor` now reports:
   - embedded toolchain path
   - cached cask package path
