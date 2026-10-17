@@ -150,7 +150,7 @@ enum SwiftLogicChecks {
         let report = SerialReportDecoder.decode(SerialReportDecoder.contractFixture)
         let rows = report?.mcus ?? []
         let badSection = rows.first { $0.mcu == " board" }
-        expect(badSection?.pickerStatusLabel == nil,
+        expect(badSection?.pickerStatusPresentation == nil,
                "bad section names should not show a CAN/fixed label")
         expect(badSection?.footerPresentation
                == InlineWarningPresentation(message: "name cannot be set from here — edit printer.cfg",
@@ -164,8 +164,11 @@ enum SwiftLogicChecks {
                "bad section names should surface a warning badge presentation")
 
         let fixed = rows.first { $0.mcu == "rpi" }
-        expect(fixed?.pickerStatusLabel == "CAN / fixed",
-               "non-USB-configured rows should show the fixed/CAN label")
+        expect(fixed?.pickerStatusPresentation
+               == PickerStatusPresentation(
+                    label: "CAN / fixed",
+                    help: "This row is configured through a non-USB identity, so the GUI keeps it read-only."),
+               "non-USB-configured rows should show the fixed/CAN status presentation")
         expect(fixed?.footerPresentation
                == InlineWarningPresentation(message: "set here in printer.cfg, not from a USB picker",
                                             tone: .neutral),
@@ -187,6 +190,22 @@ enum SwiftLogicChecks {
                     text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
                     present: false),
                "identity presentation should keep the offline text and presence flag")
+        expect(missing?.identityIndicatorPresentation
+               == IdentityIndicatorPresentation(
+                    text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
+                    showsIndicator: true,
+                    tone: .warning,
+                    opacity: 0.7),
+               "identity indicator presentation should keep the offline warning dot")
+
+        let noIdentity = rows.first { $0.mcu == "camera" }
+        expect(noIdentity?.identityIndicatorPresentation
+               == IdentityIndicatorPresentation(
+                    text: "identity: not detected",
+                    showsIndicator: false,
+                    tone: .warning,
+                    opacity: 0),
+               "missing identities should suppress the presence dot")
     }
 
     private static func testCameraFeedback() {

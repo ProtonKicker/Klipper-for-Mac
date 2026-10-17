@@ -110,6 +110,23 @@ struct IdentityPresentation: Equatable {
     let present: Bool?
 }
 
+enum PresenceIndicatorTone: Equatable {
+    case positive
+    case warning
+}
+
+struct IdentityIndicatorPresentation: Equatable {
+    let text: String
+    let showsIndicator: Bool
+    let tone: PresenceIndicatorTone
+    let opacity: Double
+}
+
+struct PickerStatusPresentation: Equatable {
+    let label: String
+    let help: String
+}
+
 struct McuRow: Identifiable, Equatable {
     /// Name used to address the section on the command line
     /// (`serial --set PATH <mcu>`), so it doubles as the row identity.
@@ -222,9 +239,11 @@ struct McuRow: Identifiable, Equatable {
         return badges
     }
 
-    var pickerStatusLabel: String? {
-        if isAddressable && !offersPortPicker { return "CAN / fixed" }
-        return nil
+    var pickerStatusPresentation: PickerStatusPresentation? {
+        guard isAddressable, !offersPortPicker else { return nil }
+        return PickerStatusPresentation(
+            label: "CAN / fixed",
+            help: "This row is configured through a non-USB identity, so the GUI keeps it read-only.")
     }
 
     var pickerHelpText: String {
@@ -249,6 +268,20 @@ struct McuRow: Identifiable, Equatable {
 
     var identityPresentation: IdentityPresentation {
         IdentityPresentation(text: identityLine, present: isPresent)
+    }
+
+    var identityIndicatorPresentation: IdentityIndicatorPresentation {
+        let base = identityPresentation
+        guard let present = base.present else {
+            return IdentityIndicatorPresentation(text: base.text,
+                                                 showsIndicator: false,
+                                                 tone: .warning,
+                                                 opacity: 0)
+        }
+        return IdentityIndicatorPresentation(text: base.text,
+                                             showsIndicator: true,
+                                             tone: present ? .positive : .warning,
+                                             opacity: present ? 1 : 0.7)
     }
 }
 

@@ -72,7 +72,7 @@ final class SerialReportDecoderTests: XCTestCase {
         let rows = report?.mcus ?? []
 
         let badSection = rows.first { $0.mcu == " board" }
-        XCTAssertNil(badSection?.pickerStatusLabel)
+        XCTAssertNil(badSection?.pickerStatusPresentation)
         XCTAssertEqual(badSection?.footerPresentation,
                        InlineWarningPresentation(
                         message: "name cannot be set from here — edit printer.cfg",
@@ -85,7 +85,10 @@ final class SerialReportDecoderTests: XCTestCase {
                         showsWarningIcon: true))
 
         let fixed = rows.first { $0.mcu == "rpi" }
-        XCTAssertEqual(fixed?.pickerStatusLabel, "CAN / fixed")
+        XCTAssertEqual(fixed?.pickerStatusPresentation,
+                       PickerStatusPresentation(
+                        label: "CAN / fixed",
+                        help: "This row is configured through a non-USB identity, so the GUI keeps it read-only."))
         XCTAssertEqual(fixed?.footerPresentation,
                        InlineWarningPresentation(
                         message: "set here in printer.cfg, not from a USB picker",
@@ -105,5 +108,19 @@ final class SerialReportDecoderTests: XCTestCase {
                        IdentityPresentation(
                         text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
                         present: false))
+        XCTAssertEqual(missing?.identityIndicatorPresentation,
+                       IdentityIndicatorPresentation(
+                        text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
+                        showsIndicator: true,
+                        tone: .warning,
+                        opacity: 0.7))
+
+        let noIdentity = rows.first { $0.mcu == "camera" }
+        XCTAssertEqual(noIdentity?.identityIndicatorPresentation,
+                       IdentityIndicatorPresentation(
+                        text: "identity: not detected",
+                        showsIndicator: false,
+                        tone: .warning,
+                        opacity: 0))
     }
 }

@@ -74,6 +74,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a shared proxy test helper that starts throwaway socketservers with a short poll interval so fast-tier proxy regressions no longer spend ~0.5s each in idle shutdown waits
 - [x] Fixed `update --pin` so invalid refs are rejected before they are written to lockfile.json, keeping junk pins from persisting into later setup/update runs
 - [x] Made the proxy server explicitly quiet at the `socketserver` layer so dead upstreams and bad clients no longer dump background worker tracebacks into otherwise-green QA runs
+- [x] Extracted the MCU row's read-only status help text and presence-dot presentation into the core row model so more of the remaining SwiftUI-only rendering surface is testable without the view
 
 ## Landed Fixes
 
@@ -257,6 +258,10 @@ Continue the robustness-testing loop from the saved transcript:
 47. `klipperformac/proxy.py`
    - override `Server.handle_error(...)` to keep the proxy quiet when a background worker hits an unhandled socketserver-level error
    - match the product's existing "no access/error log spam" posture and the shipped runtime where the proxy stdio is on DEVNULL
+
+48. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
+   - extract read-only picker status presentation so the `CAN / fixed` label and its help text come from pure row policy instead of a hard-coded SwiftUI string
+   - extract identity indicator presentation so the presence-dot visibility/tone/opacity are testable without the view layer
 
 ## Tests Added
 
@@ -474,6 +479,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-full` -> PASS
   - the full offline suite now stays green without the earlier background proxy traceback spray
   - `make qa-full` now passes at `3127 passed, 29 deselected`
+- latest MCU row rendering-policy rerun:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS
+  - the remaining row view now reads the indicator/help presentation from the model instead of owning those user-facing rules itself
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

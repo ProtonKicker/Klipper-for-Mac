@@ -366,12 +366,11 @@ private struct McuSerialRow: View {
                 Spacer(minLength: 8)
                 if row.offersPortPicker {
                     portPicker
-                } else if let status = row.pickerStatusLabel {
-                    Text(status)
+                } else if let status = row.pickerStatusPresentation {
+                    Text(status.label)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .help("This row is configured through a non-USB identity, "
-                              + "so the GUI keeps it read-only.")
+                        .help(status.help)
                 }
             }
             HStack(spacing: 10) {
@@ -379,11 +378,13 @@ private struct McuSerialRow: View {
                 // and Text's default initialiser would read "usb_a_b" as
                 // markdown and italicise the middle of it.
                 Text(verbatim: row.configuredLine)
-                let identity = row.identityPresentation
-                if let present = identity.present {
+                let identity = row.identityIndicatorPresentation
+                if identity.showsIndicator {
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(present ? Color.green : Color.red.opacity(0.7))
+                            .fill(identity.tone == .positive
+                                  ? Color.green
+                                  : Color.red.opacity(identity.opacity))
                             .frame(width: 7, height: 7)
                         Text(verbatim: identity.text)
                     }
