@@ -18,8 +18,11 @@ import pytest
 from hypothesis import HealthCheck, given, settings as hst, strategies as st
 
 DEFAULTS = {"width": 1280, "height": 720, "fps": 15, "quality": 80}
-PREF_KEYS_ORDER = ("width", "height", "fps", "quality", "device")
-CLI_FLAGS = ("device", "width", "height", "fps", "quality")
+# audio/mic came with `cam record` (Part B of the camera/audio spec): opt-in
+# prefs, so DEFAULTS above stays the untouched four-key picture.
+PREF_KEYS_ORDER = ("width", "height", "fps", "quality", "device", "audio",
+                   "mic")
+CLI_FLAGS = ("device", "width", "height", "fps", "quality", "mic", "audio")
 BOOT = "1700000000"
 TEXT = st.text(alphabet=st.characters(exclude_categories=("Cs",)), max_size=60)
 

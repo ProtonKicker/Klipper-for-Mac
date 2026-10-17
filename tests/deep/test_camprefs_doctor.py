@@ -398,13 +398,21 @@ def test_status_web_ui_line_tracks_the_conf(stack, conf):
     state=st.one_of(st.none(), st.fixed_dictionaries({
         "boot_time": st.just(BOOT), "pid": st.just(PID),
         "port": st.one_of(st.none(), st.integers(1, 65535))})))
-def test_doctor_always_answers_with_six_verdicts(cam, port_free, has_helper,
-                                                 state, stack, monkeypatch):
+def test_doctor_always_answers_with_the_camera_verdicts(cam, port_free,
+                                                        has_helper, state,
+                                                        stack, monkeypatch):
+    """Six verdicts on a bare install, seven once a helper exists: the extra
+    one is the recording capability, which only has something to say when there
+    is a helper to record with (and it never spawns one)."""
     monkeypatch.setattr(stack.cam, "_port_free", lambda p: port_free)
     if has_helper:
         helper_installed(stack)
         monkeypatch.setattr(stack.cam, "subprocess",
                             exit_code_subprocess(0, []))
+    else:
+        # Hypothesis replays examples in one tmp home: a helper left behind by
+        # an earlier example would make this one a has_helper run.
+        stack.paths.CAM_BIN.unlink(missing_ok=True)
     stack.paths.SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     stack.paths.SETTINGS.write_text(json.dumps({"cam": cam}))
     stack.paths.RUN.mkdir(parents=True, exist_ok=True)
@@ -414,6 +422,6 @@ def test_doctor_always_answers_with_six_verdicts(cam, port_free, has_helper,
         stack.paths.CAM_STATE.write_text(json.dumps(
             {k: v for k, v in state.items() if v is not None}))
     out = stack.cam.doctor()
-    assert len(out) == 6
+    assert len(out) == (7 if has_helper else 6), out
     for ok, msg in out:
         assert isinstance(ok, bool) and isinstance(msg, str) and msg.strip()
