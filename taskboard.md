@@ -56,6 +56,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Expanded the direct Swift logic harness and future SwiftPM tests around degraded Moonraker payloads, shutdown/startup readiness notes, and transient serial CLI noise
 - [x] Surfaced live firmware provenance from `klippy.log` in `doctor` / `selftest` and added a live check that the direct probe's build string matches klippy's latest `Loaded MCU` record
 - [x] Extracted the app's serial-probe keep/legacy/report policy into a pure Swift helper and covered it in both the direct harness and future SwiftPM tests
+- [x] Fixed Swift `StackReader` to match Python's `boot_time: "unknown"` semantics and added direct/future Swift coverage for tracked-versus-stale stack records
 
 ## Landed Fixes
 
@@ -172,6 +173,10 @@ Continue the robustness-testing loop from the saved transcript:
    - extract `SerialProbePolicy` so the app's keep/legacy/report decision is testable without running the whole app model
    - keep `AppModel` behavior unchanged while making the policy explicit and reusable
 
+29. `KlipperMac/Sources/KlipperMac/Core/StackReader.swift`
+   - extract pure snapshot-building helpers so the tracked/stopped decision is testable without hitting `ps` or `sysctl`
+   - treat `boot_time: "unknown"` the same way Python `process._load()` does, instead of silently reading a valid record as stopped
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -265,6 +270,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
   - future SwiftPM coverage for serial probe policy classification (`report`, `legacy`, `keep`)
 
+- `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
+  - future SwiftPM coverage for `StackReader.snapshot(...)` on `boot_time: "unknown"` and foreign-boot records
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -313,6 +321,9 @@ Continue the robustness-testing loop from the saved transcript:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/McuSerial.swift KlipperMac/Sources/KlipperMac/Model/AppModel.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift` -> PASS
   - `swiftc -parse KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift` -> PASS
+- focused StackReader parity verification:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/StackReader.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -382,6 +393,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-fast` -> PASS
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - future SwiftPM policy tests parse cleanly, but `swift test --package-path KlipperMac` remains blocked by the missing full Xcode install on this Mac
+- after the StackReader parity fix:
+  - `make qa-fast` -> PASS
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - future SwiftPM StackReader tests parse cleanly, but `swift test --package-path KlipperMac` is still blocked by the machine toolchain state
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -414,7 +429,7 @@ Evidence:
 ## Next Suggested Moves
 
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
-- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining app-model/UI cases (`stack-reader` edge states, UI warning presentation, toast/error presentation)
+- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining app-model/UI cases (UI warning presentation, toast/error presentation)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 

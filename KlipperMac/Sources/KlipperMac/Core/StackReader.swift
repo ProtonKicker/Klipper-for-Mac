@@ -24,6 +24,7 @@ struct StackSnapshot: Equatable {
 /// read (pid + cmdline marker + boot time), so stale state self-heals.
 enum StackReader {
     static let order = ["web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate"]
+    static let bootUnknown = "unknown"
     private static var cmdCache: (at: Date, key: String, value: [String: String]) =
         (.distantPast, "", [:])
     private static let cmdLock = NSLock()
@@ -57,36 +58,57 @@ enum StackReader {
         return value
     }
 
-    static func readSync(env: KEnvironment) -> StackSnapshot {
-        var snap = StackSnapshot()
-        guard let data = try? Data(contentsOf: env.state),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              obj["boot_time"] as? String == bootTime()
-        else { return snap }
-
-        snap.tracked = true
-        snap.startedAt = obj["started"] as? String
-
-        let markers: [String: String] = [
+    static func markers(webPort: Int, fluiddPort: Int) -> [String: String] {
+        [
             "klipper": "klippy.py",
             "moonraker": "moonraker",
-            "web_mainsail": "klipperformac.proxy \(env.webPort) ",
-            "web_fluidd": "klipperformac.proxy \(env.fluiddPort) ",
+            "web_mainsail": "klipperformac.proxy \(webPort) ",
+            "web_fluidd": "klipperformac.proxy \(fluiddPort) ",
             "caffeinate": "caffeinate",
         ]
+    }
 
+    static func snapshot(from state: [String: Any],
+                         bootTime: String?,
+                         markers: [String: String],
+                         commands: [String: String]) -> StackSnapshot {
+        var snap = StackSnapshot()
+        guard let recorded = state["boot_time"] as? String else { return snap }
+        if recorded != bootUnknown {
+            guard let bootTime, recorded == bootTime else { return snap }
+        }
+
+        snap.tracked = true
+        snap.startedAt = state["started"] as? String
+
+        var pids: [String: Int] = [:]
+        for name in order {
+            if let pid = state[name] as? Int { pids[name] = pid }
+        }
+        snap.services = order.map { name in
+            let pid = pids[name].map(String.init)
+            let cmd = pid.flatMap { commands[$0] } ?? ""
+            return ServiceState(name: name,
+                                up: pid != nil && cmd.contains(markers[name] ?? ""))
+        }
+        return snap
+    }
+
+    static func readSync(env: KEnvironment) -> StackSnapshot {
+        guard let data = try? Data(contentsOf: env.state),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return StackSnapshot() }
         var pids: [String: Int] = [:]
         for name in order {
             if let pid = obj[name] as? Int { pids[name] = pid }
         }
         let idList = pids.values.map(String.init)
         let cmds = commandLines(for: idList)
-        snap.services = order.map { name in
-            let pid = pids[name].map(String.init)
-            let cmd = pid.flatMap { cmds[$0] } ?? ""
-            return ServiceState(name: name, up: pid != nil && cmd.contains(markers[name] ?? ""))
-        }
-        return snap
+        return snapshot(from: obj,
+                        bootTime: bootTime(),
+                        markers: markers(webPort: env.webPort,
+                                         fluiddPort: env.fluiddPort),
+                        commands: cmds)
     }
 
     private static func commandLines(for idList: [String]) -> [String: String] {

@@ -102,4 +102,31 @@ final class MoonrakerStateTests: XCTestCase {
         snap.services = [ServiceState(name: "klipper", up: true)]
         XCTAssertEqual(snap.overall, .running)
     }
+
+    func testStackReaderSnapshotAcceptsUnknownBootTimeAndRejectsForeignBoots() {
+        let markers = StackReader.markers(webPort: 8080, fluiddPort: 8081)
+
+        let tracked = StackReader.snapshot(
+            from: [
+                "boot_time": StackReader.bootUnknown,
+                "started": "2026-10-17T12:00:00",
+                "klipper": 4242
+            ],
+            bootTime: nil,
+            markers: markers,
+            commands: ["4242": "/usr/bin/python klippy.py -a sock"]
+        )
+        XCTAssertTrue(tracked.tracked)
+        XCTAssertEqual(tracked.startedAt, "2026-10-17T12:00:00")
+        XCTAssertEqual(tracked.overall, .running)
+
+        let stale = StackReader.snapshot(
+            from: ["boot_time": "old-boot", "klipper": 4242],
+            bootTime: "new-boot",
+            markers: markers,
+            commands: ["4242": "/usr/bin/python klippy.py -a sock"]
+        )
+        XCTAssertFalse(stale.tracked)
+        XCTAssertEqual(stale.overall, .stopped)
+    }
 }

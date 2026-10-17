@@ -12,6 +12,7 @@ enum SwiftLogicChecks {
         testMoonrakerIgnoresMalformedOptionalFields()
         testPrinterStatusReadinessNotes()
         testStackSnapshotOverall()
+        testStackReaderTracksUnknownBootTimeRecords()
         print("swift logic checks passed")
     }
 
@@ -219,5 +220,42 @@ enum SwiftLogicChecks {
         expect(snap.overall == .notResponding, "tracked snapshot with no services up should degrade")
         snap.services = [ServiceState(name: "klipper", up: true)]
         expect(snap.overall == .running, "tracked snapshot with one service up should be running")
+    }
+
+    private static func testStackReaderTracksUnknownBootTimeRecords() {
+        let markers = StackReader.markers(webPort: 8080, fluiddPort: 8081)
+        let tracked = StackReader.snapshot(
+            from: [
+                "boot_time": StackReader.bootUnknown,
+                "started": "2026-10-17T12:00:00",
+                "klipper": 4242
+            ],
+            bootTime: nil,
+            markers: markers,
+            commands: ["4242": "/usr/bin/python klippy.py -a sock"]
+        )
+        expect(tracked.tracked, "boot_time unknown should still count as a tracked stack record")
+        expect(tracked.startedAt == "2026-10-17T12:00:00",
+               "tracked snapshot should preserve startedAt")
+        expect(tracked.overall == .running,
+               "matching command marker should keep the snapshot running")
+
+        let stale = StackReader.snapshot(
+            from: ["boot_time": "old-boot", "klipper": 4242],
+            bootTime: "new-boot",
+            markers: markers,
+            commands: ["4242": "/usr/bin/python klippy.py -a sock"]
+        )
+        expect(!stale.tracked, "foreign boot records should read as stopped")
+
+        let mismatched = StackReader.snapshot(
+            from: ["boot_time": StackReader.bootUnknown, "klipper": 4242],
+            bootTime: nil,
+            markers: markers,
+            commands: ["4242": "/usr/bin/python something-else.py"]
+        )
+        expect(mismatched.tracked, "unknown boot records still belong to this session")
+        expect(mismatched.overall == .notResponding,
+               "a tracked record whose marker no longer matches should degrade")
     }
 }
