@@ -53,6 +53,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a live firmware-version agreement test that compares `/printer/info` against a direct `flash probe` handshake and waits for Moonraker to return after probe-driven restarts
 - [x] Added a doctor/selftest firmware-consistency check that compares the live MCU's reported firmware revision against the installed Klipper checkout revision
 - [x] Hardened `detect.all_identities()` / `flash.identity_rows()` against the post-restart window where `/dev/cu.usbmodem*` is already back but the first `ioreg` pass still returns no usable USB identity rows
+- [x] Expanded the direct Swift logic harness and future SwiftPM tests around degraded Moonraker payloads, shutdown/startup readiness notes, and transient serial CLI noise
 
 ## Landed Fixes
 
@@ -154,6 +155,12 @@ Continue the robustness-testing loop from the saved transcript:
    - retry one empty `ioreg` identity pass within the original timeout budget instead of surfacing a transient `[]`
    - preserve the fast happy path and the 3 s cap while recovering the real post-`FIRMWARE_RESTART` race the bench showed
 
+25. `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
+   - add direct logic checks for warning-preamble JSON decode, non-legacy generic usage noise, broken `/server/info`, malformed optional Moonraker fields, and `shutdown` readiness notes
+
+26. `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
+   - mirror the direct harness coverage into future SwiftPM tests for Moonraker parsing, degraded printer-state notes, and `StackSnapshot.overall`
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -238,6 +245,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `tests/identity/test_identity_parsing.py`
   - retry-once regression for the post-restart empty-then-present `ioreg` identity shape
 
+- `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
+  - future SwiftPM coverage for Moonraker parsing, malformed optional fields, degraded readiness notes, and stack-overall state
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -275,6 +285,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `12 passed` in `tests/climcu/test_mcu_runtime_report.py`
 - focused identity regressions:
   - `37 passed, 8 deselected` across `tests/identity/test_identity_parsing.py`, `tests/identity/test_identity_live_probe.py`, and `tests/flash/test_flash_live_readonly.py`
+- focused Swift logic verification:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/Moonraker.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift` -> PASS
+  - `swiftc -parse KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -331,6 +345,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `28 passed`
   - `./bin/klipperformac doctor` -> PASS
   - `./bin/klipperformac selftest` -> PASS
+- after the Swift degraded-state coverage expansion:
+  - `make qa-fast` -> PASS
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `swift test --package-path KlipperMac` is still blocked because this Mac only has Command Line Tools active and no `Xcode*.app` is installed under `/Applications`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -362,7 +380,7 @@ Evidence:
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
-- [ ] Expand the direct Swift harness and future `swift test` coverage into more degraded-state cases (`klippy startup`, partial object trees, transient CLI noise)
+- [ ] Expand the direct Swift harness and future `swift test` coverage into more app-model cases (`probeSerialReport` keep/legacy/report policy, stack-reader edge states, UI warning presentation)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 

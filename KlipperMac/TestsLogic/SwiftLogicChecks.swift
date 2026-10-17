@@ -4,8 +4,11 @@ import Foundation
 enum SwiftLogicChecks {
     static func main() {
         testSerialReportDecoder()
+        testSerialReportDecoderPreambleAndNoise()
         testMoonrakerParsesVirtualSDcardProgress()
         testMoonrakerToleratesPartialQuery()
+        testMoonrakerRejectsBrokenServerInfo()
+        testMoonrakerIgnoresMalformedOptionalFields()
         testPrinterStatusReadinessNotes()
         testStackSnapshotOverall()
         print("swift logic checks passed")
@@ -32,6 +35,24 @@ enum SwiftLogicChecks {
                "legacy parser rejection should be detected")
         expect(!SerialReportDecoder.looksLikeLegacyCLI("timed out", exitCode: 0),
                "transient garbage should not be treated as legacy")
+    }
+
+    private static func testSerialReportDecoderPreambleAndNoise() {
+        let output = """
+        warning: probe stderr
+        \(SerialReportDecoder.contractFixture)
+        """
+        let report = SerialReportDecoder.decode(output)
+        expect(report != nil, "decoder should accept a warning preamble around JSON")
+        expect(report?.mcus.first?.mcu == "mcu",
+               "decoder should keep the master row through a preamble")
+
+        let usageOnly = """
+        usage: klipperformac serial [-h]
+        klipperformac serial: error: timed out talking to the CLI helper
+        """
+        expect(!SerialReportDecoder.looksLikeLegacyCLI(usageOnly, exitCode: 2),
+               "generic usage noise without --json should not be treated as legacy")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {
@@ -92,6 +113,46 @@ enum SwiftLogicChecks {
         expect(status?.position == nil, "missing gcode_move should leave position nil")
     }
 
+    private static func testMoonrakerRejectsBrokenServerInfo() {
+        let status = Moonraker.status(info: [:], query: nil)
+        expect(status == nil, "status should be nil when /server/info has no result payload")
+    }
+
+    private static func testMoonrakerIgnoresMalformedOptionalFields() {
+        let info: [String: Any] = [
+            "result": [
+                "klippy_connected": true,
+                "klippy_state": "startup",
+            ]
+        ]
+        let query: [String: Any] = [
+            "result": [
+                "status": [
+                    "print_stats": [
+                        "state": "paused",
+                        "filename": 1234,
+                        "message": ["unexpected": "shape"],
+                    ],
+                    "virtual_sdcard": [
+                        "progress": "half"
+                    ],
+                    "gcode_move": [
+                        "gcode_position": [10, 20]
+                    ]
+                ]
+            ]
+        ]
+        let status = Moonraker.status(info: info, query: query)
+        expect(status != nil, "malformed optional fields should not drop the whole status")
+        expect(status?.connected == true, "connected should still parse")
+        expect(status?.klippyState == "startup", "klippy_state should still parse")
+        expect(status?.printState == "paused", "print state should still parse")
+        expect(status?.filename == nil, "non-string filename should be ignored")
+        expect(status?.message == nil, "non-string message should be ignored")
+        expect(status?.progress == nil, "non-double progress should be ignored")
+        expect(status?.position == nil, "short positions should be ignored")
+    }
+
     private static func testPrinterStatusReadinessNotes() {
         let ready = PrinterStatus(connected: true, klippyState: "ready")
         expect(ready.connectivityLabel == "connected (ready)",
@@ -110,6 +171,12 @@ enum SwiftLogicChecks {
                "error printer should show a stronger degraded note")
         expect(error.stackWarning?.contains("Printer not ready (error)") == true,
                "error printer should expose a stack-level degraded summary")
+
+        let shutdown = PrinterStatus(connected: false, klippyState: "shutdown")
+        expect(shutdown.readinessNote?.contains("needs a restart or firmware recovery") == true,
+               "shutdown printer should explain the recovery path")
+        expect(shutdown.stackWarning?.contains("Printer not ready (shutdown)") == true,
+               "shutdown printer should expose a stack-level degraded summary")
 
         let connectedButPaused = PrinterStatus(connected: true, klippyState: "paused")
         expect(connectedButPaused.readinessNote == "Klippy is connected but not ready.",
