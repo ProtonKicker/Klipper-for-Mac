@@ -63,6 +63,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted per-MCU row footer/picker presentation into the core MCU model so the dashboard's CAN/fixed, bad-section, and picker-help rules are testable without SwiftUI
 - [x] Extracted per-MCU badge and identity presentation into the core row model so timing-master/conflict pills and presence text are testable without SwiftUI
 - [x] Fixed a SwiftUI result-builder compatibility failure in `Components.swift` so `make build-gui` works again on this Mac
+- [x] Extracted camera-state text, placeholder text, and device-list parsing into a pure Swift helper so camera guidance is testable without SwiftUI or AVFoundation
+- [x] Hardened the camera list parser to accept only tabular `cam list` device rows and ignore mixed guidance/noise lines
 
 ## Landed Fixes
 
@@ -203,6 +205,11 @@ Continue the robustness-testing loop from the saved transcript:
 35. `KlipperMac/Sources/KlipperMac/Views/Components.swift`
    - move badge/banner presentation locals out of SwiftUI result-builder bodies so older local toolchains compile the GUI cleanly again
 
+36. `KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift`
+   - extract camera state and placeholder presentation so the camera pane's on/off/unknown guidance is testable without SwiftUI
+   - parse `cam list` output strictly by the helper's indexed tabular contract instead of guessing by sentence punctuation
+   - keep a saved-but-unplugged camera visible in the picker through a pure device-list presentation helper
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -310,6 +317,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
   - future SwiftPM coverage for per-MCU master/conflict badge presentation and identity presence presentation
 
+- `KlipperMac/Tests/KlipperMacTests/CameraFeedbackTests.swift`
+  - future SwiftPM coverage for camera state presentation, placeholder guidance, strict device-list parsing, and saved-device picker preservation
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -377,6 +387,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS (`161 passed`)
+- latest camera feedback + parser hardening rerun:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS (`161 passed`)
+  - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift KlipperMac/Sources/KlipperMac/Model/AppModel.swift KlipperMac/Sources/KlipperMac/Views/CameraView.swift KlipperMac/Tests/KlipperMacTests/CameraFeedbackTests.swift` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

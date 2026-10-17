@@ -13,6 +13,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT HUP INT TERM
 
 swiftc \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift" \
+  "$ROOT/KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/Environment.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/StackReader.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/McuSerial.swift" \

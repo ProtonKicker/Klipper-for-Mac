@@ -7,6 +7,7 @@ enum SwiftLogicChecks {
         testSerialReportDecoderPreambleAndNoise()
         testSerialProbePolicy()
         testAppFeedback()
+        testCameraFeedback()
         testMoonrakerParsesVirtualSDcardProgress()
         testMoonrakerToleratesPartialQuery()
         testMoonrakerRejectsBrokenServerInfo()
@@ -186,6 +187,52 @@ enum SwiftLogicChecks {
                     text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
                     present: false),
                "identity presentation should keep the offline text and presence flag")
+    }
+
+    private static func testCameraFeedback() {
+        expect(CameraFeedback.statePresentation(isOnline: true)
+               == CameraStatePresentation(text: "Camera is on", kind: .on),
+               "camera state should show on when the helper is online")
+        expect(CameraFeedback.statePresentation(isOnline: false)
+               == CameraStatePresentation(text: "Camera is off", kind: .off),
+               "camera state should show off when the helper is offline")
+        expect(CameraFeedback.statePresentation(isOnline: nil)
+               == CameraStatePresentation(text: "Camera status unknown — press Refresh",
+                                          kind: .unknown),
+               "camera state should guide the user to refresh when status is unknown")
+
+        expect(CameraFeedback.placeholderText(isCLIInstalled: false, camOnline: nil)
+               == "Install the Klipper CLI to use the camera.",
+               "camera placeholder should explain the missing CLI")
+        expect(CameraFeedback.placeholderText(isCLIInstalled: true, camOnline: nil)
+               == "Press Refresh to check the camera.",
+               "camera placeholder should guide the first refresh")
+        expect(CameraFeedback.placeholderText(isCLIInstalled: true, camOnline: false)
+               == "Turn the camera on to see the live picture.",
+               "camera placeholder should guide the user to start the camera")
+
+        let listOutput = """
+        Waiting for camera permission — click OK in the macOS dialog.
+        0\tFaceTime HD Camera\t1280x720\t30
+        not-a-device row
+        1\tUSB Camera\t1920x1080\t60
+        1\tUSB Camera\t1920x1080\t60
+        """
+        expect(CameraFeedback.deviceNames(fromListOutput: listOutput)
+               == ["FaceTime HD Camera", "USB Camera"],
+               "camera list parsing should keep only indexed device rows once")
+
+        let hinted = CameraFeedback.deviceListPresentation(lines: [CameraFeedback.listFailed],
+                                                           selectedDevice: "")
+        expect(hinted == CameraDeviceListPresentation(devices: [],
+                                                      hint: CameraFeedback.listFailed),
+               "camera list presentation should preserve guidance hints")
+
+        let saved = CameraFeedback.deviceListPresentation(lines: ["USB Camera"],
+                                                          selectedDevice: "Saved Camera")
+        expect(saved == CameraDeviceListPresentation(devices: ["Saved Camera", "USB Camera"],
+                                                     hint: ""),
+               "camera list presentation should keep the saved selection visible")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

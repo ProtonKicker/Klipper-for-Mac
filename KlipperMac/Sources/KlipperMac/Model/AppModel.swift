@@ -501,10 +501,6 @@ final class AppModel: ObservableObject {
 
     /// Failure lines are guidance, never device names — the Camera pane shows
     /// them as a hint instead of a camera option.
-    static let camListNoCLI = "Klipper CLI not found — install it first."
-    static let camListFailed = "Camera list not ready — press Turn on camera, then Refresh."
-    static let camGuidance: Set<String> = [camListNoCLI, camListFailed]
-
     /// Camera actions share the busy/refresh behavior of cli(), but the toast
     /// stays to ONE short line: the CLI prints multi-paragraph guidance for the
     /// terminal, which reads as a wall of text in a popup. The two hints that
@@ -523,7 +519,7 @@ final class AppModel: ObservableObject {
             toast = ok ? AppFeedback.camToast(action: args.first ?? "", output: r.output)
                        : (first.isEmpty ? "Camera command failed." : first)
         } catch {
-            toast = Self.cliErrorMessage(error, notFound: Self.camListNoCLI)
+            toast = Self.cliErrorMessage(error, notFound: CameraFeedback.listNoCLI)
             say(toast, error: true)
             busy = false
             await refresh(reloadEnv: true)
@@ -561,25 +557,11 @@ final class AppModel: ObservableObject {
         do {
             let r = try await CLIRunner.shared.run(["cam", "list"],
                                                    timeout: Self.timeout(for: ["cam", "list"]))
-            guard r.exit == 0 else { return [Self.camListFailed] }
-            return deviceNames(from: r.output)
+            guard r.exit == 0 else { return [CameraFeedback.listFailed] }
+            return CameraFeedback.deviceNames(fromListOutput: r.output)
         } catch {
-            return [Self.cliErrorMessage(error, notFound: Self.camListNoCLI)]
+            return [Self.cliErrorMessage(error, notFound: CameraFeedback.listNoCLI)]
         }
-    }
-
-    /// The helper prints "index<tab>name<tab>size<tab>fps" per camera. A sentence
-    /// (trailing period) is advice from the tool, not a camera — drop it.
-    private func deviceNames(from text: String) -> [String] {
-        var names: [String] = []
-        for raw in text.split(separator: "\n") {
-            let fields = raw.split(separator: "\t")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-            let name = fields.count > 1 ? fields[1] : (fields.first ?? "")
-            if name.isEmpty || name.hasSuffix(".") { continue }
-            names.append(name)
-        }
-        return names
     }
 
     func pausePrint() async {

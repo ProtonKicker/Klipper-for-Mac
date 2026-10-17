@@ -27,6 +27,9 @@ struct CameraView: View {
     private var env: KEnvironment { model.env }
     private var camOn: Bool { model.camOnline == true }
     private var streamURL: String { "\(env.camURL)/?action=stream" }
+    private var statePresentation: CameraStatePresentation {
+        CameraFeedback.statePresentation(isOnline: model.camOnline)
+    }
 
     var body: some View {
         Form {
@@ -66,7 +69,7 @@ struct CameraView: View {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
-                Text(stateText)
+                Text(statePresentation.text)
                     .font(.callout.weight(.medium))
                 if model.busy { ProgressView().controlSize(.small) }
                 Spacer()
@@ -93,14 +96,15 @@ struct CameraView: View {
         }
     }
 
-    private var stateText: String {
-        guard let on = model.camOnline else { return "Camera status unknown — press Refresh" }
-        return on ? "Camera is on" : "Camera is off"
-    }
-
     private var dotColor: Color {
-        guard let on = model.camOnline else { return Color.secondary.opacity(0.45) }
-        return on ? .green : .secondary
+        switch statePresentation.kind {
+        case .on:
+            return .green
+        case .off:
+            return .secondary
+        case .unknown:
+            return Color.secondary.opacity(0.45)
+        }
     }
 
     private var installHint: some View {
@@ -139,10 +143,8 @@ struct CameraView: View {
     }
 
     private var placeholderText: String {
-        if !env.isCLIInstalled { return "Install the Klipper CLI to use the camera." }
-        return model.camOnline == nil
-            ? "Press Refresh to check the camera."
-            : "Turn the camera on to see the live picture."
+        CameraFeedback.placeholderText(isCLIInstalled: env.isCLIInstalled,
+                                       camOnline: model.camOnline)
     }
 
     // MARK: - snapshots
@@ -284,18 +286,10 @@ struct CameraView: View {
         devicesLoaded = true
         Task { @MainActor in
             let lines = await model.camList()
-            let names = lines.filter { !AppModel.camGuidance.contains($0) }
-            // A saved camera may not be plugged in right now — keep it listed so
-            // the picker still shows what the user chose.
-            if !selectedDevice.isEmpty, !names.contains(selectedDevice) {
-                devices = [selectedDevice] + names
-            } else {
-                devices = names
-            }
-            if names.isEmpty {
-                devicesHint = lines.first(where: { AppModel.camGuidance.contains($0) })
-                    ?? "No camera found — plug one in, or use the camera built into this Mac"
-            }
+            let list = CameraFeedback.deviceListPresentation(lines: lines,
+                                                             selectedDevice: selectedDevice)
+            devices = list.devices
+            devicesHint = list.hint
         }
     }
 
