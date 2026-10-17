@@ -935,7 +935,10 @@ def doctor(query=True, stack_up=False, cfg=None):
 # (tests/powerloss/test_kill_sequence_machine.py) and the integrator drives it
 # against the SKR Pico with the same assertions.
 TEST_GCODE_NAME = "klipperformac-powerloss-test.gcode"
-TEST_GCODE_DWELLS = 240          # 240 x G4 P0.5 ~= two minutes of dwelling
+TEST_GCODE_DWELLS = 240          # 240 x G4 P500 ~= two minutes of dwelling
+# NOTE: G4 P is MILLISECONDS in klippy/extras/dwell.py (int param); P0.5
+# truncates to 0 ms - the first live run completed in 4 ms and the suite
+# correctly refused to kill anything.
 TEST_GCODE_HEADER = (
     "; Klipper-for-Mac power-loss test print\n"
     "; G4 ONLY: no motion, no extrusion, no heaters, no homing. The bench board\n"
@@ -945,7 +948,7 @@ TEST_GCODE_HEADER = (
 
 
 def test_gcode_text():
-    return TEST_GCODE_HEADER + "G4 P0.5\n" * TEST_GCODE_DWELLS
+    return TEST_GCODE_HEADER + "G4 P500\n" * TEST_GCODE_DWELLS
 
 
 class KillTestHarness:

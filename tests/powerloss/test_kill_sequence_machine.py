@@ -345,7 +345,7 @@ def test_the_test_print_moves_no_extrudes_or_heats(pl):
             and not line.startswith(";")]
     assert all(line == "G90" or line.startswith("G4 P") for line in body), body
     assert "G28" not in text and "G1 " not in text and "M10" not in text
-    assert text.count("G4 P0.5") == powerloss.TEST_GCODE_DWELLS
+    assert text.count("G4 P500") == powerloss.TEST_GCODE_DWELLS
 
 
 def test_the_test_print_is_named_as_a_test_file(pl):
