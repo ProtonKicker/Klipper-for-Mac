@@ -4,7 +4,7 @@
 #
 # Goal: everything a human should run a hundred times a day, in <20 seconds:
 #   sh      bash -n (syntax) on every shell script in the repo
-#   swift   swiftc -parse on every Swift source + direct swiftc logic checks
+#   swift   swiftc -parse on every Swift source + both Swift fallback test tiers
 #   py      ruff check klipperformac           (config: pyproject.toml)
 #   compile python -m compileall klipperformac (catches syntax errors ruff can)
 #   test    the fast offline subset: tests/test_*.py + tests/regress,
@@ -138,7 +138,7 @@ fi
 
 # ============================================================ step: swift ===
 if qa_enabled swift; then
-    qa_header "swift: swiftc -parse on sources + direct swift logic checks"
+    qa_header "swift: swiftc -parse on sources + fallback Swift test tiers"
     if ! command -v swiftc >/dev/null 2>&1; then
         if [ "${QA_SKIP_SWIFT:-0}" = 1 ]; then
             qa_note_skip "swift: swiftc not installed"
@@ -164,6 +164,14 @@ if qa_enabled swift; then
                     sed -e 's/^/      /' /tmp/qa_swift_logic.err | tail -30
                     sed -e 's/^/      /' /tmp/qa_swift_logic.out | tail -30
                     qa_note_fail swift-logic
+                fi
+                if sh scripts/qa/swift_future_tests.sh >/tmp/qa_swift_future.out 2>/tmp/qa_swift_future.err; then
+                    printf '  OK future SwiftPM tests parse\n'
+                else
+                    printf '  FAIL future SwiftPM tests parse\n'
+                    sed -e 's/^/      /' /tmp/qa_swift_future.err | tail -30
+                    sed -e 's/^/      /' /tmp/qa_swift_future.out | tail -30
+                    qa_note_fail swift-future
                 fi
             else
                 printf '  FAIL swiftc -parse (%s files)\n' "$cnt"

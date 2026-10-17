@@ -34,6 +34,15 @@ final class SerialReportDecoderTests: XCTestCase {
         XCTAssertNil(SerialReportDecoder.decode(output))
     }
 
+    func testGenericUsageNoiseWithoutJsonIsNotTreatedAsLegacy() {
+        let output = """
+        usage: klipperformac serial [-h]
+        klipperformac serial: error: timed out talking to the CLI helper
+        """
+        XCTAssertFalse(SerialReportDecoder.looksLikeLegacyCLI(output, exitCode: 2))
+        XCTAssertNil(SerialReportDecoder.decode(output))
+    }
+
     func testSerialProbePolicyClassifiesDecodedReportAndLegacyAndKeep() {
         switch SerialProbePolicy.classify(output: SerialReportDecoder.contractFixture,
                                           exitCode: 0) {

@@ -65,6 +65,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Fixed a SwiftUI result-builder compatibility failure in `Components.swift` so `make build-gui` works again on this Mac
 - [x] Extracted camera-state text, placeholder text, and device-list parsing into a pure Swift helper so camera guidance is testable without SwiftUI or AVFoundation
 - [x] Hardened the camera list parser to accept only tabular `cam list` device rows and ignore mixed guidance/noise lines
+- [x] Added a dedicated `swift_future_tests.sh` guard and wired it into `qa-fast` so future SwiftPM tests keep parsing cleanly even while `swift test` is blocked on this Mac
+- [x] Expanded future SwiftPM coverage for generic `serial --json` usage noise, partial Moonraker object trees, and the `error` readiness state
 
 ## Landed Fixes
 
@@ -210,6 +212,12 @@ Continue the robustness-testing loop from the saved transcript:
    - parse `cam list` output strictly by the helper's indexed tabular contract instead of guessing by sentence punctuation
    - keep a saved-but-unplugged camera visible in the picker through a pure device-list presentation helper
 
+37. `scripts/qa/swift_future_tests.sh`
+   - parse every future SwiftPM test file together with the app sources so package-side tests still get exercised on machines where `swift test` cannot run
+
+38. `scripts/qa/fast.sh`
+   - run the new future-test parse guard as part of the normal Swift step so direct-harness and future-test coverage stay in lockstep
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -320,6 +328,12 @@ Continue the robustness-testing loop from the saved transcript:
 - `KlipperMac/Tests/KlipperMacTests/CameraFeedbackTests.swift`
   - future SwiftPM coverage for camera state presentation, placeholder guidance, strict device-list parsing, and saved-device picker preservation
 
+- `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
+  - future SwiftPM coverage for generic usage noise that should stay non-legacy when `--json` was not actually rejected
+
+- `KlipperMac/Tests/KlipperMacTests/MoonrakerStateTests.swift`
+  - future SwiftPM coverage for partial query payloads without optional objects and for the `error` readiness-note state
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -392,6 +406,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS (`161 passed`)
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift KlipperMac/Sources/KlipperMac/Model/AppModel.swift KlipperMac/Sources/KlipperMac/Views/CameraView.swift KlipperMac/Tests/KlipperMacTests/CameraFeedbackTests.swift` -> PASS
+- latest future-test QA guard rerun:
+  - `sh scripts/qa/swift_future_tests.sh` -> PASS
+  - `make qa-fast` -> PASS (`161 passed`)
+  - `qa-fast` Swift step now reports both `OK direct swift logic checks` and `OK future SwiftPM tests parse`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

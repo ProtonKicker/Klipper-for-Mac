@@ -71,6 +71,31 @@ final class MoonrakerStateTests: XCTestCase {
         XCTAssertNil(status?.position)
     }
 
+    func testStatusToleratesPartialQueryWithoutOptionalObjects() {
+        let info: [String: Any] = [
+            "result": [
+                "klippy_connected": false,
+                "klippy_state": "startup",
+            ]
+        ]
+        let query: [String: Any] = [
+            "result": [
+                "status": [
+                    "print_stats": [
+                        "state": "standby"
+                    ]
+                ]
+            ]
+        ]
+
+        let status = Moonraker.status(info: info, query: query)
+        XCTAssertEqual(status?.connected, false)
+        XCTAssertEqual(status?.klippyState, "startup")
+        XCTAssertEqual(status?.printState, "standby")
+        XCTAssertNil(status?.progress)
+        XCTAssertNil(status?.position)
+    }
+
     func testStatusRequiresServerInfoResult() {
         XCTAssertNil(Moonraker.status(info: [:], query: nil))
     }
@@ -81,6 +106,10 @@ final class MoonrakerStateTests: XCTestCase {
         let startup = PrinterStatus(connected: false, klippyState: "startup")
         XCTAssertTrue(startup.readinessNote?.contains("starting up") == true)
         XCTAssertTrue(startup.stackWarning?.contains("Printer not ready (startup)") == true)
+
+        let error = PrinterStatus(connected: false, klippyState: "error")
+        XCTAssertTrue(error.readinessNote?.contains("reported an error") == true)
+        XCTAssertTrue(error.stackWarning?.contains("Printer not ready (error)") == true)
 
         let shutdown = PrinterStatus(connected: false, klippyState: "shutdown")
         XCTAssertTrue(shutdown.readinessNote?.contains("firmware recovery") == true)
