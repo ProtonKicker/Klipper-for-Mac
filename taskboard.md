@@ -80,6 +80,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Hardened `doctor`, `selftest`, and `timing` for the live-but-untracked case where Moonraker is still answering from our ports even though `process.running()` returns no tracked stack
 - [x] Made `status` report `running (untracked)` instead of `stopped` when this install's Moonraker/UI ports are still answering without a tracked state record, and added a regression for that CLI surface
 - [x] Fixed the remaining powerloss advisory seam so `status`, `doctor`, and `powerloss status` stop surfacing stale `LAST STOP WAS UNCLEAN` history while the current session is still live-but-untracked
+- [x] Added the same untracked-live listener fallback to the Swift stack reader so the GUI no longer treats an answering Moonraker/UI stack as fully stopped just because `state.json` disappeared
 
 ## Landed Fixes
 
@@ -615,6 +616,12 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac status` -> `running (untracked)` with no stale `LAST STOP WAS UNCLEAN`
   - `./bin/klipperformac doctor` -> PASS with `powerloss: this session is open and will be judged by the next \`up\`/\`status\``
   - `./bin/klipperformac powerloss status` -> no stale unclean-stop warning while the live untracked session is still up
+- after the Swift listener-fallback parity pass:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `sh scripts/qa/swift_future_tests.sh` -> PASS
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS
+  - the Swift stack reader now treats this install's own listening Moonraker/UI ports as running evidence, keeping GUI status/polling/update gating aligned with the CLI's untracked-live behavior
 
 ## Live Tier Status
 

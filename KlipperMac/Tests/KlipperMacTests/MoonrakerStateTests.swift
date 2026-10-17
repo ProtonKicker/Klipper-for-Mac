@@ -132,6 +132,17 @@ final class MoonrakerStateTests: XCTestCase {
         XCTAssertEqual(snap.overall, .running)
     }
 
+    func testStackSnapshotTreatsOurListenerPortsAsRunning() {
+        var snap = StackSnapshot()
+        snap.listenerPorts = [7125]
+        XCTAssertTrue(snap.anyUp)
+        XCTAssertEqual(snap.overall, .running)
+
+        snap.tracked = true
+        snap.services = [ServiceState(name: "klipper", up: false)]
+        XCTAssertEqual(snap.overall, .running)
+    }
+
     func testStackReaderSnapshotAcceptsUnknownBootTimeAndRejectsForeignBoots() {
         let markers = StackReader.markers(webPort: 8080, fluiddPort: 8081)
 
@@ -157,5 +168,23 @@ final class MoonrakerStateTests: XCTestCase {
         )
         XCTAssertFalse(stale.tracked)
         XCTAssertEqual(stale.overall, .stopped)
+    }
+
+    func testStackReaderListenerFallbackKeepsOnlyOurPorts() {
+        let markers = StackReader.markers(webPort: 8080, fluiddPort: 8081)
+        let ports = StackReader.listenerPorts(
+            from: [
+                7125: ["4242"],
+                8080: ["9000"],
+                8081: ["4243"],
+            ],
+            markers: markers,
+            commands: [
+                "4242": "/usr/bin/python -m moonraker",
+                "9000": "/usr/bin/python -m http.server 8080",
+                "4243": "/usr/bin/python -m klipperformac.proxy 8081 /tmp/fluidd 7125 127.0.0.1",
+            ]
+        )
+        XCTAssertEqual(ports, Set([7125, 8081]))
     }
 }

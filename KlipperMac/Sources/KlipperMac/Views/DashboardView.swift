@@ -113,7 +113,7 @@ struct DashboardView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                .disabled(model.busy || !model.snapshot.tracked)
+                .disabled(model.busy || !model.snapshot.anyUp)
                 Spacer()
             }
 

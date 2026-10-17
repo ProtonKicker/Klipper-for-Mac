@@ -16,6 +16,7 @@ enum SwiftLogicChecks {
         testPrinterStatusReadinessNotes()
         testStackSnapshotOverall()
         testStackReaderTracksUnknownBootTimeRecords()
+        testStackReaderListenerFallback()
         print("swift logic checks passed")
     }
 
@@ -425,6 +426,11 @@ enum SwiftLogicChecks {
         expect(snap.overall == .notResponding, "tracked snapshot with no services up should degrade")
         snap.services = [ServiceState(name: "klipper", up: true)]
         expect(snap.overall == .running, "tracked snapshot with one service up should be running")
+
+        snap = StackSnapshot(listenerPorts: [7125])
+        expect(snap.anyUp, "listener fallback should count as running evidence")
+        expect(snap.overall == .running,
+               "untracked listener ports should keep the snapshot running")
     }
 
     private static func testStackReaderTracksUnknownBootTimeRecords() {
@@ -462,5 +468,24 @@ enum SwiftLogicChecks {
         expect(mismatched.tracked, "unknown boot records still belong to this session")
         expect(mismatched.overall == .notResponding,
                "a tracked record whose marker no longer matches should degrade")
+    }
+
+    private static func testStackReaderListenerFallback() {
+        let markers = StackReader.markers(webPort: 8080, fluiddPort: 8081)
+        let ports = StackReader.listenerPorts(
+            from: [
+                7125: ["4242"],
+                8080: ["9000"],
+                8081: ["4243"],
+            ],
+            markers: markers,
+            commands: [
+                "4242": "/usr/bin/python -m moonraker",
+                "9000": "/usr/bin/python -m http.server 8080",
+                "4243": "/usr/bin/python -m klipperformac.proxy 8081 /tmp/fluidd 7125 127.0.0.1",
+            ]
+        )
+        expect(ports == Set([7125, 8081]),
+               "listener fallback should keep only ports held by our services")
     }
 }
