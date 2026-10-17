@@ -18,6 +18,7 @@ swiftc \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/StackReader.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/McuSerial.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/Moonraker.swift" \
+  "$ROOT/KlipperMac/Sources/KlipperMac/Core/SettingsPresentation.swift" \
   "$ROOT/KlipperMac/TestsLogic/SwiftLogicChecks.swift" \
   -o "$BUILD_DIR/swift-logic-checks"
 

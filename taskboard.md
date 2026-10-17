@@ -76,6 +76,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Made the proxy server explicitly quiet at the `socketserver` layer so dead upstreams and bad clients no longer dump background worker tracebacks into otherwise-green QA runs
 - [x] Extracted the MCU row's read-only status help text and presence-dot presentation into the core row model so more of the remaining SwiftUI-only rendering surface is testable without the view
 - [x] Extracted the camera pane's status-dot styling into `CameraFeedback` so the on/off/unknown indicator presentation is now model-driven end to end
+- [x] Extracted the settings pane's component pin text formatting into a pure helper so the pinned-tag / resolved-sha display is testable without the view
 
 ## Landed Fixes
 
@@ -266,6 +267,9 @@ Continue the robustness-testing loop from the saved transcript:
 
 49. `KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift`
    - extend camera state presentation to include indicator tone/opacity so the Camera pane's dot styling is no longer view-owned
+
+50. `KlipperMac/Sources/KlipperMac/Core/SettingsPresentation.swift`
+   - extract component pin text formatting so the Settings pane's tag/sha display is no longer view-owned
 
 ## Tests Added
 
@@ -493,6 +497,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS
   - the Camera pane now reads both status text and indicator styling from `CameraFeedback`
+- latest settings presentation rerun:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS
+  - the Settings pane now reads component pin text from `SettingsPresentation`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
