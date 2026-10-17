@@ -150,6 +150,95 @@ VOLUME_POLL = 0.5
 RESET_TIMEOUT = 15         # the RP2040 ROM unmounts the volume by itself
 IDENTITY_TIMEOUT = 5
 DEFAULT_JOBS = 4
+PROBE_TIMEOUT = 20
+
+_PROBE_RUNTIME_SRC = r"""
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import clocksync
+import reactor
+import serialhdl
+
+
+def main():
+    device = sys.argv[2]
+    baud = int(sys.argv[3])
+    timeout = float(sys.argv[4])
+    result = {"ok": False, "device": device, "baud": baud}
+    sr = None
+    r = reactor.Reactor()
+    done = r.completion()
+
+    def finish(payload):
+        if not done.test():
+            done.complete(payload)
+        try:
+            if sr is not None:
+                sr.disconnect()
+        except Exception:
+            pass
+        r.end()
+
+    def task(eventtime):
+        nonlocal sr
+        endtime = eventtime + max(1.0, timeout)
+        try:
+            sr = serialhdl.SerialReader(r)
+            clk = clocksync.ClockSync(r)
+            while True:
+                try:
+                    sr.connect_uart(device, baud)
+                    break
+                except Exception:
+                    curtime = r.monotonic()
+                    if curtime > endtime:
+                        raise
+                    try:
+                        sr.disconnect()
+                    except Exception:
+                        pass
+                    r.pause(curtime + 0.5)
+            clk.connect(sr)
+            mp = sr.get_msgparser()
+            version, build_versions = mp.get_version_info()
+            finish({
+                "ok": True,
+                "device": device,
+                "baud": baud,
+                "mcu": mp.get_constant("MCU", ""),
+                "clock_freq": mp.get_constant_int("CLOCK_FREQ", None),
+                "version": version,
+                "build_versions": build_versions,
+            })
+        except Exception as e:
+            finish({
+                "ok": False,
+                "device": device,
+                "baud": baud,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            })
+
+    r.register_callback(task)
+    try:
+        r.run()
+    finally:
+        try:
+            if sr is not None:
+                sr.disconnect()
+        except Exception:
+            pass
+        r.finalize()
+    payload = done.wait() if done.test() else result
+    print(json.dumps(payload, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+"""
 
 
 def _run(argv, timeout, **kw):
@@ -921,6 +1010,77 @@ def flash_serial(bin_path, port, chip="stm32f407", tool="auto", dry_run=False):
     return run_flasher(argv, dry_run, lines=lines)
 
 
+def probe_runtime(port, baud=250000, timeout=PROBE_TIMEOUT):
+    """Read-only handshake with a Klipper MCU over its serial port.
+
+    Explicitly separate from `flash detect`: detection never opens a port, while
+    this command does. It is for the "stack is down, is this really a living
+    Klipper MCU?" question that identity alone cannot answer.
+    """
+    resolved, note = resolve_port(port)
+    if resolved is None:
+        return False, ["No board now matches {} - replug it and check "
+                       "`klipperformac flash detect`.".format(note or port)]
+    port = resolved
+    if not re.fullmatch(r"/dev/[\w./-]{1,64}", port):
+        return False, ["--port {!r} is not a /dev/... serial port path, and "
+                       "it is not an identity key either (usb:.../loc:... from "
+                       "`flash detect --json`).".format(port)]
+    if not port_present(port):
+        return False, ["{} does not exist. Serial ports right now: {}".format(
+            port, ", ".join(p["path"] for p in detect.scan()) or "(none)")]
+    venv_py = str(paths.VENV_PY)
+    if not (os.path.isfile(venv_py) and os.access(venv_py, os.X_OK)):
+        return False, ["No stack venv python at {} (run: klipperformac setup)"
+                       .format(venv_py)]
+    klippy_dir = paths.KLIPPER / "klippy"
+    if not klippy_dir.is_dir():
+        return False, ["No klippy sources at {} (run: klipperformac setup)"
+                       .format(klippy_dir)]
+    code, out, err = _run([venv_py, "-c", _PROBE_RUNTIME_SRC,
+                           str(klippy_dir), port, str(baud), str(timeout)],
+                          timeout)
+    if code is None:
+        text = " ".join(str(err).split())
+        if "timed out" in text.lower():
+            return False, [
+                "MCU probe failed: {} did not complete a Klipper handshake."
+                .format(port),
+                "  error: timed out after {}s".format(timeout),
+                "  The USB device is present, but the firmware never answered "
+                "identify_response on this link.",
+            ]
+        return False, ["Could not run the MCU probe: {}".format(text or err)]
+    try:
+        payload = json.loads((out or "").strip())
+    except Exception:
+        return False, ["MCU probe did not return JSON.",
+                       "stdout: {}".format(" ".join((out or "").split()) or "(empty)"),
+                       "stderr: {}".format(" ".join((err or "").split()) or "(empty)")]
+    if payload.get("ok"):
+        lines = [
+            "MCU probe OK: {} answered directly.".format(port),
+            "  MCU:        {}".format(payload.get("mcu") or "(unknown)"),
+            "  CLOCK_FREQ: {}".format(payload.get("clock_freq")
+                                      if payload.get("clock_freq") is not None
+                                      else "(unknown)"),
+        ]
+        version = payload.get("version") or ""
+        if version:
+            lines.append("  Version:    {}".format(version))
+        builds = payload.get("build_versions") or ""
+        if builds:
+            lines.append("  Build:      {}".format(builds))
+        return True, lines
+    return False, [
+        "MCU probe failed: {} did not complete a Klipper handshake.".format(port),
+        "  error: {}".format(payload.get("error") or payload.get("error_type")
+                             or "unknown error"),
+        "  This usually means the board is not running a compatible Klipper "
+        "serial image, or the USB link resets before identify_response.",
+    ]
+
+
 # ---------------------------------------------------------------- enumeration
 def ioreg_usb_devices(timeout=IOREG_TIMEOUT):
     """Attached USB devices: [{vidpid, vid, pid, product, serial, name}].
@@ -1534,6 +1694,17 @@ def dispatch(args):
         lines = doctor_lines()
         _print(lines)
         return 0 if toolchain_status()["flashable"] else 1
+    if action == "probe":
+        ok, lines = refuse_while_running()
+        if not ok:
+            _print(lines)
+            return 1
+        ok, lines = probe_runtime(getattr(args, "port", None),
+                                  baud=getattr(args, "baud", None) or 250000,
+                                  timeout=getattr(args, "timeout", None)
+                                  or PROBE_TIMEOUT)
+        _print(lines)
+        return 0 if ok else 1
     if action == "build":
         ok, lines = build_plan(getattr(args, "defconfig", None),
                                chip=getattr(args, "chip", "rp2040"),
@@ -1542,8 +1713,8 @@ def dispatch(args):
         _print(lines)
         return 0 if ok else 1
     if action not in ("uf2", "dfu", "serial"):
-        _print("Unknown flash action: {!r} (detect, uf2, dfu, serial, doctor, "
-               "status, build)".format(action))
+        _print("Unknown flash action: {!r} (detect, probe, uf2, dfu, serial, "
+               "doctor, status, build)".format(action))
         return 2
     ok, spec = artifact_arg(args)
     if not ok:
@@ -1598,6 +1769,17 @@ def add_parser(sub):
                                      "(read-only, nothing is opened)")
     d.add_argument("--json", action="store_true",
                    help="one machine-readable object (the GUI reads this)")
+
+    pr = fa.add_parser("probe", help="read-only direct handshake with a board "
+                                      "while the stack is down")
+    pr.add_argument("--port", metavar="PATH", required=True,
+                    help="/dev/cu.* port, or an identity key from "
+                         "`flash detect --json`")
+    pr.add_argument("--baud", type=int, default=250000,
+                    help="UART baud to try for the handshake (default 250000)")
+    pr.add_argument("--timeout", type=int, default=PROBE_TIMEOUT,
+                    help="seconds to wait for the probe (default {})"
+                         .format(PROBE_TIMEOUT))
 
     for name in ("doctor", "status"):
         fa.add_parser(name, help="which flashers and toolchains exist "

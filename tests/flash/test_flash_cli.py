@@ -216,7 +216,7 @@ def test_flash_help_names_the_three_transports(fstack, capsys):
     assert "BOOTSEL" in out
     assert "dfu-util" in out
     assert "boot0" in out
-    for action in ("detect", "doctor", "build", "uf2", "dfu", "serial"):
+    for action in ("detect", "probe", "doctor", "build", "uf2", "dfu", "serial"):
         assert action in out
 
 

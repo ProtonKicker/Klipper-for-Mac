@@ -27,6 +27,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added regression tests for the new process, Swift seam, and USB identity cases
 - [x] Re-ran targeted tests and full offline QA after fixes
 - [x] Ran live tier before/after fixes to measure remaining failures
+- [x] Added `klipperformac flash probe` for an explicit read-only board handshake while the stack is down
+- [x] Proved the current bench board times out even under a direct read-only Klipper handshake
 
 ## Landed Fixes
 
@@ -48,6 +50,10 @@ Continue the robustness-testing loop from the saved transcript:
 5. `klipperformac/detect.py`
    - choose the nearest USB device in the IOKit chain instead of the parent hub
 
+6. `klipperformac/flash.py`
+   - add `flash probe --port ...` to test a direct, read-only Klipper serial handshake
+   - bound the probe with a clean timeout message instead of a hanging subprocess
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -62,6 +68,11 @@ Continue the robustness-testing loop from the saved transcript:
 - `tests/identity/test_identity_parsing.py`
   - nested-hub regression: board identity wins over parent hub identity
 
+- `tests/flash/test_flash_probe.py`
+  - probe refuses while the stack is running
+  - probe success/failure/non-JSON/timeout paths
+  - flash help lists the new probe action
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -70,6 +81,9 @@ Continue the robustness-testing loop from the saved transcript:
 - `./bin/klipperformac serial` now reports the live bench board as:
   - `VID:PID=1d50:614e`
   - `SER=5044506110A45B1C`
+- `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101`
+  now gives a bounded direct result instead of hanging:
+  - `MCU probe failed ... timed out after 20s`
 
 ## Live Tier Status
 
@@ -86,6 +100,7 @@ Remaining live failures all share one bench-state problem:
 - `/printer/objects/query?mcu` returns `{}` for `mcu`
 - `FIRMWARE_RESTART` does not recover the board to ready
 - powerloss live tests fail because they require a ready stack first
+- a direct port-level handshake now fails the same way even with the stack down
 
 ## Suspected Live Blocker
 
@@ -101,6 +116,8 @@ Evidence:
 - `./bin/klipperformac doctor` still reports `klipper state: error`
 - `./bin/klipperformac status` shows `klippy startup`
 - `klippy.log` shows repeated `mcu 'mcu': Unable to connect`
+- `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101` times out
+  waiting for `identify_response` even with klippy stopped
 
 ## Next Suggested Moves
 
