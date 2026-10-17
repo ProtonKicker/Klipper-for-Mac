@@ -160,9 +160,28 @@ def _powerloss_stack_up():
     """Are klipper AND moonraker alive? The power-loss marker is only judged when
     they are not (powerloss.last_stop): a live stack with an open session file is
     that session, not an unclean stop. Read from process.running() - the same
-    evidence `status` prints - so the two can never disagree about this Mac."""
+    strict evidence `powerloss-test` uses before it SIGKILLs a live bench job."""
     state = process.running() or {}
     return bool(state.get("klipper") and state.get("moonraker"))
+
+
+def _powerloss_session_live(state=None, live_ports=None):
+    """Whether the current stack session is still alive enough that an open
+    power-loss marker describes *now*, not the previous stop.
+
+    This is deliberately broader than `_powerloss_stack_up()`: advisory surfaces
+    like `status`, `doctor`, and `powerloss status` should stop surfacing stale
+    reboot history as soon as our own Moonraker/UI listeners are still alive,
+    even if the tracked pid ledger has gone missing. The destructive
+    `powerloss-test` gate stays on the stricter helper above."""
+    state = process.running() if state is None else state
+    if state:
+        return any(state.get(name) for name in ("klipper", "moonraker",
+                                                "web_mainsail",
+                                                "web_fluidd"))
+    ports = _our_listener_ports() if live_ports is None else set(live_ports)
+    return bool({paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT}
+                & ports)
 
 
 def _save_powerloss(**kwargs):
@@ -483,7 +502,7 @@ def cmd_status(args):
     if state is None:
         left = process.our_listeners()
         live_ports = {port for port, _pid in left}
-        if {paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT} & live_ports:
+        if _powerloss_session_live(state=None, live_ports=live_ports):
             print("running (untracked)")
         else:
             print("stopped")
@@ -495,7 +514,9 @@ def cmd_status(args):
             print(line)
         for line in _status_guard_lines():
             print(line)
-        for line in powerloss.verdict_lines(stack_up=False):
+        for line in powerloss.verdict_lines(
+                stack_up=_powerloss_session_live(state=None,
+                                                 live_ports=live_ports)):
             print(line)
         return
     pins = versions.load_pins()
@@ -2633,7 +2654,7 @@ def cmd_powerloss(args):
         return
 
     # status: the whole picture, in the order a person acts on it.
-    for line in powerloss.explain(stack_up=_powerloss_stack_up()):
+    for line in powerloss.explain(stack_up=_powerloss_session_live()):
         print(line)
 
 
@@ -3517,6 +3538,7 @@ def cmd_doctor(args):
     live_ports = _our_listener_ports() if state is None else set()
     moonraker_live = bool(state and state.get("moonraker")) \
         or paths.MOONRAKER_PORT in live_ports
+    stack_live = _powerloss_session_live(state=state, live_ports=live_ports)
     if state:
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
         if down:
@@ -3632,7 +3654,7 @@ def cmd_doctor(args):
     try:
         for pl_ok, pl_msg in powerloss.doctor(
                 query=bool(state and state.get("moonraker")),
-                stack_up=_powerloss_stack_up()):
+                stack_up=stack_live):
             print(("[ok] " if pl_ok else "[!] ") + pl_msg)
     except Exception as e:
         print("[i]  power loss: not reported ({})".format(e))

@@ -222,6 +222,21 @@ def test_status_of_a_stopped_stack_names_the_unclean_stop(quiet, monkeypatch,
     assert "rebooted" in out
 
 
+def test_status_hides_stale_unclean_history_when_untracked_ports_are_live(
+        quiet, monkeypatch, capfd):
+    write = json.dumps({"started": "2026-10-16T09:00:00", "started_epoch": 10.0,
+                        "boot_time": "1791000000", "stack": {"klipper": 4242}})
+    quiet.paths.POWERLOSS.mkdir(parents=True)
+    (quiet.paths.POWERLOSS / "session.json").write_text(write)
+    monkeypatch.setattr(quiet.process, "our_listeners",
+                        lambda: [(quiet.paths.MOONRAKER_PORT, 42),
+                                 (quiet.paths.WEB_PORT, 43)])
+    quiet.cli.cmd_status(NS())
+    out = capfd.readouterr().out
+    assert out.startswith("running (untracked)\n")
+    assert "LAST STOP WAS UNCLEAN" not in out
+
+
 def test_status_of_a_running_stack_shows_the_journal_switch(quiet, monkeypatch,
                                                             capfd):
     monkeypatch.setattr(quiet.process, "running", lambda: {
@@ -345,3 +360,42 @@ def test_doctor_is_quiet_when_there_is_no_history(bare_doctor, capfd):
     assert "UNCLEAN" not in out
     assert "no session recorded yet" in out
     assert not bare_doctor.paths.POWERLOSS.exists()   # reading is not writing
+
+
+def test_doctor_hides_stale_unclean_history_when_moonraker_is_live_untracked(
+        bare_doctor, monkeypatch, capfd):
+    bare_doctor.paths.POWERLOSS.mkdir(parents=True)
+    (bare_doctor.paths.POWERLOSS / "session.json").write_text(json.dumps(
+        {"started": "2026-10-16T09:00:00", "started_epoch": 10.0,
+         "boot_time": "1791000000", "stack": {"klipper": 4242}}))
+    monkeypatch.setattr(bare_doctor.process, "our_listeners",
+                        lambda: [(bare_doctor.paths.MOONRAKER_PORT, 42)])
+    monkeypatch.setattr(bare_doctor.cli, "_klippy_state",
+                        lambda timeout=3: "ready")
+    monkeypatch.setattr(bare_doctor.cli, "_mcu_runtime_rows", lambda *a, **k: [])
+    monkeypatch.setattr(bare_doctor.cli, "_mcu_report_lines", lambda *a, **k: [])
+    monkeypatch.setattr(bare_doctor.cli, "_mcu_firmware_match_lines",
+                        lambda *a, **k: [])
+    monkeypatch.setattr(bare_doctor.cli, "_mcu_log_provenance_lines",
+                        lambda *a, **k: [])
+    with pytest.raises(SystemExit):
+        bare_doctor.cli.cmd_doctor(NS())
+    out = capfd.readouterr().out
+    assert "stack is not tracked, but Moonraker is answering on port" in out
+    assert "LAST STOP WAS UNCLEAN" not in out
+
+
+def test_powerloss_status_hides_stale_unclean_history_when_stack_is_live(
+        pl, monkeypatch, capfd):
+    pl.paths.POWERLOSS.mkdir(parents=True)
+    (pl.paths.POWERLOSS / "session.json").write_text(json.dumps(
+        {"started": "2026-10-16T09:00:00", "started_epoch": 10.0,
+         "boot_time": "1791000000", "stack": {"klipper": 4242}}))
+    monkeypatch.setattr(pl.process, "running", lambda: None)
+    monkeypatch.setattr(pl.process, "our_listeners",
+                        lambda: [(pl.paths.MOONRAKER_PORT, 42)])
+    monkeypatch.setattr(pl.powerloss, "_http_get", lambda path, timeout=3: None)
+    pl.cli.cmd_powerloss(args(action="status"))
+    out = capfd.readouterr().out
+    assert "LAST STOP WAS UNCLEAN" not in out
+    assert "journal is off" in out

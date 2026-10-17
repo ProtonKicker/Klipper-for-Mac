@@ -79,6 +79,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted the settings pane's component pin text formatting into a pure helper so the pinned-tag / resolved-sha display is testable without the view
 - [x] Hardened `doctor`, `selftest`, and `timing` for the live-but-untracked case where Moonraker is still answering from our ports even though `process.running()` returns no tracked stack
 - [x] Made `status` report `running (untracked)` instead of `stopped` when this install's Moonraker/UI ports are still answering without a tracked state record, and added a regression for that CLI surface
+- [x] Fixed the remaining powerloss advisory seam so `status`, `doctor`, and `powerloss status` stop surfacing stale `LAST STOP WAS UNCLEAN` history while the current session is still live-but-untracked
 
 ## Landed Fixes
 
@@ -607,6 +608,13 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac doctor` -> PASS with `[i]  stack is not tracked, but Moonraker is answering on port 7125`
   - `./bin/klipperformac selftest` -> `SELFTEST PASSED`
   - `./bin/klipperformac status` -> `running (untracked)`
+- after the untracked-live powerloss advisory pass:
+  - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/powerloss/test_cli_powerloss.py::test_status_hides_stale_unclean_history_when_untracked_ports_are_live tests/powerloss/test_cli_powerloss.py::test_doctor_hides_stale_unclean_history_when_moonraker_is_live_untracked tests/powerloss/test_cli_powerloss.py::test_powerloss_status_hides_stale_unclean_history_when_stack_is_live` -> `3 passed`
+  - `env PYTHONPATH=. .venv-test/bin/python -m pytest -q tests/powerloss/test_cli_powerloss.py` -> `24 passed`
+  - `make qa-fast` -> PASS
+  - `./bin/klipperformac status` -> `running (untracked)` with no stale `LAST STOP WAS UNCLEAN`
+  - `./bin/klipperformac doctor` -> PASS with `powerloss: this session is open and will be judged by the next \`up\`/\`status\``
+  - `./bin/klipperformac powerloss status` -> no stale unclean-stop warning while the live untracked session is still up
 
 ## Live Tier Status
 
