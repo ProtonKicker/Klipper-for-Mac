@@ -1,4 +1,7 @@
 // AVCaptureSession -> BGRA frames -> JPEG bytes, paced to the requested fps.
+// When this run also records, the same session writes the .mp4 next to the
+// stream: macOS allows one AVCaptureSession per camera, so recording has to be
+// a capability of the helper that already owns the lens.
 
 import AVFoundation
 import CoreMedia
@@ -11,6 +14,7 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let queue = DispatchQueue(label: "klippercam.capture")
     private let hub: FrameHub
     private let device: AVCaptureDevice
+    private let mic: AVCaptureDevice?
     private let width: Int
     private let height: Int
     private let fps: Int
@@ -19,9 +23,15 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private var lastPublish = 0.0  // only read/written on `queue`
     private var errorWatch: NSObjectProtocol?
 
+    /// Set before `start()`: it gets a file output of its own inside this
+    /// session, so the picture on the dashboard and the file on disk come out
+    /// of one camera and one configuration.
+    var recorder: Recorder?
+
     init(device: AVCaptureDevice, width: Int, height: Int, fps: Int,
-         quality: Int, hub: FrameHub) {
+         quality: Int, hub: FrameHub, mic: AVCaptureDevice? = nil) {
         self.device = device
+        self.mic = mic
         self.width = width
         self.height = height
         self.fps = fps
@@ -69,10 +79,34 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
             return "Could not open \(device.localizedName). Another app is "
                  + "probably using it — quit that app and try again."
         }
+        var micInput: AVCaptureDeviceInput?
+        if let mic = mic {
+            do {
+                micInput = try AVCaptureDeviceInput(device: mic)
+            } catch {
+                return "Could not open \(mic.localizedName) for sound. "
+                     + "Another app is probably using it — quit that app, "
+                     + "or run without --mic."
+            }
+        }
         session.beginConfiguration()
         session.sessionPreset = .high
         if session.canAddInput(input) {
             session.addInput(input)
+        }
+        // The microphone goes in here, in the same configuration, because
+        // AVFoundation refuses new inputs on a session that is already
+        // running — and a mid-print reconfigure is exactly what must not
+        // happen. It is only ever added for a recording: the stream has no
+        // sound at all.
+        if let micInput = micInput {
+            if session.canAddInput(micInput) {
+                session.addInput(micInput)
+            } else {
+                return "This Mac will not add \(micInput.device.localizedName) "
+                     + "to the camera session. Run without --mic, or pick "
+                     + "another microphone with --mic NAME."
+            }
         }
         capture.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -81,6 +115,17 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         capture.setSampleBufferDelegate(self, queue: queue)
         if session.canAddOutput(capture) {
             session.addOutput(capture)
+        }
+        if let recorder = recorder {
+            let movie = AVCaptureMovieFileOutput()
+            if session.canAddOutput(movie) {
+                session.addOutput(movie)
+                recorder.attach(movie)
+            } else {
+                return "This Mac will not add a file recorder to the camera "
+                     + "session, so nothing can be recorded. The picture "
+                     + "stream itself still works without --record."
+            }
         }
         session.commitConfiguration()
         if session.inputs.isEmpty || session.outputs.isEmpty {

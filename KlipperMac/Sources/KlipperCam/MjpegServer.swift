@@ -18,10 +18,19 @@ final class MjpegServer {
     private var live = 0
     private let maxLive = 8
     private let port: Int
+    /// Set once, before serving starts, when this run also records. Read-only
+    /// here: this endpoint can report on a recording, it never starts one.
+    private var recorder: Recorder?
 
     init(hub: FrameHub, port: Int) {
         self.hub = hub
         self.port = port
+    }
+
+    func setRecorder(_ recorder: Recorder?) {
+        lock.lock()
+        self.recorder = recorder
+        lock.unlock()
     }
 
     /// Binds and starts serving. Returns nil, or one plain sentence.
@@ -131,9 +140,25 @@ final class MjpegServer {
             snapshot(fd)
         } else if path == "/healthz" {
             sendText(fd, 200, "ok")
+        } else if lower.contains("action=recordstatus") || path == "/recordstatus" {
+            sendText(fd, 200, recordStatus())
         } else {
             sendText(fd, 404, "Not found")
         }
+    }
+
+    /// Machine-readable, one key=value per line. The Python side reads this
+    /// instead of parsing sentences; the picture and the stream code paths are
+    /// untouched by it.
+    private func recordStatus() -> String {
+        lock.lock()
+        let recorder = self.recorder
+        lock.unlock()
+        guard let recorder = recorder else {
+            return "state=idle\nrecord=not-requested\nmic=\(micPermissionWord())"
+        }
+        let s = recorder.status
+        return s.line + "\nfile=\(recorder.fileURL.path)\nmic=\(micPermissionWord())"
     }
 
     private func splitTarget(_ target: String) -> (String, String) {

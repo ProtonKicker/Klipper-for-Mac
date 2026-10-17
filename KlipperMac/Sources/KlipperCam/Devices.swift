@@ -133,3 +133,77 @@ func ensureCameraAccess(_ done: @escaping (Bool) -> Void) {
         DispatchQueue.main.async { done(granted) }
     }
 }
+
+// The microphone is only ever asked about when the user records with --mic,
+// so these stay separate from the camera helpers above: `--check-permission`
+// keeps answering about the camera alone.
+
+func micPermissionWord() -> String {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized: return "authorized"
+    case .denied: return "denied"
+    case .restricted: return "restricted"
+    default: return "notDetermined"
+    }
+}
+
+func micPermissionHint() -> String {
+    switch micPermissionWord() {
+    case "denied":
+        return "Microphone access is switched off for KlipperCam. Open System "
+             + "Settings, go to Privacy & Security > Microphone, and turn "
+             + "KlipperCam on — or run: tccutil reset Microphone "
+             + "com.klipperformac.klippercam"
+    case "restricted":
+        return "This Mac does not allow KlipperCam to use the microphone "
+             + "(microphone access is restricted by its settings)."
+    default:
+        return "KlipperCam did not get microphone permission. Run it again "
+             + "and click OK when macOS asks to use the microphone."
+    }
+}
+
+/// Calls `done` on the main queue; only ever reached from a --mic recording.
+func ensureMicAccess(_ done: @escaping (Bool) -> Void) {
+    let status = AVCaptureDevice.authorizationStatus(for: .audio)
+    if status == .authorized {
+        done(true)
+        return
+    }
+    guard status == .notDetermined else {
+        done(false)
+        return
+    }
+    print("Waiting for microphone permission — click OK in the macOS dialog.")
+    AVCaptureDevice.requestAccess(for: .audio) { granted in
+        DispatchQueue.main.async { done(granted) }
+    }
+}
+
+func micDevices() -> [AVCaptureDevice] {
+    // Same legacy listing as videoDevices(): on macOS 13 it is the one that
+    // also sees USB and Continuity Camera microphones.
+    return AVCaptureDevice.devices().filter { $0.hasMediaType(.audio) }
+}
+
+/// `--mic NAME` picks by name; empty means the microphone macOS would pick.
+func selectMic(_ list: [AVCaptureDevice], _ spec: String) -> AVCaptureDevice? {
+    if spec.isEmpty {
+        return AVCaptureDevice.default(for: .audio) ?? list.first
+    }
+    let want = spec.lowercased()
+    if let exact = list.first(where: { $0.localizedName.lowercased() == want }) {
+        return exact
+    }
+    return list.first(where: { $0.localizedName.lowercased().contains(want) })
+}
+
+func listMics() {
+    let list = micDevices()
+    for (i, d) in list.enumerated() {
+        print("\(i)\t\(d.localizedName)")
+    }
+    if list.isEmpty {
+        warn("No microphone found on this Mac.")
+    }
+}

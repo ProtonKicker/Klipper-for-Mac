@@ -2235,21 +2235,35 @@ def cmd_cam(args):
         ok, lines = cam.list_devices()
     elif action == "snapshot":
         ok, lines = cam.snapshot(args.path)
+    elif action == "record":
+        # `cam record <name> [--seconds N] [--mic [NAME]]` (+ off | status):
+        # the recording is written by the one camera process, since a Mac gives
+        # each camera a single AVCaptureSession. cam.record() owns the whole
+        # grammar, including the capability probe that refuses an old helper.
+        ok, lines = cam.record(args.path, secs=args.seconds, mic=args.mic,
+                               audio=None if args.audio is None
+                               else args.audio == "on")
+    elif action == "mics":
+        ok, lines = cam.mics()
+    elif action == "mic-permission":
+        ok, lines = cam.mic_permission_status()
     elif action == "build":
         ok, lines = cam.build_helper()
     else:  # config
         kw = {}
-        for flag in ("device", "width", "height", "fps", "quality"):
-            value = getattr(args, flag)
+        for flag in ("device", "width", "height", "fps", "quality", "mic"):
+            value = getattr(args, flag, None)
             if value is None:
                 continue
-            if flag != "device":
+            if flag not in ("device", "mic"):
                 lo, hi = {"width": (160, 4096), "height": (120, 4096),
                           "fps": (1, 60), "quality": (1, 100)}[flag]
                 if not lo <= value <= hi:
                     _die("cam config: {} must be between {} and {} "
                          "(got {})".format(flag, lo, hi, value))
             kw[flag] = value
+        if getattr(args, "audio", None) is not None:
+            kw["audio"] = args.audio == "on"
         if kw:
             try:
                 merged = cam.save_prefs(**kw)
@@ -2266,7 +2280,9 @@ def cmd_cam(args):
             p = cam.prefs()
             lines = ["Camera settings:"] + [
                 "  {:<9} {}".format(k, p.get(k)) for k in
-                ("device", "width", "height", "fps", "quality")]
+                ("device", "width", "height", "fps", "quality", "mic")]
+            lines.append("  {:<9} {}".format(
+                "audio", "on" if cam._as_bool(p.get("audio")) else "off"))
             lines.append("Change with: klipperformac cam config --fps 20 "
                          "--quality 90 --device <camera name>")
     print("\n".join(lines) if isinstance(lines, list) else str(lines))
@@ -3707,14 +3723,27 @@ def main(argv=None):
     p = sub.add_parser("cam", help="Mac webcam for the printer dashboard "
                                    "(localhost-only MJPEG stream)")
     p.add_argument("action", choices=("on", "off", "status", "list",
-                                      "snapshot", "build", "config"))
+                                      "snapshot", "build", "config",
+                                      "record", "mics", "mic-permission"))
     p.add_argument("path", nargs="?",
-                   help="snapshot output file (default: data folder timelapse)")
+                   help="snapshot output file (default: data folder timelapse); "
+                        "with record: the video name or path under "
+                        "data/recordings, or off | status")
     p.add_argument("--device", metavar="NAME", help="camera name or index")
     p.add_argument("--width", type=int)
     p.add_argument("--height", type=int)
     p.add_argument("--fps", type=int)
     p.add_argument("--quality", type=int, help="JPEG quality 1-100")
+    p.add_argument("--seconds", metavar="N",
+                   help="with record: close the file and stop by itself after "
+                        "N seconds (the helper does this, not a timer here)")
+    p.add_argument("--mic", metavar="NAME", nargs="?", const="", default=None,
+                   help="with config: the microphone to record with; with "
+                        "record: add sound now - bare for the one macOS picks, "
+                        "or a name from 'klipperformac cam mics'")
+    p.add_argument("--audio", choices=("on", "off"),
+                   help="with config: let recordings carry sound; with "
+                        "record: insist on (or take back) sound for this one")
     p.add_argument("--show", action="store_true",
                    help="with config: show current settings")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
