@@ -222,36 +222,24 @@ if qa_enabled test; then
         printf '         %s -m pip install -r requirements-dev.txt\n' "$PY"
         qa_note_fail pytest-missing
     else
-        fast_sel=""
-        for f in tests/test_*.py; do
-            [ -f "$f" ] && fast_sel="$fast_sel $f"
-        done
-        [ -d tests/regress ] && fast_sel="$fast_sel tests/regress"
-        if [ -z "$fast_sel" ]; then
-            printf '  FAIL no fast-tier test files found (tests/test_*.py, tests/regress)\n'
-            qa_note_fail pytest-nofiles
-        else
-            t0=$(date +%s)
-            # -x: a fast hook must stop on the first failure, not grind for minutes.
-            # shellcheck disable=SC2086
-            PYTHONPATH=. "$PY" -m pytest $fast_sel -q -x \
-                -m "not live and not hardware" ${PYTEST_EXTRA:-}
-            rc=$?
-            t1=$(date +%s)
-            dur=$((t1 - t0))
-            budget=${QA_FAST_MAX_SECONDS:-0}
-            printf '  pytest step: %ss (budget for this tier: 20s)\n' "$dur"
-            if [ "$rc" -ne 0 ]; then
-                qa_note_fail "pytest(rc=$rc)"
-            elif [ "$budget" -gt 0 ] && [ "$dur" -gt "$budget" ]; then
-                printf '  FAIL fast tier took %ss > QA_FAST_MAX_SECONDS=%s\n' "$dur" "$budget"
-                qa_note_fail "pytest-slow($dur s)"
-            elif [ "$dur" -gt 20 ]; then
-                printf '  WARN fast tier exceeded its 20s budget.\n'
-                printf '       Usually a newly heavy test in tests/regress: profile it\n'
-                printf '       with --durations=10, then @pytest.mark.slow it or move it\n'
-                printf '       to tests/deep/ (see QA.md "Adding tests").\n'
-            fi
+        t0=$(date +%s)
+        # shellcheck disable=SC2086
+        sh scripts/qa/fast_pytest.sh ${PYTEST_EXTRA:-}
+        rc=$?
+        t1=$(date +%s)
+        dur=$((t1 - t0))
+        budget=${QA_FAST_MAX_SECONDS:-0}
+        printf '  pytest step: %ss (budget for this tier: 20s)\n' "$dur"
+        if [ "$rc" -ne 0 ]; then
+            qa_note_fail "pytest(rc=$rc)"
+        elif [ "$budget" -gt 0 ] && [ "$dur" -gt "$budget" ]; then
+            printf '  FAIL fast tier took %ss > QA_FAST_MAX_SECONDS=%s\n' "$dur" "$budget"
+            qa_note_fail "pytest-slow($dur s)"
+        elif [ "$dur" -gt 20 ]; then
+            printf '  WARN fast tier exceeded its 20s budget.\n'
+            printf '       Profile it with: make test-fast-profile\n'
+            printf '       Then @pytest.mark.slow it or move it to tests/deep/\n'
+            printf '       if the slow path belongs outside the fast tier.\n'
         fi
     fi
 fi

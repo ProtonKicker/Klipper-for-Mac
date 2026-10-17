@@ -69,6 +69,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Expanded future SwiftPM coverage for generic `serial --json` usage noise, partial Moonraker object trees, and the `error` readiness state
 - [x] Added a dedicated `swift_package_tests.sh` probe and wired it into `qa-full` so real `swift test` runs automatically when the Apple toolchain is ready and otherwise reports a precise blocked reason
 - [x] Added a `make test-swiftpkg` entry point so the local Swift package-test/toolchain state can be checked directly
+- [x] Added a shared `fast_pytest.sh` helper plus `fast_profile.sh` / `make test-fast-profile` so fast-tier timing drift can be profiled without rebuilding the selector by hand
+- [x] Updated the fast-tier over-budget warning to point at the new profiling tool instead of a manual pytest recipe
 
 ## Landed Fixes
 
@@ -231,6 +233,16 @@ Continue the robustness-testing loop from the saved transcript:
 
 41. `Makefile`
    - add `make test-swiftpkg` as a thin wrapper around the new Swift package-test QA tier
+
+42. `scripts/qa/fast_pytest.sh`
+   - factor the fast offline pytest selector into a reusable helper so `qa-fast` and profiling tools cannot drift apart
+
+43. `scripts/qa/fast_profile.sh`
+   - add a dedicated profiler for the fast pytest tier with configurable `--durations` output
+
+44. `scripts/qa/fast.sh`
+   - run the shared fast pytest helper instead of duplicating the selector
+   - point over-budget warnings at `make test-fast-profile` so slow-test diagnosis is a first-class workflow
 
 ## Tests Added
 
@@ -431,6 +443,11 @@ Continue the robustness-testing loop from the saved transcript:
     - `xcrun --sdk macosx --show-sdk-platform-path` cannot resolve `PlatformPath`
   - `make qa-full` -> PASS
   - `qa-full` now includes a `swift package tests` tier and reports the blocked reason explicitly on this Mac
+- latest fast-tier profiling rerun:
+  - `make qa-fast` -> PASS
+  - `make test-fast-profile` -> PASS
+  - current slowest fast-tier costs are mostly teardown time in the proxy regressions (`tests/regress/test_p_08_xff.py` and `tests/regress/test_p_18_limits.py`) plus a small number of config/preset tests
+  - `make qa-full` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled

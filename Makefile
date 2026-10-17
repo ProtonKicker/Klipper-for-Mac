@@ -63,6 +63,10 @@ lint-swift:
 test-offline:
 	@QA_ONLY=suite sh $(QA)/full.sh
 
+.PHONY: test-fast-profile
+test-fast-profile:
+	@sh $(QA)/fast_profile.sh
+
 .PHONY: test-swiftpkg
 test-swiftpkg:
         @QA_ONLY=swiftpkg sh $(QA)/full.sh
@@ -181,6 +185,7 @@ help:
 	  '  make lint-py         ruff check klipperformac only' \
 	  '  make lint-sh         bash -n every shell script only' \
 	  '  make lint-swift      swiftc -parse on KlipperMac/Sources only' \
+          '  make test-fast-profile  profile the fast pytest tier and print the slowest tests' \
 	  '  make test-offline    the full offline pytest suite (~3min, no hardware)' \
           '  make test-swiftpkg   run/diagnose swift test for KlipperMac' \
 	  '  make test-live       opt-in: tests marked live/hardware (needs the real stack)' \
