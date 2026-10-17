@@ -789,6 +789,18 @@ class Server(socketserver.ThreadingTCPServer):
             # loop over it takes the whole UI down for one miscounted socket.
             pass
 
+    def handle_error(self, request, client_address):
+        """Keep the proxy quiet on one bad client or one dead upstream.
+
+        The handler path already turns expected network failures into HTTP
+        answers (`502`, `400`, `413`, `503`) and suppresses its own access/error
+        logging. Leaving socketserver's default traceback dump on top of that
+        only sprays stderr from a background worker thread; it does not make the
+        proxy recover any differently. The app launches this process with its
+        stdio on DEVNULL, so staying quiet here matches the shipped runtime.
+        """
+        pass
+
     @staticmethod
     def _reject_overloaded(request):
         """One complete, self-framed 503, written before the socket closes."""

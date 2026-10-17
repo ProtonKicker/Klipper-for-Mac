@@ -335,6 +335,22 @@ def test_dead_upstream_gives_502_not_a_traceback(proxymod, docroot):
         httpd.server_close()
 
 
+def test_server_handle_error_stays_quiet(proxymod, docroot, capsys):
+    """A background worker error must not dump socketserver's traceback spam."""
+    httpd = proxymod.Server(("127.0.0.1", 0),
+                            lambda *a, **kw: proxymod.UIPandler(
+                                *a, directory=str(docroot), **kw))
+    try:
+        try:
+            raise RuntimeError("simulated worker failure")
+        except RuntimeError:
+            httpd.handle_error(None, ("127.0.0.1", 0))
+        captured = capsys.readouterr()
+        assert captured.err == ""
+    finally:
+        httpd.server_close()
+
+
 # ---------------------------------------------------------------------------
 # FIXED (deep-hunt): proxy._request_body() now parses Content-Length as a
 # strict non-negative decimal and answers 400 before reading anything, so a
