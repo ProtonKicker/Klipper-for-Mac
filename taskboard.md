@@ -35,6 +35,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Productized the macOS RP2040 firmware build path as `klipperformac flash build-rp2040`
 - [x] Verified `flash build-rp2040` succeeds end-to-end on this Mac and caches a fresh UF2
 - [x] Added offline regression coverage for `up`/`down`/`restart` lifecycle edge branches and `_wait_ready()` timeout diagnostics
+- [x] Hardened `data --set` relocation so post-move failures roll back files, settings, and the previously running stack
 
 ## Landed Fixes
 
@@ -64,6 +65,10 @@ Continue the robustness-testing loop from the saved transcript:
    - add `flash build-rp2040` to build and cache RP2040/RP2350 UF2 firmware on macOS
    - auto-unpack a cached `gcc-arm-embedded` pkg into `~/.klipperformac/toolchains/`
    - generate macOS wrapper tools for `g++`, `cpp`, and `readelf` so upstream's build works unchanged
+
+7. `klipperformac/cli.py`
+   - make `relocate_data()` roll back if settings write, config sync, or restart fails after files moved
+   - restore the old data pointer and previous settings before surfacing the failure
 
 ## Tests Added
 
@@ -102,6 +107,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `down` lingering-listener failure path
   - `_wait_ready()` timeout diagnostics for squatters and silent listeners
 
+- `tests/deep/test_clmisc_data_ui.py`
+  - rollback on settings write failure
+  - rollback on config sync failure
+  - rollback on restart failure
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -119,7 +129,7 @@ Continue the robustness-testing loop from the saved transcript:
 - built through product command:
   - [x] `klipperformac flash build-rp2040`
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-- `make qa-full` now passes at `3103 passed, 25 deselected`
+- `make qa-full` now passes at `3106 passed, 25 deselected`
 - `klipperformac flash doctor` now reports:
   - embedded toolchain path
   - cached cask package path

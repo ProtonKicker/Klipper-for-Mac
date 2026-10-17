@@ -243,7 +243,8 @@ def test_relocate_stops_and_restart_a_running_stack(stack, monkeypatch):
     calls = []
     monkeypatch.setattr(stack.process, "running", lambda: {"klipper": 4242})
     monkeypatch.setattr(stack.process, "stop", lambda *a: calls.append("stop"))
-    monkeypatch.setattr(stack.process, "start", lambda *a: calls.append("start"))
+    monkeypatch.setattr(stack.process, "start",
+                        lambda *a: calls.append("start") or True)
     msg = stack.cli.relocate_data(str(stack.data.parent / "hot"))
     assert calls == ["stop", "start"]
     assert "restarted" in msg
@@ -261,6 +262,82 @@ def test_relocate_rewrites_config_paths_into_the_new_folder(stack):
         (target / "config" / "printer.cfg").read_text()
     assert "klippy_uds_address: " + str(target / "run" / "klippy.sock") in \
         (target / "config" / "moonraker.conf").read_text()
+
+
+def test_relocate_rolls_back_when_settings_write_fails(stack, monkeypatch, capfd):
+    old = seed_data(stack.paths)
+    before = tree(old)
+    stack.paths.save_settings({"lan": True})
+    target = stack.data.parent / "rollback-settings"
+    calls = []
+    monkeypatch.setattr(stack.process, "running", lambda: {"klipper": 4242})
+    monkeypatch.setattr(stack.process, "stop", lambda *a: calls.append("stop"))
+    monkeypatch.setattr(stack.process, "start", lambda *a: calls.append("start") or True)
+    real_save = stack.paths.save_settings
+    seen = {"failed": False}
+
+    def flaky(settings):
+        if settings.get("data") == str(target) and not seen["failed"]:
+            seen["failed"] = True
+            raise OSError("disk full")
+        return real_save(settings)
+
+    monkeypatch.setattr(stack.paths, "save_settings", flaky)
+    with pytest.raises(SystemExit) as exc:
+        stack.cli.relocate_data(str(target))
+    assert exc.value.code == 1
+    err = capfd.readouterr().err
+    assert "Rolled back to" in err
+    assert stack.paths.DATA == old
+    assert tree(old) == before
+    assert tree(target) == {}
+    assert stack.paths.load_settings() == {"lan": True}
+    assert calls == ["stop", "start"]
+
+
+def test_relocate_rolls_back_when_sync_paths_raises(stack, monkeypatch, capfd):
+    old = seed_data(stack.paths)
+    before = tree(old)
+    stack.paths.save_settings({"lan": False})
+    target = stack.data.parent / "rollback-sync"
+    calls = []
+    monkeypatch.setattr(stack.process, "running", lambda: {"klipper": 4242})
+    monkeypatch.setattr(stack.process, "stop", lambda *a: calls.append("stop"))
+    monkeypatch.setattr(stack.process, "start", lambda *a: calls.append("start") or True)
+    monkeypatch.setattr(stack.cli.configgen, "sync_data_paths",
+                        lambda: (_ for _ in ()).throw(OSError("sync failed")))
+    with pytest.raises(SystemExit) as exc:
+        stack.cli.relocate_data(str(target))
+    assert exc.value.code == 1
+    err = capfd.readouterr().err
+    assert "Rolled back to" in err
+    assert stack.paths.DATA == old
+    assert tree(old) == before
+    assert tree(target) == {}
+    assert stack.paths.load_settings() == {"lan": False}
+    assert calls == ["stop", "start"]
+
+
+def test_relocate_rolls_back_when_restart_fails(stack, monkeypatch, capfd):
+    old = seed_data(stack.paths)
+    before = tree(old)
+    stack.paths.save_settings({"lan": True})
+    target = stack.data.parent / "rollback-restart"
+    calls = []
+    monkeypatch.setattr(stack.process, "running", lambda: {"klipper": 4242})
+    monkeypatch.setattr(stack.process, "stop", lambda *a: calls.append("stop"))
+    monkeypatch.setattr(stack.process, "start", lambda *a: calls.append("start") or False)
+    with pytest.raises(SystemExit) as exc:
+        stack.cli.relocate_data(str(target))
+    assert exc.value.code == 1
+    err = capfd.readouterr().err
+    assert "Rolled back to" in err
+    assert "did not restart" in err
+    assert stack.paths.DATA == old
+    assert tree(old) == before
+    assert tree(target) == {}
+    assert stack.paths.load_settings() == {"lan": True}
+    assert calls == ["stop", "start", "start"]
 
 
 def test_relocate_to_a_symlink_resolves_the_target(stack):

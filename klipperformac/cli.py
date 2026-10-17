@@ -1565,6 +1565,8 @@ def relocate_data(new):
     if was_running:
         process.stop()
     moved = 0
+    moved_names = []
+    old_settings = paths.load_settings()
     try:
         if old.exists():
             for p in sorted(old.iterdir()):
@@ -1575,20 +1577,56 @@ def relocate_data(new):
                     continue
                 shutil.move(str(p), str(dest))
                 moved += 1
+                moved_names.append(p.name)
     except (OSError, ValueError, shutil.Error) as e:
         if was_running:
             process.start()
         _die("Could not move the data folder to {}: {} (some items may have "
              "moved; the data folder is still {} and nothing was recorded)"
              .format(new, getattr(e, "strerror", None) or e, old))
+
+    def _rollback(reason):
+        problems = []
+        for name in reversed(moved_names):
+            src = new / name
+            dest = old / name
+            try:
+                if src.exists() and not dest.exists():
+                    shutil.move(str(src), str(dest))
+            except (OSError, ValueError, shutil.Error) as e:
+                problems.append("could not move {} back: {}".format(
+                    src, getattr(e, "strerror", None) or e))
+        paths.set_data(old)
+        try:
+            paths.ensure_dirs()
+        except (OSError, ValueError) as e:
+            problems.append("could not restore old paths: {}".format(
+                getattr(e, "strerror", None) or e))
+        try:
+            if old_settings:
+                paths.save_settings(old_settings)
+            elif paths.SETTINGS.exists():
+                paths.SETTINGS.unlink()
+        except OSError as e:
+            problems.append("could not restore settings: {}".format(
+                getattr(e, "strerror", None) or e))
+        if was_running and not process.start():
+            problems.append("the previously running stack did not restart")
+        detail = ("; rollback notes: " + "; ".join(problems)) if problems else ""
+        _die("Could not switch the data folder to {}: {}. Rolled back to {}{}"
+             .format(new, reason, old, detail))
+
     paths.set_data(new)
-    paths.ensure_dirs()
-    settings = paths.load_settings()
-    settings["data"] = str(new)
-    _save_settings(settings)
-    configgen.sync_data_paths()
-    if was_running:
-        process.start()
+    try:
+        paths.ensure_dirs()
+        settings = dict(old_settings)
+        settings["data"] = str(new)
+        paths.save_settings(settings)
+        configgen.sync_data_paths()
+        if was_running and not process.start():
+            _rollback("the stack did not restart on the new data folder")
+    except (OSError, ValueError, shutil.Error) as e:
+        _rollback(getattr(e, "strerror", None) or e)
     return "Data folder: {} (moved {} item(s), stack {})".format(
         new, moved, "restarted" if was_running else "stopped")
 
