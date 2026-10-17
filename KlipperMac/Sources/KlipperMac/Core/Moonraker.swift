@@ -21,6 +21,25 @@ struct PrinterStatus: Equatable {
     var hotend: Temp?
     var bed: Temp?
     var position: Position?
+
+    var connectivityLabel: String {
+        connected ? "connected (\(klippyState))" : "not connected (\(klippyState))"
+    }
+
+    var readinessNote: String? {
+        let state = klippyState.lowercased()
+        if connected && state == "ready" { return nil }
+        switch state {
+        case "startup":
+            return "Klippy is still starting up. The stack can be running before the printer is actually ready."
+        case "error":
+            return "Klippy reported an error. Check the printer message below or the logs."
+        case "shutdown":
+            return "Klippy is shut down and needs a restart or firmware recovery."
+        default:
+            return connected ? "Klippy is connected but not ready." : nil
+        }
+    }
 }
 
 enum Moonraker {

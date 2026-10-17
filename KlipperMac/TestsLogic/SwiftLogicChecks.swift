@@ -6,6 +6,7 @@ enum SwiftLogicChecks {
         testSerialReportDecoder()
         testMoonrakerParsesVirtualSDcardProgress()
         testMoonrakerToleratesPartialQuery()
+        testPrinterStatusReadinessNotes()
         testStackSnapshotOverall()
         print("swift logic checks passed")
     }
@@ -89,6 +90,26 @@ enum SwiftLogicChecks {
         expect(status?.connected == false, "partial query should keep info fields")
         expect(status?.progress == nil, "missing virtual_sdcard should leave progress nil")
         expect(status?.position == nil, "missing gcode_move should leave position nil")
+    }
+
+    private static func testPrinterStatusReadinessNotes() {
+        let ready = PrinterStatus(connected: true, klippyState: "ready")
+        expect(ready.connectivityLabel == "connected (ready)",
+               "ready printer should describe connected ready state")
+        expect(ready.readinessNote == nil,
+               "ready printer should not show a degraded note")
+
+        let startup = PrinterStatus(connected: false, klippyState: "startup")
+        expect(startup.readinessNote?.contains("starting up") == true,
+               "startup printer should explain that the stack can be running first")
+
+        let error = PrinterStatus(connected: false, klippyState: "error")
+        expect(error.readinessNote?.contains("reported an error") == true,
+               "error printer should show a stronger degraded note")
+
+        let connectedButPaused = PrinterStatus(connected: true, klippyState: "paused")
+        expect(connectedButPaused.readinessNote == "Klippy is connected but not ready.",
+               "non-ready connected printer should still show a degraded note")
     }
 
     private static func testStackSnapshotOverall() {

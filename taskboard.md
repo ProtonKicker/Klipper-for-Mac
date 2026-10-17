@@ -48,6 +48,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Fixed the per-MCU live probe tests to reload the real install, removing the last artificial skips from `make test-live`
 - [x] Added a direct `swiftc` logic harness so GUI parser/state checks run in QA even while `swift test` is blocked on this Mac
 - [x] Fixed the Swift Moonraker parser to read print progress from `virtual_sdcard`, which is where the live API actually serves it
+- [x] Added a clearer degraded-state cue in the GUI when klippy is in `startup` / `error` / `shutdown` instead of just "running"
 
 ## Landed Fixes
 
@@ -132,6 +133,10 @@ Continue the robustness-testing loop from the saved transcript:
 20. `scripts/qa/fast.sh`
    - run the new direct Swift logic checks as part of the existing Swift step
 
+21. `KlipperMac/Sources/KlipperMac/Views/DashboardView.swift`
+   - show an explicit warning note when the printer pane sees `startup`, `error`, or other non-ready klippy states
+   - stop making a merely-running stack read as a healthy printer
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -215,6 +220,7 @@ Continue the robustness-testing loop from the saved transcript:
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
   - stack snapshot overall-state checks
+  - printer degraded-state note checks for `startup`, `error`, and non-ready connected states
 
 ## Verification Snapshot
 
@@ -253,6 +259,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `3 passed` in `tests/climcu/test_live_mcu_probe.py`
 - direct Swift logic harness:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+- app-side degraded-state cue:
+  - printer pane now shows a warning note for non-ready klippy states instead of only `connected/not connected (...)`
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`

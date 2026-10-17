@@ -158,9 +158,16 @@ struct DashboardView: View {
     @ViewBuilder private var printerSection: some View {
         if let p = model.printer {
             Section("Printer") {
-                LabeledContent("Klipper",
-                               value: p.connected ? "connected (\(p.klippyState))"
-                                                  : "not connected (\(p.klippyState))")
+                LabeledContent("Klipper", value: p.connectivityLabel)
+                if let note = p.readinessNote {
+                    Label {
+                        Text(note)
+                    } icon: {
+                        FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
                 if let st = p.printState {
                     LabeledContent("State", value: st.capitalized)
                 }
