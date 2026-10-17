@@ -130,6 +130,19 @@ def test_selftest_child_env_points_only_at_the_sandbox(stack, monkeypatch):
     assert stack.paths.APP_HOME == stack.home
 
 
+def test_selftest_warns_cleanly_when_the_stack_is_stopped(stack, monkeypatch,
+                                                          capsys):
+    fake = FakeSubprocess(returncode=1)
+    monkeypatch.setattr(stack.cli, "subprocess", fake)
+    monkeypatch.setattr(stack.cli.process, "running", lambda: {})
+    with pytest.raises(SystemExit) as exc:
+        stack.cli.cmd_selftest(argparse.Namespace())
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "stack appears stopped" in out
+    assert len(fake.calls) == 1
+
+
 # --------------------------------------------------------------------------
 # cmd_logs: missing logs, hostile inputs, exit status
 # --------------------------------------------------------------------------
@@ -285,4 +298,3 @@ def test_selftest_never_opens_a_socket_in_the_cli_process(stack, monkeypatch):
     monkeypatch.setattr(socket_module, "socket", guarded)
     monkeypatch.setattr(stack.cli, "subprocess", FakeSubprocess(returncode=0))
     stack.cli.cmd_selftest(argparse.Namespace())
-

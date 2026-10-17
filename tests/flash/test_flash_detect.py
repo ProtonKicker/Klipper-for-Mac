@@ -101,6 +101,7 @@ def test_a_board_running_klipper_is_reported_as_the_app(fstack, uf2bytes):
     assert row["vidpid"] == "1d50:614e"
     assert row["product"] == "rp2040"
     assert row["key"].startswith("usb:")
+    assert "flash probe --port /dev/cu.usbmodem14101" in row["hint"]
 
 
 def test_a_node_without_a_usb_identity_is_reported_as_unknown(fstack):
@@ -292,4 +293,3 @@ def test_the_bootloader_instructions_survive_in_the_empty_report(fstack):
     text = "\n".join(lines)
     assert "No board found" in text
     assert "Hold the BOOTSEL button." in text
-

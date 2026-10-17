@@ -2584,6 +2584,14 @@ def cmd_selftest(args):
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = repo_root
     try:
+        running = process.running() or {}
+    except Exception:
+        running = {}
+    if not any(running.get(name) for name in ("klipper", "moonraker",
+                                              "web_mainsail", "web_fluidd")):
+        print("[i]  stack appears stopped: selftest will report connection "
+              "failures until `klipperformac up`.", flush=True)
+    try:
         code = subprocess.call([str(paths.VENV_PY), "-m",
                                 "klipperformac.tests.selftest"], env=env)
     except OSError as e:

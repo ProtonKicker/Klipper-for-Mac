@@ -1473,7 +1473,8 @@ def classify_targets(ports, usb, volumes, claimed=None):
         path = str(row.get("path") or "")
         vidpid = _norm_vidpid(row)
         state, action, hint = "app", "flash uf2 (BOOTSEL) or flash serial", \
-            "running firmware (Klipper USB-CDC class)"
+            ("USB-CDC runtime device; use `klipperformac flash probe --port "
+             "{}` to confirm identify_response".format(path or "<port>"))
         if not vidpid:
             # No USB identity behind the node: a Bluetooth RFCOMM port, an
             # Apple IR stack, a virtual serial. Claiming "running firmware"

@@ -302,11 +302,14 @@ final class AppModel: ObservableObject {
             let r = try await CLIRunner.shared.run(["serial", "--json"],
                                                    timeout: CLITimeout.serialProbe)
             guard let report = SerialReportDecoder.decode(r.output) else {
-                // An old CLI writes "unrecognized arguments: --json" and exits 2.
-                // Remember that instead of re-asking every tick: the merged
-                // stdout+stderr of the probe is what tells the two apart.
-                serialJSONSupported = false
-                return .legacy
+                // Old CLIs reject `--json` at argv parse time; a timeout or a
+                // transient mixed-output decode miss is not the same thing and
+                // should keep the last honest pane instead of downgrading it.
+                if SerialReportDecoder.looksLikeLegacyCLI(r.output, exitCode: r.exit) {
+                    serialJSONSupported = false
+                    return .legacy
+                }
+                return .keep
             }
             serialJSONSupported = true
             return .report(report)

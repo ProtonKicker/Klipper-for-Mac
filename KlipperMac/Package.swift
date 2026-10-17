@@ -27,6 +27,11 @@ let package = Package(
                     "-Xlinker", camInfoPlist,
                 ])
             ]
+        ),
+        .testTarget(
+            name: "KlipperMacTests",
+            dependencies: ["KlipperMac"],
+            path: "Tests/KlipperMacTests"
         )
     ]
 )

@@ -257,6 +257,23 @@ enum SerialReportDecoder {
         return SerialReport(mcus: rows, single: single)
     }
 
+    /// Old CLIs reject `serial --json` at argument parsing time. A transient
+    /// timeout or mixed stderr noise is different: the app should keep the last
+    /// honest answer instead of downgrading the whole pane to "legacy".
+    static func looksLikeLegacyCLI(_ output: String, exitCode: Int32? = nil) -> Bool {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let lower = trimmed.lowercased()
+        if lower.contains("unrecognized arguments: --json")
+            || lower.contains("no such option: --json")
+            || lower.contains("unknown option: --json")
+        { return true }
+        if let exitCode, exitCode == 2, lower.contains("usage:"),
+           lower.contains("serial"), lower.contains("--json")
+        { return true }
+        return false
+    }
+
     // MARK: - envelope
 
     /// stdout and stderr share one pipe in CLIRunner, so the JSON can arrive

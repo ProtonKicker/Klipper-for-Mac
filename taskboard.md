@@ -37,6 +37,9 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added offline regression coverage for `up`/`down`/`restart` lifecycle edge branches and `_wait_ready()` timeout diagnostics
 - [x] Hardened `data --set` relocation so post-move failures roll back files, settings, and the previously running stack
 - [x] Hardened config path sync so hand-edited but valid `[virtual_sdcard]` and `[server]` sections still get repaired safely
+- [x] Made `flash detect` stop overstating USB-CDC runtime nodes and point directly at `flash probe` for a real handshake check
+- [x] Made `selftest` warn cleanly when the stack is stopped before the connection failures scroll by
+- [x] Added the first native Swift package test target for the serial JSON decoder / legacy-CLI distinction
 
 ## Landed Fixes
 
@@ -76,6 +79,25 @@ Continue the robustness-testing loop from the saved transcript:
    - keep `sync_virtual_sdcard()` working when `path:` is not the first key or was edited away
    - keep `sync_moonraker_conf()` scoped to `[server]` so unrelated `klippy_uds_address:` keys survive unchanged
    - restore missing `[server]` keys instead of silently leaving a half-pinned Moonraker config behind
+
+9. `klipperformac/flash.py`
+   - make `flash detect` describe USB-CDC runtime nodes as a runtime hint, not as proof of a living Klipper handshake
+   - point the user at `klipperformac flash probe --port ...` when the stack is down and the next question is whether `identify_response` works
+
+10. `klipperformac/cli.py`
+   - print an early `selftest` advisory when the stack appears stopped so a wall of `Connection refused` lines is less opaque
+   - flush that advisory before spawning the child so the hint arrives before the failures it explains
+
+11. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
+   - add a `looksLikeLegacyCLI(...)` helper so the app only caches "legacy CLI" on an actual `--json` parser rejection
+   - keep transient garbage / mixed stderr from permanently hiding the multi-MCU pane
+
+12. `KlipperMac/Sources/KlipperMac/Model/AppModel.swift`
+   - stop treating every undecodable `serial --json` output as proof the CLI is too old
+   - keep the last honest multi-MCU report on transient probe noise instead of downgrading to the single-board fallback
+
+13. `KlipperMac/Package.swift`
+   - add the first Swift package test target (`KlipperMacTests`) so app-side decoder/runtime seams can be exercised natively
 
 ## Tests Added
 
@@ -125,6 +147,18 @@ Continue the robustness-testing loop from the saved transcript:
   - only `[server].klippy_uds_address` is rewritten
   - missing `[server]` keys are restored during sync
 
+- `tests/flash/test_flash_detect.py`
+  - runtime serial nodes now direct the user to `flash probe --port ...` instead of claiming a live handshake
+
+- `tests/deep/test_clmisc_selftest_logs.py`
+  - stopped-stack `selftest` prints a clean advisory before the child failure output
+
+- `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
+  - pinned fixture decode
+  - JSON-with-preamble decode
+  - legacy CLI rejection detection
+  - transient garbage stays non-legacy
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -142,10 +176,18 @@ Continue the robustness-testing loop from the saved transcript:
 - built through product command:
   - [x] `klipperformac flash build-rp2040`
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-- `make qa-full` now passes at `3110 passed, 25 deselected`
+- `make qa-full` now passes at `3111 passed, 25 deselected`
 - focused config/path regressions:
   - `107 passed` across `tests/test_configgen_lan.py`, `tests/test_configgen_webcam.py`, `tests/test_configgen_paths.py`, and `tests/deep/test_clmisc_data_ui.py`
   - `9 passed` in `tests/regress/test_i_02_generated_xheaders_pin.py`
+- focused flash/selftest regressions:
+  - `62 passed` across `tests/flash/test_flash_detect.py`, `tests/deep/test_clmisc_selftest_logs.py`, `tests/climcu/test_mcu_runtime_report.py`, and `tests/flash/test_flash_probe.py`
+  - `30 passed` across the selftest-related deep/runtime suites after the output-order flush tweak
+- `make qa-fast` -> PASS after the latest Python + Swift edits
+- `./bin/klipperformac flash detect` now says:
+  - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
+- `./bin/klipperformac selftest` with the stack down now starts with:
+  - `[i]  stack appears stopped: selftest will report connection failures until \`klipperformac up\`.`
 - `klipperformac flash doctor` now reports:
   - embedded toolchain path
   - cached cask package path
@@ -154,6 +196,9 @@ Continue the robustness-testing loop from the saved transcript:
   - `[ok] upstream checkouts pristine`
   - `[ok] c_helper builds with compat shims`
   - `[i] host scheduling posture: klippy not running`
+- `swiftc -parse` on the touched Swift files -> PASS
+- `swift test` is currently blocked on this Mac by the local Command Line Tools install:
+  - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
 
 ## Live Tier Status
 
@@ -206,6 +251,8 @@ Evidence:
       - `./bin/klipperformac doctor`
       - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live`
 - [ ] If more GUI robustness work is wanted, add a real Swift test target or UITest target for the multi-MCU pane and CLI timeout behavior
+- [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
+- [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 
 ## Ground Rules
 
