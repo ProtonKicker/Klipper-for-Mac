@@ -50,6 +50,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Fixed the Swift Moonraker parser to read print progress from `virtual_sdcard`, which is where the live API actually serves it
 - [x] Added a clearer degraded-state cue in the GUI when klippy is in `startup` / `error` / `shutdown` instead of just "running"
 - [x] Added a stack-level printer warning so the top of the dashboard also reflects non-ready klippy states, not only the printer pane
+- [x] Added a live firmware-version agreement test that compares `/printer/info` against a direct `flash probe` handshake and waits for Moonraker to return after probe-driven restarts
 
 ## Landed Fixes
 
@@ -213,6 +214,7 @@ Continue the robustness-testing loop from the saved transcript:
 - `tests/flash/test_flash_live_readonly.py`
   - live `flash probe` handshake against the real bench board while the stack is temporarily down
   - stack restore in `finally` so the rest of the live tier still runs
+  - live firmware-version agreement check between `/printer/info` and the direct serial `flash probe` handshake
 
 - `tests/flash/test_flash_detect.py`
   - dedupe a single BOOTSEL volume plus a single BOOTSEL USB device into one target
@@ -258,9 +260,9 @@ Continue the robustness-testing loop from the saved transcript:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
 - live flash readonly tier:
-  - `6 passed` in `tests/flash/test_flash_live_readonly.py`
+  - `7 passed` in `tests/flash/test_flash_live_readonly.py`
 - focused flash detect/probe/live regressions:
-  - `38 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
+  - `39 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
 - live per-MCU probe tier:
   - `3 passed` in `tests/climcu/test_live_mcu_probe.py`
 - direct Swift logic harness:
@@ -294,7 +296,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac status` -> `klippy ready`
   - `./bin/klipperformac doctor` -> PASS with `[ok] klipper state: ready`
   - `./bin/klipperformac selftest` -> PASS
-  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `26 passed`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `27 passed`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -304,7 +306,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 26 passed
+- 27 passed
 
 ## Live Bench Notes
 

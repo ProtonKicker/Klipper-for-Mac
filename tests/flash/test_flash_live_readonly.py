@@ -13,7 +13,11 @@ matter on the real machine:
 """
 import hashlib
 import importlib
+import json
 import os
+import time
+import urllib.request
+import urllib.error
 
 import pytest
 
@@ -68,6 +72,20 @@ def _volume_state():
             entries = ["<unreadable>"]
         out[name] = entries
     return out
+
+
+def _printer_info(port, timeout=20.0):
+    """Moonraker's /printer/info once it is actually answering, or None."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(
+                    "http://localhost:{}/printer/info".format(port),
+                    timeout=3) as response:
+                return json.loads(response.read().decode())
+        except urllib.error.URLError:
+            time.sleep(0.5)
+    return None
 
 
 def test_detect_reports_the_real_board_without_changing_anything(
@@ -162,3 +180,36 @@ def test_probe_reads_the_real_bench_board_when_the_stack_is_down(real_home):
     finally:
         if was_up:
             assert process.start(), "could not restart the stack after flash probe"
+            assert _printer_info(real_home.paths.MOONRAKER_PORT) is not None, \
+                "moonraker did not come back after flash probe"
+
+
+def test_probe_version_matches_the_running_stacks_firmware(real_home):
+    """The board the direct serial probe sees should be the board klippy says it
+    connected to: capture /printer/info while the stack is up, then stop the
+    stack, probe the serial link directly, and compare the firmware version."""
+    flash = real_home.flash
+    process = real_home.process
+    if not process.running():
+        pytest.skip("the stack is down; need a running klippy for version compare")
+    info = _printer_info(real_home.paths.MOONRAKER_PORT)
+    if info is None:
+        pytest.skip("/printer/info is not answering on this bench right now")
+    version = ((info or {}).get("result") or {}).get("software_version")
+    if not version:
+        pytest.skip("/printer/info did not report a software_version")
+    report = flash.detect_boards()
+    rows = [t for t in report["targets"]
+            if t.get("kind") == "serial" and t.get("path", "").startswith("/dev/cu.")]
+    if not rows:
+        pytest.skip("no serial board is present to probe")
+    port = rows[0]["path"]
+    assert process.stop(), "could not stop the stack before flash probe"
+    try:
+        probe = flash.probe_report(port)
+        assert probe["ok"] is True, probe
+        assert probe.get("version") == version, (probe, version)
+    finally:
+        assert process.start(), "could not restart the stack after flash probe"
+        assert _printer_info(real_home.paths.MOONRAKER_PORT) is not None, \
+            "moonraker did not come back after version comparison probe"
