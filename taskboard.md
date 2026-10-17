@@ -60,6 +60,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted toast/message shaping into a pure Swift helper and hardened blank/whitespace camera feedback so success toasts do not disappear
 - [x] Extracted banner severity/title and status-badge text/tone into a pure Swift presentation helper and covered them in the direct harness plus future SwiftPM tests
 - [x] Extracted warning-row and progress-label presentation into the pure Swift feedback layer so blank warnings disappear and out-of-range progress labels stay aligned with the clamped progress bar
+- [x] Extracted per-MCU row footer/picker presentation into the core MCU model so the dashboard's CAN/fixed, bad-section, and picker-help rules are testable without SwiftUI
 
 ## Landed Fixes
 
@@ -190,6 +191,9 @@ Continue the robustness-testing loop from the saved transcript:
 32. `KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift`
    - extract inline warning-row and progress-label presentation so the dashboard can clamp percentage labels and suppress blank warning rows consistently
 
+33. `KlipperMac/Sources/KlipperMac/Core/McuSerial.swift`
+   - extract per-row picker label, picker help, and footer presentation so the dashboard can render MCU row guidance from model policy instead of hard-coded view strings
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -291,6 +295,9 @@ Continue the robustness-testing loop from the saved transcript:
   - future SwiftPM coverage for banner title/severity and status-badge text/tone mapping
   - future SwiftPM coverage for inline warning trimming and clamped progress label presentation
 
+- `KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift`
+  - future SwiftPM coverage for per-MCU row picker/footer presentation policy
+
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
   - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
@@ -351,6 +358,9 @@ Continue the robustness-testing loop from the saved transcript:
 - focused warning/progress presentation verification:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift KlipperMac/Sources/KlipperMac/Views/DashboardView.swift KlipperMac/Sources/KlipperMac/Views/Components.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/AppFeedbackTests.swift` -> PASS
+- focused MCU row presentation verification:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift KlipperMac/Sources/KlipperMac/Core/McuSerial.swift KlipperMac/Sources/KlipperMac/Views/DashboardView.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/SerialReportDecoderTests.swift` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -436,6 +446,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-fast` -> PASS
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - future SwiftPM warning/progress tests parse cleanly, but `swift test --package-path KlipperMac` is still blocked by the machine toolchain state
+- after the MCU row presentation extraction:
+  - `make qa-fast` -> PASS
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - future SwiftPM MCU row presentation tests parse cleanly, but `swift test --package-path KlipperMac` is still blocked by the machine toolchain state
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -468,7 +482,7 @@ Evidence:
 ## Next Suggested Moves
 
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
-- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining UI presentation case: layout-level warning row rendering in SwiftUI
+- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining UI presentation case: layout-level rendering in SwiftUI (warning rows, pills, and badge spacing)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 

@@ -145,6 +145,26 @@ enum SwiftLogicChecks {
                "progress presentation should clamp low values")
         expect(AppFeedback.progressPresentation(nil) == nil,
                "missing progress should not render")
+
+        let report = SerialReportDecoder.decode(SerialReportDecoder.contractFixture)
+        let rows = report?.mcus ?? []
+        let badSection = rows.first { $0.mcu == " board" }
+        expect(badSection?.pickerStatusLabel == nil,
+               "bad section names should not show a CAN/fixed label")
+        expect(badSection?.footerPresentation
+               == InlineWarningPresentation(message: "name cannot be set from here — edit printer.cfg",
+                                            tone: .warning),
+               "bad section names should surface a warning footer")
+
+        let fixed = rows.first { $0.mcu == "rpi" }
+        expect(fixed?.pickerStatusLabel == "CAN / fixed",
+               "non-USB-configured rows should show the fixed/CAN label")
+        expect(fixed?.footerPresentation
+               == InlineWarningPresentation(message: "set here in printer.cfg, not from a USB picker",
+                                            tone: .neutral),
+               "non-USB-configured rows should explain the read-only picker")
+        expect(fixed?.pickerHelpText.contains(fixed?.section ?? "") == true,
+               "picker help should keep the section context")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

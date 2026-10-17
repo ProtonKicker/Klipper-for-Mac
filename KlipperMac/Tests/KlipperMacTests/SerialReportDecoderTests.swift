@@ -57,4 +57,24 @@ final class SerialReportDecoderTests: XCTestCase {
         XCTAssertEqual(SerialProbePolicy.classify(output: keep, exitCode: 2),
                        .keep)
     }
+
+    func testMcuRowPresentationPolicyExposesFooterAndPickerHints() {
+        let report = SerialReportDecoder.decode(SerialReportDecoder.contractFixture)
+        let rows = report?.mcus ?? []
+
+        let badSection = rows.first { $0.mcu == " board" }
+        XCTAssertNil(badSection?.pickerStatusLabel)
+        XCTAssertEqual(badSection?.footerPresentation,
+                       InlineWarningPresentation(
+                        message: "name cannot be set from here — edit printer.cfg",
+                        tone: .warning))
+
+        let fixed = rows.first { $0.mcu == "rpi" }
+        XCTAssertEqual(fixed?.pickerStatusLabel, "CAN / fixed")
+        XCTAssertEqual(fixed?.footerPresentation,
+                       InlineWarningPresentation(
+                        message: "set here in printer.cfg, not from a USB picker",
+                        tone: .neutral))
+        XCTAssertTrue(fixed?.pickerHelpText.contains(fixed?.section ?? "") == true)
+    }
 }

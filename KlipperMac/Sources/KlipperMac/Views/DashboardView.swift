@@ -367,8 +367,8 @@ private struct McuSerialRow: View {
                 Spacer(minLength: 8)
                 if row.offersPortPicker {
                     portPicker
-                } else if row.isAddressable {
-                    Text("CAN / fixed")
+                } else if let status = row.pickerStatusLabel {
+                    Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .help("This row is configured through a non-USB identity, "
@@ -390,12 +390,10 @@ private struct McuSerialRow: View {
                 } else {
                     Text(verbatim: row.identityLine)
                 }
-                if !row.isAddressable {
-                    Text("name cannot be set from here — edit printer.cfg")
-                        .foregroundStyle(FlatPalette.amber)
-                } else if !row.offersPortPicker {
-                    Text("set here in printer.cfg, not from a USB picker")
-                        .foregroundStyle(.secondary)
+                if let footer = row.footerPresentation {
+                    Text(footer.message)
+                        .foregroundStyle(footer.tone == .warning
+                                         ? FlatPalette.amber : .secondary)
                 }
             }
             .font(.caption)
@@ -422,10 +420,7 @@ private struct McuSerialRow: View {
         .labelsHidden()
         .frame(maxWidth: 240)
         .disabled(model.busy || !row.isAddressable)
-        .help(row.isAddressable
-              ? "Writes the serial: line of \(row.section) in printer.cfg"
-              : "This section name is not one Klipper accepts, so nothing can "
-              + "be written to it — fix printer.cfg instead.")
+        .help(row.pickerHelpText)
         .onChange(of: chosen) { value in
             if !value.isEmpty {
                 let path = value

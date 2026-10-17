@@ -187,6 +187,31 @@ struct McuRow: Identifiable, Equatable {
     }
 
     var conflictLabel: String { conflict?.label ?? "check config" }
+
+    var pickerStatusLabel: String? {
+        if isAddressable && !offersPortPicker { return "CAN / fixed" }
+        return nil
+    }
+
+    var pickerHelpText: String {
+        isAddressable
+            ? "Writes the serial: line of \(section) in printer.cfg"
+            : "This section name is not one Klipper accepts, so nothing can be written to it — fix printer.cfg instead."
+    }
+
+    var footerPresentation: InlineWarningPresentation? {
+        if !isAddressable {
+            return InlineWarningPresentation(
+                message: "name cannot be set from here — edit printer.cfg",
+                tone: .warning)
+        }
+        if !offersPortPicker {
+            return InlineWarningPresentation(
+                message: "set here in printer.cfg, not from a USB picker",
+                tone: .neutral)
+        }
+        return nil
+    }
 }
 
 struct SerialReport: Equatable {
