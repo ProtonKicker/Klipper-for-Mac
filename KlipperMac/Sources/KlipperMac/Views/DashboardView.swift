@@ -74,6 +74,15 @@ struct DashboardView: View {
                 if model.busy { ProgressView().controlSize(.small) }
                 Spacer()
             }
+            if let warning = model.printer?.stackWarning {
+                Label {
+                    Text(warning)
+                } icon: {
+                    FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
             HStack(spacing: 8) {
                 Button {
                     Task { await model.startStack() }

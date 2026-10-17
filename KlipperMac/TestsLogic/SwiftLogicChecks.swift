@@ -102,14 +102,20 @@ enum SwiftLogicChecks {
         let startup = PrinterStatus(connected: false, klippyState: "startup")
         expect(startup.readinessNote?.contains("starting up") == true,
                "startup printer should explain that the stack can be running first")
+        expect(startup.stackWarning?.contains("Printer not ready (startup)") == true,
+               "startup printer should expose a stack-level degraded summary")
 
         let error = PrinterStatus(connected: false, klippyState: "error")
         expect(error.readinessNote?.contains("reported an error") == true,
                "error printer should show a stronger degraded note")
+        expect(error.stackWarning?.contains("Printer not ready (error)") == true,
+               "error printer should expose a stack-level degraded summary")
 
         let connectedButPaused = PrinterStatus(connected: true, klippyState: "paused")
         expect(connectedButPaused.readinessNote == "Klippy is connected but not ready.",
                "non-ready connected printer should still show a degraded note")
+        expect(connectedButPaused.stackWarning?.contains("Printer not ready (paused)") == true,
+               "connected non-ready printer should still warn at stack level")
     }
 
     private static func testStackSnapshotOverall() {

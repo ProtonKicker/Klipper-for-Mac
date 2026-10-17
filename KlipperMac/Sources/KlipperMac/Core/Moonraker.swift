@@ -40,6 +40,11 @@ struct PrinterStatus: Equatable {
             return connected ? "Klippy is connected but not ready." : nil
         }
     }
+
+    var stackWarning: String? {
+        guard let note = readinessNote else { return nil }
+        return "Printer not ready (\(klippyState)): \(note)"
+    }
 }
 
 enum Moonraker {
