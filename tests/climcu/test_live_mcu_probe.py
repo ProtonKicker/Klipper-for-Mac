@@ -67,6 +67,24 @@ def test_the_master_reports_the_firmware_klipper_is_running(real_stack):
     assert detail == version, (detail, version)
 
 
+def test_the_master_matches_the_installed_klipper_checkout(real_stack):
+    """The board on USB should be flashed with the firmware this install's
+    Klipper checkout expects, not just any firmware that happens to boot."""
+    if real_stack.cli._klippy_state(timeout=3) != "ready":
+        pytest.skip("klippy is not ready on this bench right now")
+    expected = real_stack.cli._klipper_checkout_version()
+    if not expected:
+        pytest.skip("could not read the installed Klipper checkout revision")
+    entries = [e for e in real_stack.cli._mcu_entries(
+        cfg_path=real_stack.paths.PRINTER_CFG)
+        if e.get("configured", True) and e.get("mcu") == "mcu"]
+    assert entries, "printer.cfg has no configured [mcu] section on this bench"
+    rows = real_stack.cli._mcu_runtime_rows(entries=entries)
+    lines = real_stack.cli._mcu_firmware_match_lines(rows=rows, expected=expected)
+    assert lines, "no firmware-match line was produced for the master MCU"
+    assert lines[0][2] == "match", lines
+
+
 def test_the_contract_from_the_real_bench_is_parseable(real_stack, capsys):
     """`serial --json` on the real machine: exit 0, one JSON document, and the
     bench's SKR Pico present under whatever node macOS gave it today."""
@@ -77,4 +95,4 @@ def test_the_contract_from_the_real_bench_is_parseable(real_stack, capsys):
     assert set(data) == {"mcus", "single"}
     master = [e for e in data["mcus"] if e["mcu"] == "mcu"]
     assert master, data
-    assert master[0]["identity"]["vid_pid"] in (None, "1d50:614e")
+    assert (master[0]["identity"] or {}).get("vid_pid") in (None, "1d50:614e")

@@ -1341,6 +1341,65 @@ def _mcu_runtime(name, timeout=MCU_PROBE_TIMEOUT):
     return "missing", "klippy has no firmware version for it (not loaded)"
 
 
+def _klipper_checkout_version(timeout=3.0):
+    """The installed Klipper checkout's short git revision, or None.
+
+    Read-only and cheap: one bounded `git rev-parse --short=7 HEAD` against the
+    pristine checkout this install is already using. A detached HEAD is fine;
+    an unreadable/non-git tree just means this extra consistency check is
+    skipped, never that doctor dies."""
+    if not paths.KLIPPER.is_dir():
+        return None
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(paths.KLIPPER), "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, timeout=timeout)
+    except Exception:
+        return None
+    if res.returncode != 0:
+        return None
+    text = res.stdout.decode(errors="replace").strip().lower()
+    return text if re.fullmatch(r"[0-9a-f]{7,40}", text) else None
+
+
+def _version_hex_candidates(text):
+    """Git-ish hex tokens found in a version string, normalised to lower-case."""
+    text = str(text or "").lower()
+    hits = set(re.findall(r"\b[0-9a-f]{7,40}\b", text))
+    hits.update(re.findall(r"-g([0-9a-f]{7,40})\b", text))
+    return sorted(hits)
+
+
+def _runtime_matches_checkout(runtime, expected):
+    """Whether an MCU version string names the installed Klipper revision."""
+    expected = str(expected or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", expected):
+        return False
+    for token in _version_hex_candidates(runtime):
+        if token.startswith(expected) or expected.startswith(token):
+            return True
+    return False
+
+
+def _mcu_runtime_rows(cfg_path=None, entries=None):
+    """Per-configured-MCU runtime rows shared by doctor/selftest helpers."""
+    entries = _mcu_entries(cfg_path=cfg_path) if entries is None else entries
+    rows = []
+    for e in entries:
+        if not e.get("configured", True):
+            continue
+        verdict, detail = _mcu_runtime(e["mcu"])
+        rows.append({
+            "entry": e,
+            "section": e["section"],
+            "mcu": e["mcu"],
+            "serial": e.get("serial"),
+            "verdict": verdict,
+            "detail": detail,
+        })
+    return rows
+
+
 def _mcu_lines_fail(lines, klippy):
     """Whether any per-MCU line should turn `doctor` red.
 
@@ -1354,15 +1413,22 @@ def _mcu_lines_fail(lines, klippy):
                for _tag, _text, verdict in (lines or []))
 
 
-def _mcu_report_lines(cfg_path=None, entries=None):
+def _mcu_firmware_lines_fail(lines, klippy):
+    """Whether a firmware-vs-checkout mismatch should turn doctor red."""
+    return any(verdict == "mismatch" and klippy == "ready"
+               for _tag, _text, verdict in (lines or []))
+
+
+def _mcu_report_lines(cfg_path=None, entries=None, rows=None):
     """[(tag, text)] one line per configured MCU, shared by doctor and selftest
     so the two can never disagree about the same printer."""
-    entries = _mcu_entries(cfg_path=cfg_path) if entries is None else entries
+    rows = _mcu_runtime_rows(cfg_path=cfg_path, entries=entries) \
+        if rows is None else rows
     lines = []
-    for e in entries:
-        if not e.get("configured", True):
-            continue
-        verdict, detail = _mcu_runtime(e["mcu"])
+    for row in rows:
+        e = row["entry"]
+        verdict = row["verdict"]
+        detail = row["detail"]
         if verdict == "ok":
             tag = "[ok] "
             text = "mcu {}: loaded by klippy (firmware {})".format(
@@ -1377,6 +1443,33 @@ def _mcu_report_lines(cfg_path=None, entries=None):
             tag = "[i]  "
             text = "mcu {}: runtime unknown ({})".format(e["section"], detail)
         lines.append((tag, text, verdict))
+    return lines
+
+
+def _mcu_firmware_match_lines(rows=None, expected=None):
+    """Extra lines that compare loaded MCU firmware to the installed checkout."""
+    rows = [] if rows is None else rows
+    expected = _klipper_checkout_version() if expected is None else expected
+    if not expected:
+        return []
+    lines = []
+    for row in rows:
+        if row["verdict"] != "ok":
+            continue
+        if _runtime_matches_checkout(row["detail"], expected):
+            lines.append((
+                "[ok] ",
+                "mcu {}: firmware matches installed klipper {}".format(
+                    row["section"], expected),
+                "match",
+            ))
+        else:
+            lines.append((
+                "[!] ",
+                "mcu {}: firmware {} does not match installed klipper {}".format(
+                    row["section"], row["detail"], expected),
+                "mismatch",
+            ))
     return lines
 
 
@@ -2607,7 +2700,10 @@ def cmd_selftest(args):
     # only: the exit code stays the child's answer, because a selftest that went
     # red over one unplugged toolboard would bury the three links that matter.
     try:
-        for tag, text, _verdict in _mcu_report_lines():
+        rows = _mcu_runtime_rows()
+        for tag, text, _verdict in _mcu_report_lines(rows=rows):
+            print(tag + text)
+        for tag, text, _verdict in _mcu_firmware_match_lines(rows=rows):
             print(tag + text)
     except Exception as e:
         print("[i]  mcu sections: not reported ({})".format(e))
@@ -3349,14 +3445,21 @@ def cmd_doctor(args):
         # see it. One read-only GET per section, 3 s timeout, and an MCU the
         # stack cannot describe is 'unknown', which never turns doctor red.
         try:
-            mcu_lines = _mcu_report_lines()
+            mcu_rows = _mcu_runtime_rows()
+            mcu_lines = _mcu_report_lines(rows=mcu_rows)
+            fw_lines = _mcu_firmware_match_lines(rows=mcu_rows)
         except Exception as e:
             # A doctor that stops printing halfway is worse than a missing line.
             print("[i]  mcu sections: not reported ({})".format(e))
             mcu_lines = []
+            fw_lines = []
         for tag, text, verdict in mcu_lines:
             print(tag + text)
+        for tag, text, verdict in fw_lines:
+            print(tag + text)
         if _mcu_lines_fail(mcu_lines, klippy):
+            ok = False
+        if _mcu_firmware_lines_fail(fw_lines, klippy):
             ok = False
     # Host scheduling posture: macOS gives klippy no real-time priority (no
     # SCHED_FIFO, negative nice is root-only), so the remaining risk is made

@@ -51,6 +51,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a clearer degraded-state cue in the GUI when klippy is in `startup` / `error` / `shutdown` instead of just "running"
 - [x] Added a stack-level printer warning so the top of the dashboard also reflects non-ready klippy states, not only the printer pane
 - [x] Added a live firmware-version agreement test that compares `/printer/info` against a direct `flash probe` handshake and waits for Moonraker to return after probe-driven restarts
+- [x] Added a doctor/selftest firmware-consistency check that compares the live MCU's reported firmware revision against the installed Klipper checkout revision
 
 ## Landed Fixes
 
@@ -143,6 +144,11 @@ Continue the robustness-testing loop from the saved transcript:
    - add a stack-level degraded summary (`stackWarning`) derived from the parsed klippy state
    - keep the app logic for "printer not ready" in one place instead of duplicating string rules in the view
 
+23. `klipperformac/cli.py`
+   - read the installed Klipper checkout's short git revision in a bounded, read-only way
+   - compare each loaded MCU firmware version against that installed checkout in `doctor` and `selftest`
+   - turn a live firmware/checkout mismatch into an explicit doctor failure instead of a manual log-reading task
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -222,6 +228,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 - `tests/climcu/test_live_mcu_probe.py`
   - reload the real install for live per-MCU probing instead of inheriting stale module state
+  - live master-MCU check that the board's firmware matches the installed Klipper checkout revision
 
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
@@ -256,6 +263,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `30 passed` across the selftest-related deep/runtime suites after the output-order flush tweak
 - focused probe identity/CLI regressions:
   - `54 passed` across `tests/flash/test_flash_probe.py`, `tests/flash/test_flash_cli.py`, and `tests/flash/test_flash_identity_keys.py`
+- focused MCU runtime/checkout regressions:
+  - `12 passed` in `tests/climcu/test_mcu_runtime_report.py`
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -264,7 +273,7 @@ Continue the robustness-testing loop from the saved transcript:
 - focused flash detect/probe/live regressions:
   - `39 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
 - live per-MCU probe tier:
-  - `3 passed` in `tests/climcu/test_live_mcu_probe.py`
+  - `4 passed` in `tests/climcu/test_live_mcu_probe.py`
 - direct Swift logic harness:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
 - app-side degraded-state cue:
@@ -297,6 +306,14 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac doctor` -> PASS with `[ok] klipper state: ready`
   - `./bin/klipperformac selftest` -> PASS
   - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `27 passed`
+- firmware consistency now surfaces directly in the CLI:
+  - `./bin/klipperformac doctor` -> `[ok] mcu [mcu]: firmware matches installed klipper 461c4e3`
+  - `./bin/klipperformac selftest` -> `[ok] mcu [mcu]: firmware matches installed klipper 461c4e3`
+- latest broad reruns after the firmware-consistency change:
+  - `make qa-full` -> `3122 passed, 28 deselected`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `27 passed, 1 skipped`
+  - skipped live case: `tests/flash/test_flash_live_readonly.py::test_the_bench_skr_picos_identity_matches_the_multi_mcu_spec`
+    because `detect.all_identities()` / `flash.identity_rows()` transiently returned `[]` even while the `/dev/cu.usbmodem142101` node stayed present
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -306,7 +323,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 27 passed
+- 27 passed, 1 skipped
 
 ## Live Bench Notes
 
@@ -315,17 +332,19 @@ Current best read:
 - the bench board now answers a direct Klipper handshake again
 - the stack is back to `klippy ready`
 - the remaining live work is now expansion/improvement work, not bench recovery
+- one remaining flaky seam is the transient loss of USB identity data from `ioreg` while the serial node itself stays present
 
 Evidence:
 
 - `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101 --json` now returns `ok: true`
 - `./bin/klipperformac status` now shows `klippy ready`
 - `./bin/klipperformac doctor` now passes with the stack up
-- `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes
+- `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes except for one identity-read skip
 
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
+- [ ] Investigate why `detect.all_identities()` / `flash.identity_rows()` can transiently return `[]` while the live `/dev/cu.usbmodem*` node still exists
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
 - [ ] Expand the direct Swift harness and future `swift test` coverage into more degraded-state cases (`klippy startup`, partial object trees, transient CLI noise)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac

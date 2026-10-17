@@ -160,3 +160,44 @@ def test_the_report_helper_is_the_same_one_selftest_prints(
     out = capsys.readouterr().out
     for tag, text, _verdict in expected:
         assert tag + text in out, (tag, text, out)
+
+
+def test_firmware_match_lines_confirm_the_installed_checkout(
+        cstack, attached, printer_cfg, facts, probe, monkeypatch):
+    printer_cfg(facts.CFG_SINGLE)
+    attached([facts.MASTER], [])
+    probe({"/printer/objects/query?mcu=mcu_version":
+           _answer("mcu", "v0.12.0-321-g461c4e3")})
+    monkeypatch.setattr(cstack.cli, "_klipper_checkout_version",
+                        lambda timeout=3.0: "461c4e3")
+    rows = cstack.cli._mcu_runtime_rows()
+    lines = cstack.cli._mcu_firmware_match_lines(rows=rows)
+    assert lines == [("[ok] ",
+                      "mcu [mcu]: firmware matches installed klipper 461c4e3",
+                      "match")]
+
+
+def test_firmware_match_lines_name_a_mismatch_out_loud(
+        cstack, attached, printer_cfg, facts, probe, monkeypatch):
+    printer_cfg(facts.CFG_SINGLE)
+    attached([facts.MASTER], [])
+    probe({"/printer/objects/query?mcu=mcu_version":
+           _answer("mcu", "oldbuild")})
+    monkeypatch.setattr(cstack.cli, "_klipper_checkout_version",
+                        lambda timeout=3.0: "461c4e3")
+    rows = cstack.cli._mcu_runtime_rows()
+    lines = cstack.cli._mcu_firmware_match_lines(rows=rows)
+    assert lines == [("[!] ",
+                      "mcu [mcu]: firmware oldbuild does not match installed klipper 461c4e3",
+                      "mismatch")]
+
+
+def test_firmware_mismatch_is_only_red_while_klippy_claims_ready(cstack):
+    mismatch = [("[!] ", "mcu [mcu]: firmware oldbuild does not match "
+                 "installed klipper 461c4e3", "mismatch")]
+    match = [("[ok] ", "mcu [mcu]: firmware matches installed klipper 461c4e3",
+              "match")]
+    assert cstack.cli._mcu_firmware_lines_fail(mismatch, "ready") is True
+    assert cstack.cli._mcu_firmware_lines_fail(mismatch, "startup") is False
+    assert cstack.cli._mcu_firmware_lines_fail(match, "ready") is False
+    assert cstack.cli._mcu_firmware_lines_fail([], "ready") is False
