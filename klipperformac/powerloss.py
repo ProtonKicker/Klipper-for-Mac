@@ -958,6 +958,14 @@ class KillTestHarness:
     def enable_journal(self):
         raise NotImplementedError
 
+    def wait_ready(self, timeout=90.0):
+        """The sequence may only start against a printer that is actually
+        at `ready`: the two live runs blocked because the MCU link was dead
+        (a hand-wiggled USB cable), and starting a print into that state
+        tests nothing. Offline fakes are ready by construction - the
+        default says so; LiveHarness polls the real endpoint."""
+        return True
+
     def write_test_gcode(self):
         raise NotImplementedError
 
@@ -1039,6 +1047,10 @@ def run_kill_sequence(harness, log=print, ticks=3, timeout=40.0):
     cfg = harness.enable_journal()
     if not check("journal switched on for the run", cfg.get("journal")):
         return bail("journal off")
+    if not check("klippy is ready before the sequence starts",
+                 harness.wait_ready(90.0)):
+        return bail("printer not ready - power-cycle the board (or fix "
+                    "the link) and run again")
     name = harness.write_test_gcode()
     if not check("G4-only test print written to gcodes/", name):
         return bail("test print not written")
@@ -1178,6 +1190,15 @@ class LiveHarness(KillTestHarness):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / TEST_GCODE_NAME).write_text(test_gcode_text())
         return TEST_GCODE_NAME
+
+    def wait_ready(self, timeout=90.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            info = _http_get("/printer/info", 2)
+            if info and info.get("state") == "ready":
+                return True
+            time.sleep(2)
+        return False
 
     def start_print(self, name):
         return _http_post("/printer/print/start?filename="
