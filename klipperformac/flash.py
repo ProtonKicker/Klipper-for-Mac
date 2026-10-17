@@ -1162,6 +1162,118 @@ def flash_serial(bin_path, port, chip="stm32f407", tool="auto", dry_run=False):
     return run_flasher(argv, dry_run, lines=lines)
 
 
+def probe_report(port, baud=250000, timeout=PROBE_TIMEOUT):
+    """Machine-readable result of a read-only Klipper serial handshake."""
+    requested = port
+    resolved, note = resolve_port(port)
+    if resolved is None:
+        return {"ok": False, "requested_port": requested, "resolved_port": None,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "No board now matches {} - replug it and check "
+                "`klipperformac flash detect`.".format(note or port)}
+    port = resolved
+    if not re.fullmatch(r"/dev/[\w./-]{1,64}", port):
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "--port {!r} is not a /dev/... serial port path, and "
+                "it is not an identity key either (usb:.../loc:... from "
+                "`flash detect --json`).".format(port)}
+    if not port_present(port):
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "{} does not exist. Serial ports right now: {}".format(
+                    port, ", ".join(p["path"] for p in detect.scan()) or "(none)")}
+    venv_py = str(paths.VENV_PY)
+    if not (os.path.isfile(venv_py) and os.access(venv_py, os.X_OK)):
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "No stack venv python at {} (run: klipperformac setup)"
+                .format(venv_py)}
+    klippy_dir = paths.KLIPPER / "klippy"
+    if not klippy_dir.is_dir():
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "No klippy sources at {} (run: klipperformac setup)"
+                .format(klippy_dir)}
+    code, out, err = _run([venv_py, "-c", _PROBE_RUNTIME_SRC,
+                           str(klippy_dir), port, str(baud), str(timeout)],
+                          timeout)
+    if code is None:
+        text = " ".join(str(err).split())
+        if "timed out" in text.lower():
+            return {"ok": False, "requested_port": requested,
+                    "resolved_port": port, "baud": int(baud),
+                    "timeout": int(timeout),
+                    "error": "timed out after {}s".format(timeout),
+                    "error_hint": "The USB device is present, but the firmware "
+                    "never answered identify_response on this link."}
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "Could not run the MCU probe: {}".format(text or err)}
+    try:
+        payload = json.loads((out or "").strip())
+    except Exception:
+        return {"ok": False, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "error": "MCU probe did not return JSON.",
+                "stdout": " ".join((out or "").split()) or "(empty)",
+                "stderr": " ".join((err or "").split()) or "(empty)"}
+    if payload.get("ok"):
+        return {"ok": True, "requested_port": requested, "resolved_port": port,
+                "baud": int(baud), "timeout": int(timeout),
+                "mcu": payload.get("mcu"), "clock_freq": payload.get("clock_freq"),
+                "version": payload.get("version"),
+                "build_versions": payload.get("build_versions")}
+    return {"ok": False, "requested_port": requested, "resolved_port": port,
+            "baud": int(baud), "timeout": int(timeout),
+            "error": payload.get("error") or payload.get("error_type")
+            or "unknown error",
+            "error_hint": "This usually means the board is not running a "
+            "compatible Klipper serial image, or the USB link resets before "
+            "identify_response."}
+
+
+def probe_lines(report, as_json=False):
+    if as_json:
+        return [json.dumps(report, indent=2, sort_keys=True)]
+    port = report.get("resolved_port") or report.get("requested_port") or "(unknown)"
+    if report.get("ok"):
+        lines = [
+            "MCU probe OK: {} answered directly.".format(port),
+            "  MCU:        {}".format(report.get("mcu") or "(unknown)"),
+            "  CLOCK_FREQ: {}".format(report.get("clock_freq")
+                                      if report.get("clock_freq") is not None
+                                      else "(unknown)"),
+        ]
+        version = report.get("version") or ""
+        if version:
+            lines.append("  Version:    {}".format(version))
+        builds = report.get("build_versions") or ""
+        if builds:
+            lines.append("  Build:      {}".format(builds))
+        return lines
+    if report.get("error") == "MCU probe did not return JSON.":
+        return ["MCU probe did not return JSON.",
+                "stdout: {}".format(report.get("stdout") or "(empty)"),
+                "stderr: {}".format(report.get("stderr") or "(empty)")]
+    if str(report.get("error") or "").startswith("Could not run the MCU probe:"):
+        return [report["error"]]
+    if "No board now matches" in str(report.get("error") or "") \
+            or "not a /dev/..." in str(report.get("error") or "") \
+            or "does not exist." in str(report.get("error") or "") \
+            or "No stack venv python" in str(report.get("error") or "") \
+            or "No klippy sources" in str(report.get("error") or ""):
+        return [report["error"]]
+    lines = [
+        "MCU probe failed: {} did not complete a Klipper handshake.".format(port),
+        "  error: {}".format(report.get("error") or "unknown error"),
+    ]
+    hint = report.get("error_hint") or ""
+    if hint:
+        lines.append("  " + hint)
+    return lines
+
+
 def probe_runtime(port, baud=250000, timeout=PROBE_TIMEOUT):
     """Read-only handshake with a Klipper MCU over its serial port.
 
@@ -1169,68 +1281,8 @@ def probe_runtime(port, baud=250000, timeout=PROBE_TIMEOUT):
     this command does. It is for the "stack is down, is this really a living
     Klipper MCU?" question that identity alone cannot answer.
     """
-    resolved, note = resolve_port(port)
-    if resolved is None:
-        return False, ["No board now matches {} - replug it and check "
-                       "`klipperformac flash detect`.".format(note or port)]
-    port = resolved
-    if not re.fullmatch(r"/dev/[\w./-]{1,64}", port):
-        return False, ["--port {!r} is not a /dev/... serial port path, and "
-                       "it is not an identity key either (usb:.../loc:... from "
-                       "`flash detect --json`).".format(port)]
-    if not port_present(port):
-        return False, ["{} does not exist. Serial ports right now: {}".format(
-            port, ", ".join(p["path"] for p in detect.scan()) or "(none)")]
-    venv_py = str(paths.VENV_PY)
-    if not (os.path.isfile(venv_py) and os.access(venv_py, os.X_OK)):
-        return False, ["No stack venv python at {} (run: klipperformac setup)"
-                       .format(venv_py)]
-    klippy_dir = paths.KLIPPER / "klippy"
-    if not klippy_dir.is_dir():
-        return False, ["No klippy sources at {} (run: klipperformac setup)"
-                       .format(klippy_dir)]
-    code, out, err = _run([venv_py, "-c", _PROBE_RUNTIME_SRC,
-                           str(klippy_dir), port, str(baud), str(timeout)],
-                          timeout)
-    if code is None:
-        text = " ".join(str(err).split())
-        if "timed out" in text.lower():
-            return False, [
-                "MCU probe failed: {} did not complete a Klipper handshake."
-                .format(port),
-                "  error: timed out after {}s".format(timeout),
-                "  The USB device is present, but the firmware never answered "
-                "identify_response on this link.",
-            ]
-        return False, ["Could not run the MCU probe: {}".format(text or err)]
-    try:
-        payload = json.loads((out or "").strip())
-    except Exception:
-        return False, ["MCU probe did not return JSON.",
-                       "stdout: {}".format(" ".join((out or "").split()) or "(empty)"),
-                       "stderr: {}".format(" ".join((err or "").split()) or "(empty)")]
-    if payload.get("ok"):
-        lines = [
-            "MCU probe OK: {} answered directly.".format(port),
-            "  MCU:        {}".format(payload.get("mcu") or "(unknown)"),
-            "  CLOCK_FREQ: {}".format(payload.get("clock_freq")
-                                      if payload.get("clock_freq") is not None
-                                      else "(unknown)"),
-        ]
-        version = payload.get("version") or ""
-        if version:
-            lines.append("  Version:    {}".format(version))
-        builds = payload.get("build_versions") or ""
-        if builds:
-            lines.append("  Build:      {}".format(builds))
-        return True, lines
-    return False, [
-        "MCU probe failed: {} did not complete a Klipper handshake.".format(port),
-        "  error: {}".format(payload.get("error") or payload.get("error_type")
-                             or "unknown error"),
-        "  This usually means the board is not running a compatible Klipper "
-        "serial image, or the USB link resets before identify_response.",
-    ]
+    report = probe_report(port, baud=baud, timeout=timeout)
+    return bool(report.get("ok")), probe_lines(report)
 
 
 # ---------------------------------------------------------------- enumeration
@@ -2117,10 +2169,12 @@ def dispatch(args):
         if not ok:
             _print(lines)
             return 1
-        ok, lines = probe_runtime(getattr(args, "port", None),
-                                  baud=getattr(args, "baud", None) or 250000,
-                                  timeout=getattr(args, "timeout", None)
-                                  or PROBE_TIMEOUT)
+        report = probe_report(getattr(args, "port", None),
+                              baud=getattr(args, "baud", None) or 250000,
+                              timeout=getattr(args, "timeout", None)
+                              or PROBE_TIMEOUT)
+        ok = bool(report.get("ok"))
+        lines = probe_lines(report, as_json=bool(getattr(args, "json", False)))
         _print(lines)
         return 0 if ok else 1
     if action == "build":
@@ -2218,6 +2272,8 @@ def add_parser(sub):
     pr.add_argument("--port", metavar="PATH", required=True,
                     help="/dev/cu.* port, or an identity key from "
                          "`flash detect --json`")
+    pr.add_argument("--json", action="store_true",
+                    help="one machine-readable object for bench automation")
     pr.add_argument("--baud", type=int, default=250000,
                     help="UART baud to try for the handshake (default 250000)")
     pr.add_argument("--timeout", type=int, default=PROBE_TIMEOUT,

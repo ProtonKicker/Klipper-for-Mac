@@ -1195,7 +1195,8 @@ class LiveHarness(KillTestHarness):
         deadline = time.time() + timeout
         while time.time() < deadline:
             info = _http_get("/printer/info", 2)
-            if info and info.get("state") == "ready":
+            state = ((info or {}).get("result") or {}).get("state")
+            if state == "ready":
                 return True
             time.sleep(2)
         return False

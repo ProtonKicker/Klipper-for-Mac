@@ -60,6 +60,8 @@ def test_cmd_flash_does_not_exit_on_success(fstack, monkeypatch):
 @pytest.mark.parametrize("argv,expect", [
     (["flash", "detect"], ("action", "detect")),
     (["flash", "detect", "--json"], ("json", True)),
+    (["flash", "probe", "--port", "usb:1d50:614e:5044506110A45B1C", "--json"],
+     ("json", True)),
     (["flash", "doctor"], ("action", "doctor")),
     (["flash", "status"], ("action", "status")),
     (["flash", "build", "--defconfig", "generic-bigtreetech-skr-pico-v1.0"

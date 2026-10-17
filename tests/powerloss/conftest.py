@@ -22,8 +22,11 @@ ALL_UP = ("klipper", "moonraker", "web_mainsail", "web_fluidd", "caffeinate")
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch, request):
     """Hard offline proof: any socket creation aborts the test."""
+    if request.node.get_closest_marker("live") is not None:
+        return
+
     def _boom(*args, **kwargs):
         raise AssertionError(
             "BUG IN TEST: the offline power-loss suite must not open a socket "

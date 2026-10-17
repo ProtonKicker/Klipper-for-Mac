@@ -51,3 +51,18 @@ def test_default_harness_is_ready_for_offline_machines():
     # a harness that never mentions wait_ready proceeds normally.
     assert powerloss.KillTestHarness.wait_ready(
         powerloss.KillTestHarness()) is True
+
+
+def test_live_harness_wait_ready_reads_moonrakers_nested_result(pl, monkeypatch):
+    responses = iter([
+        {"result": {"state": "startup"}},
+        {"result": {"state": "ready"}},
+    ])
+    sleeps = []
+    monkeypatch.setattr(pl.powerloss, "_http_get",
+                        lambda path, timeout=2: next(responses))
+    monkeypatch.setattr(pl.powerloss.time, "sleep",
+                        lambda seconds: sleeps.append(seconds))
+    harness = pl.powerloss.LiveHarness()
+    assert harness.wait_ready(timeout=5.0) is True
+    assert sleeps == [2]

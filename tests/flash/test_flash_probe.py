@@ -67,6 +67,32 @@ def test_probe_reports_a_successful_handshake(fstack):
     assert rec.ran(py.name)
 
 
+def test_probe_json_is_machine_readable(fstack):
+    _checkout(fstack)
+    py = fstack.paths.VENV_PY
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+    fstack.port_present(True)
+    fstack.use_recorder({py.name: (
+        0, json.dumps({
+            "ok": True,
+            "device": "/dev/cu.usbmodem14101",
+            "baud": 250000,
+            "mcu": "rp2040",
+            "clock_freq": 125000000,
+            "version": "v0.12.0-123",
+            "build_versions": "gcc: test",
+        }), "")})
+    report = fstack.flash.probe_report("/dev/cu.usbmodem14101")
+    text = fstack.flash.probe_lines(report, as_json=True)[0]
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["resolved_port"] == "/dev/cu.usbmodem14101"
+    assert data["mcu"] == "rp2040"
+    assert data["clock_freq"] == 125000000
+
+
 def test_probe_reports_a_failed_handshake_cleanly(fstack):
     _checkout(fstack)
     py = fstack.paths.VENV_PY
@@ -87,6 +113,56 @@ def test_probe_reports_a_failed_handshake_cleanly(fstack):
     assert not ok
     assert "did not complete a Klipper handshake" in text
     assert "Unable to connect to MCU" in text
+
+
+def test_probe_accepts_a_usb_identity_key(fstack, monkeypatch):
+    _checkout(fstack)
+    py = fstack.paths.VENV_PY
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+    fstack.port_present(True)
+    monkeypatch.setattr(
+        fstack.detect, "find_by_identity",
+        lambda vid_pid, serial=None: "/dev/cu.usbmodem14101"
+        if vid_pid == "1d50:614e" and serial == "5044506110A45B1C" else None)
+    monkeypatch.setattr(
+        fstack.detect, "all_identities",
+        lambda timeout=None: [{"path": "/dev/cu.usbmodem14101",
+                               "key": "usb:1d50:614e:5044506110A45B1C",
+                               "vid_pid": "1D50:614E",
+                               "serial": "5044506110A45B1C"}])
+    fstack.use_recorder({py.name: (
+        0, json.dumps({"ok": True, "mcu": "rp2040", "clock_freq": 125000000}),
+        "")})
+    ok, lines = fstack.flash.probe_runtime("usb:1d50:614e:5044506110A45B1C")
+    assert ok
+    assert "/dev/cu.usbmodem14101" in "\n".join(lines)
+
+
+def test_probe_accepts_a_location_identity_key(fstack, monkeypatch):
+    _checkout(fstack)
+    py = fstack.paths.VENV_PY
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("#!/bin/sh\n")
+    py.chmod(0o755)
+    fstack.port_present(True)
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("find_by_identity must not be called for loc:")
+
+    monkeypatch.setattr(fstack.detect, "find_by_identity", never)
+    monkeypatch.setattr(
+        fstack.detect, "all_identities",
+        lambda timeout=None: [{"path": "/dev/cu.URT0",
+                               "key": "loc:301989888",
+                               "location": "301989888"}])
+    fstack.use_recorder({py.name: (
+        0, json.dumps({"ok": True, "mcu": "stm32f103", "clock_freq": 72000000}),
+        "")})
+    ok, lines = fstack.flash.probe_runtime("loc:301989888")
+    assert ok
+    assert "/dev/cu.URT0" in "\n".join(lines)
 
 
 def test_probe_survives_non_json_helper_output(fstack):
@@ -125,3 +201,10 @@ def test_flash_help_lists_probe(fstack, capsys):
         fstack.cli.main(["flash", "--help"])
     assert exc.value.code == 0
     assert "probe" in capsys.readouterr().out
+
+
+def test_probe_help_lists_json(fstack, capsys):
+    with pytest.raises(SystemExit) as exc:
+        fstack.cli.main(["flash", "probe", "--help"])
+    assert exc.value.code == 0
+    assert "--json" in capsys.readouterr().out

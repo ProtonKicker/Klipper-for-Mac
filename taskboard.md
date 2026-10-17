@@ -40,6 +40,9 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Made `flash detect` stop overstating USB-CDC runtime nodes and point directly at `flash probe` for a real handshake check
 - [x] Made `selftest` warn cleanly when the stack is stopped before the connection failures scroll by
 - [x] Added the first native Swift package test target for the serial JSON decoder / legacy-CLI distinction
+- [x] Added `flash probe --json` plus identity-key coverage so bench automation can consume direct MCU handshake evidence
+- [x] Fixed the powerloss live-test harness/fixture path so the live tier can actually talk to Moonraker inside `tests/powerloss/`
+- [x] Recovered the live bench from "startup" to `klippy ready`, then re-ran doctor, selftest, and the full live tier
 
 ## Landed Fixes
 
@@ -98,6 +101,12 @@ Continue the robustness-testing loop from the saved transcript:
 
 13. `KlipperMac/Package.swift`
    - add the first Swift package test target (`KlipperMacTests`) so app-side decoder/runtime seams can be exercised natively
+
+14. `klipperformac/powerloss.py`
+   - fix `LiveHarness.wait_ready()` to read Moonraker's nested `/printer/info -> result.state` shape instead of looking for a top-level `state`
+
+15. `tests/powerloss/conftest.py`
+   - keep the offline `no_network` guard for the directory, but let `@pytest.mark.live` tests use real sockets
 
 ## Tests Added
 
@@ -159,6 +168,14 @@ Continue the robustness-testing loop from the saved transcript:
   - legacy CLI rejection detection
   - transient garbage stays non-legacy
 
+- `tests/flash/test_flash_probe.py`
+  - `flash probe --json` machine-readable output
+  - `probe` accepts `usb:` identity keys
+  - `probe` accepts `loc:` identity keys
+
+- `tests/powerloss/test_ready_precondition.py`
+  - `LiveHarness.wait_ready()` follows Moonraker's nested `/printer/info` payload
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -183,9 +200,19 @@ Continue the robustness-testing loop from the saved transcript:
 - focused flash/selftest regressions:
   - `62 passed` across `tests/flash/test_flash_detect.py`, `tests/deep/test_clmisc_selftest_logs.py`, `tests/climcu/test_mcu_runtime_report.py`, and `tests/flash/test_flash_probe.py`
   - `30 passed` across the selftest-related deep/runtime suites after the output-order flush tweak
+- focused probe identity/CLI regressions:
+  - `54 passed` across `tests/flash/test_flash_probe.py`, `tests/flash/test_flash_cli.py`, and `tests/flash/test_flash_identity_keys.py`
+- focused powerloss regressions:
+  - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
+  - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
+- `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101 --json` now reports:
+  - `ok: true`
+  - `mcu: rp2040`
+  - `clock_freq: 12000000`
+  - `version: 461c4e3`
 - `./bin/klipperformac selftest` with the stack down now starts with:
   - `[i]  stack appears stopped: selftest will report connection failures until \`klipperformac up\`.`
 - `klipperformac flash doctor` now reports:
@@ -196,6 +223,11 @@ Continue the robustness-testing loop from the saved transcript:
   - `[ok] upstream checkouts pristine`
   - `[ok] c_helper builds with compat shims`
   - `[i] host scheduling posture: klippy not running`
+- with the stack up again:
+  - `./bin/klipperformac status` -> `klippy ready`
+  - `./bin/klipperformac doctor` -> PASS with `[ok] klipper state: ready`
+  - `./bin/klipperformac selftest` -> PASS
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `22 passed, 3 skipped`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -204,53 +236,35 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 16 passed
-- 6 failed
+- 22 passed
 - 3 skipped
 
-Remaining live failures all share one bench-state problem:
+Current skips are limited to the per-MCU live probe file, which says:
 
-- `klippy` remains in `startup`
-- `/printer/info` never reaches `ready`
-- `/printer/objects/query?mcu` returns `{}` for `mcu`
-- `FIRMWARE_RESTART` does not recover the board to ready
-- powerloss live tests fail because they require a ready stack first
-- a direct port-level handshake now fails the same way even with the stack down
-- a host-driven RP2040 bootloader request also times out, so no automated flash
-  can proceed until the board is put into BOOTSEL physically
+- `no printer.cfg: the stack was never set up on this Mac`
 
-## Suspected Live Blocker
+## Live Bench Notes
 
 Current best read:
 
-- the app-side USB identity bug is fixed
-- the board is now identified correctly
-- the remaining issue is likely bench firmware / live MCU readiness, not the
-  serial identity layer
+- the bench board now answers a direct Klipper handshake again
+- the stack is back to `klippy ready`
+- the remaining live work is now expansion/improvement work, not bench recovery
 
 Evidence:
 
-- `./bin/klipperformac status` shows `klippy startup`
-- `klippy.log` shows repeated `mcu 'mcu': Unable to connect`
-- `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101` times out
-  waiting for `identify_response` even with klippy stopped
-- `./bin/klipperformac flash rp2040 --bin ... --port /dev/cu.usbmodem142101`
-  times out waiting for the bootloader, so the board does not honor the
-  upstream 1200-baud handoff on this bench
-- firmware build is no longer the blocker: a fresh RP2040 UF2 can now be built
-  and cached from the pinned upstream checkout on this Mac
+- `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101 --json` now returns `ok: true`
+- `./bin/klipperformac status` now shows `klippy ready`
+- `./bin/klipperformac doctor` now passes with the stack up
+- `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` now passes
 
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
-- [ ] Run read-only flash detection (`klipperformac flash detect`) and capture the board's current runtime/bootloader posture
-- [ ] Put the board into BOOTSEL physically, then run:
-      - `klipperformac flash uf2 --bin ~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-      - or `klipperformac flash rp2040 --bin ... --port ...` if a future board honors the handoff
-- [ ] If the board becomes ready, re-run:
-      - `./bin/klipperformac doctor`
-      - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live`
-- [ ] If more GUI robustness work is wanted, add a real Swift test target or UITest target for the multi-MCU pane and CLI timeout behavior
+- [ ] Add a live `flash probe` hardware test to the opt-in tier now that the bench handshake is healthy again
+- [ ] Decide whether to dedupe BOOTSEL volume + USB bootloader double-reporting in `flash detect`
+- [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
+- [ ] Expand the new Swift coverage into `StackSnapshot` / `Moonraker.status()` degraded-state cases and transient CLI noise
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 
