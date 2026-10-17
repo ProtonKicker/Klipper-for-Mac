@@ -9,6 +9,16 @@ final class AppFeedbackTests: XCTestCase {
                        400)
     }
 
+    func testBannerPresentationChoosesTitleAndToneFromSeverity() {
+        XCTAssertEqual(AppFeedback.bannerPresentation(message: "Saved", isError: false),
+                       BannerPresentation(title: "Done", message: "Saved",
+                                          tone: .positive))
+        XCTAssertEqual(AppFeedback.bannerPresentation(message: "Problem text", isError: true),
+                       BannerPresentation(title: "Problem", message: "Problem text",
+                                          tone: .warning))
+        XCTAssertNil(AppFeedback.bannerPresentation(message: nil, isError: false))
+    }
+
     func testFirstLineSkipsBlankAndWhitespaceOnlyLines() {
         let text = "\n   \n  first useful line \nsecond line"
         XCTAssertEqual(AppFeedback.firstLine(text), "first useful line")
@@ -23,5 +33,14 @@ final class AppFeedbackTests: XCTestCase {
         XCTAssertEqual(AppFeedback.camToast(action: "other",
                                             output: "\n \nline one\nline two"),
                        "line one")
+    }
+
+    func testStatusBadgePresentationMapsOverallStatesToTextAndTone() {
+        XCTAssertEqual(AppFeedback.statusBadgePresentation(overall: .running),
+                       StatusBadgePresentation(text: "Running", tone: .positive))
+        XCTAssertEqual(AppFeedback.statusBadgePresentation(overall: .notResponding),
+                       StatusBadgePresentation(text: "Not responding", tone: .warning))
+        XCTAssertEqual(AppFeedback.statusBadgePresentation(overall: .stopped),
+                       StatusBadgePresentation(text: "Stopped", tone: .neutral))
     }
 }

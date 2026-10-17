@@ -58,6 +58,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Extracted the app's serial-probe keep/legacy/report policy into a pure Swift helper and covered it in both the direct harness and future SwiftPM tests
 - [x] Fixed Swift `StackReader` to match Python's `boot_time: "unknown"` semantics and added direct/future Swift coverage for tracked-versus-stale stack records
 - [x] Extracted toast/message shaping into a pure Swift helper and hardened blank/whitespace camera feedback so success toasts do not disappear
+- [x] Extracted banner severity/title and status-badge text/tone into a pure Swift presentation helper and covered them in the direct harness plus future SwiftPM tests
 
 ## Landed Fixes
 
@@ -182,6 +183,9 @@ Continue the robustness-testing loop from the saved transcript:
    - extract banner/toast shaping into a pure helper so message behavior is testable without the whole app model
    - make blank snapshot output fall back to `Saved snapshot` instead of producing no visible toast
 
+31. `KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift`
+   - extract banner title/severity and status-badge text/tone mapping into a pure helper so UI presentation decisions are testable without a SwiftUI harness
+
 ## Tests Added
 
 - `tests/deep/test_process_start_stop.py`
@@ -280,6 +284,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 - `KlipperMac/Tests/KlipperMacTests/AppFeedbackTests.swift`
   - future SwiftPM coverage for banner trimming/truncation, first meaningful line selection, and camera toast fallbacks
+  - future SwiftPM coverage for banner title/severity and status-badge text/tone mapping
 
 - `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
   - serial JSON fixture + legacy detection checks
@@ -335,6 +340,9 @@ Continue the robustness-testing loop from the saved transcript:
 - focused app feedback verification:
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift KlipperMac/Sources/KlipperMac/Model/AppModel.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/AppFeedbackTests.swift` -> PASS
+- focused banner/status presentation verification:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `swiftc -parse KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift KlipperMac/Sources/KlipperMac/Views/Components.swift KlipperMac/Sources/KlipperMac/Model/AppModel.swift KlipperMac/TestsLogic/SwiftLogicChecks.swift KlipperMac/Tests/KlipperMacTests/AppFeedbackTests.swift` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
@@ -412,6 +420,10 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-fast` -> PASS
   - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
   - future SwiftPM AppFeedback tests parse cleanly, but `swift test --package-path KlipperMac` is still blocked by the machine toolchain state
+- after the banner/status presentation extraction:
+  - `make qa-fast` -> PASS
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - future SwiftPM presentation tests parse cleanly, but `swift test --package-path KlipperMac` is still blocked by the machine toolchain state
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -444,7 +456,7 @@ Evidence:
 ## Next Suggested Moves
 
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
-- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining UI presentation cases (warning row presentation and layout, banner severity/title rendering)
+- [ ] Expand the direct Swift harness and future `swift test` coverage into the remaining UI presentation cases (warning row presentation and layout)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 

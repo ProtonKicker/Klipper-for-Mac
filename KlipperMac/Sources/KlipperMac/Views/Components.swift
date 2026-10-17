@@ -4,15 +4,21 @@ struct StatusBadge: View {
     let overall: StackSnapshot.Overall
 
     var body: some View {
-        let color: Color = overall == .running ? .green
-            : (overall == .notResponding ? .orange : .secondary)
-        let text = overall == .running ? "Running"
-            : (overall == .notResponding ? "Not responding" : "Stopped")
+        let presentation = AppFeedback.statusBadgePresentation(overall: overall)
+        let color: Color
+        switch presentation.tone {
+        case .positive:
+            color = .green
+        case .warning:
+            color = .orange
+        case .neutral:
+            color = .secondary
+        }
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
-            Text(text)
+            Text(presentation.text)
                 .font(.callout.weight(.medium))
         }
         .foregroundStyle(.primary)
@@ -24,12 +30,16 @@ struct MessageBanner: View {
     @ObservedObject var notifier: Notifier
 
     var body: some View {
-        if let m = notifier.message {
+        if let banner = AppFeedback.bannerPresentation(message: notifier.message,
+                                                       isError: notifier.isError) {
+            let iconColor: Color = banner.tone == .warning ? FlatPalette.amber
+                                                            : FlatPalette.green
+            let iconKind: FlatIconKind = banner.tone == .warning ? .warning
+                                                                 : .check
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    FlatIcon(kind: notifier.isError ? .warning : .check, size: 14,
-                             color: notifier.isError ? FlatPalette.amber : FlatPalette.green)
-                    Text(notifier.isError ? "Problem" : "Done")
+                    FlatIcon(kind: iconKind, size: 14, color: iconColor)
+                    Text(banner.title)
                         .font(.caption.bold())
                     Spacer()
                     Button {
@@ -39,7 +49,7 @@ struct MessageBanner: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(m)
+                Text(banner.message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(6)

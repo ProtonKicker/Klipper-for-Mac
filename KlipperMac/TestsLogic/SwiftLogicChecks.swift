@@ -104,6 +104,28 @@ enum SwiftLogicChecks {
         expect(AppFeedback.camToast(action: "other", output: "\n  \nline one\nline two")
                == "line one",
                "generic camera actions should use the first meaningful line")
+
+        let successBanner = AppFeedback.bannerPresentation(message: "Saved", isError: false)
+        expect(successBanner == BannerPresentation(title: "Done", message: "Saved",
+                                                  tone: .positive),
+               "success banner should render with Done/positive")
+        let errorBanner = AppFeedback.bannerPresentation(message: "Problem text", isError: true)
+        expect(errorBanner == BannerPresentation(title: "Problem",
+                                                message: "Problem text",
+                                                tone: .warning),
+               "error banner should render with Problem/warning")
+        expect(AppFeedback.bannerPresentation(message: nil, isError: false) == nil,
+               "missing banner messages should not render")
+
+        expect(AppFeedback.statusBadgePresentation(overall: .running)
+               == StatusBadgePresentation(text: "Running", tone: .positive),
+               "running status badge should be positive")
+        expect(AppFeedback.statusBadgePresentation(overall: .notResponding)
+               == StatusBadgePresentation(text: "Not responding", tone: .warning),
+               "notResponding status badge should be warning")
+        expect(AppFeedback.statusBadgePresentation(overall: .stopped)
+               == StatusBadgePresentation(text: "Stopped", tone: .neutral),
+               "stopped status badge should be neutral")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {
