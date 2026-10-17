@@ -30,6 +30,7 @@ import types
 import pytest
 
 import klipperformac.proxy as proxymod
+from tests.proxy_testkit import start_server
 
 STACK_PORTS = frozenset({7125, 8080, 8081})
 UPSTREAM_SENTINEL = 4321
@@ -230,8 +231,7 @@ def capped(tmp_path):
     httpd = CappedServer(("127.0.0.1", 0),
                          lambda *a, **kw: proxymod.UIPandler(
                              *a, directory=str(docroot), **kw))
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
+    start_server(httpd)
     try:
         yield httpd, httpd.server_address[1], docroot
     finally:

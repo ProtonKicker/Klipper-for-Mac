@@ -71,6 +71,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a `make test-swiftpkg` entry point so the local Swift package-test/toolchain state can be checked directly
 - [x] Added a shared `fast_pytest.sh` helper plus `fast_profile.sh` / `make test-fast-profile` so fast-tier timing drift can be profiled without rebuilding the selector by hand
 - [x] Updated the fast-tier over-budget warning to point at the new profiling tool instead of a manual pytest recipe
+- [x] Added a shared proxy test helper that starts throwaway socketservers with a short poll interval so fast-tier proxy regressions no longer spend ~0.5s each in idle shutdown waits
 
 ## Landed Fixes
 
@@ -243,6 +244,10 @@ Continue the robustness-testing loop from the saved transcript:
 44. `scripts/qa/fast.sh`
    - run the shared fast pytest helper instead of duplicating the selector
    - point over-budget warnings at `make test-fast-profile` so slow-test diagnosis is a first-class workflow
+
+45. `tests/proxy_testkit.py`
+   - add a shared test-only server launcher that uses a short `serve_forever()` poll interval for throwaway proxy harnesses
+   - keep the runtime proxy defaults unchanged while removing socketserver shutdown latency from the fast-tier regressions
 
 ## Tests Added
 
@@ -446,7 +451,8 @@ Continue the robustness-testing loop from the saved transcript:
 - latest fast-tier profiling rerun:
   - `make qa-fast` -> PASS
   - `make test-fast-profile` -> PASS
-  - current slowest fast-tier costs are mostly teardown time in the proxy regressions (`tests/regress/test_p_08_xff.py` and `tests/regress/test_p_18_limits.py`) plus a small number of config/preset tests
+  - after the proxy harness speedup, the previous 0.5 s proxy teardowns dropped out of the slowest list
+  - the current slowest fast-tier cost is now `tests/regress/test_v_02_update_pin_validation.py::test_junk_pin_leaves_that_component_exactly_as_it_was[shell-junk]` at about 2.0 s, followed by preset/config regressions
   - `make qa-full` -> PASS
 - focused powerloss regressions:
   - `54 passed` across `tests/powerloss/test_ready_precondition.py`, `tests/powerloss/test_journal.py`, and `tests/powerloss/test_kill_sequence_machine.py`

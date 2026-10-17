@@ -27,6 +27,7 @@ import types
 import pytest
 
 import klipperformac.proxy as proxymod
+from tests.proxy_testkit import start_server
 
 STACK_PORTS = frozenset({7125, 8080, 8081})
 UPSTREAM_SENTINEL = 4321           # closed: a real relay attempt would fail
@@ -109,8 +110,7 @@ def proxy_up(tmp_path, monkeypatch):
         lambda *a, **kw: proxymod.UIPandler(*a, directory=str(docroot), **kw))
     saved = proxymod.UIPandler.upstream_port
     proxymod.UIPandler.upstream_port = up.port
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
+    start_server(httpd)
     try:
         yield httpd.server_address[1], up, str(docroot)
     finally:
