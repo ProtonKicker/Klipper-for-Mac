@@ -400,6 +400,64 @@ def test_start_refuses_even_when_one_state_pid_is_unusable(txn):
     assert txn.ps.spawned == []
 
 
+def test_start_rolls_back_spawned_children_when_a_later_spawn_fails(txn):
+    real = txn.p._popen
+    calls = [0]
+
+    def flaky(cmd, **kwargs):
+        calls[0] += 1
+        if calls[0] == 3:
+            raise OSError(55, "bind failed")
+        return real(cmd, **kwargs)
+
+    txn.monkeypatch.setattr(txn.p, "_popen", flaky)
+    assert txn.p.start() is False
+    assert len(txn.ps.spawned) == 2
+    spawned = {rec["pid"] for rec in txn.ps.spawned}
+    assert {pid for pid, _ in txn.system.signals} == spawned
+    assert not txn.paths.STATE.exists()
+    assert all(str(pid) not in txn.ps.rows for pid in spawned)
+
+
+def test_start_rolls_back_when_the_final_state_write_fails(txn):
+    real_save = txn.p._save
+    calls = [0]
+
+    def flaky_save(procs):
+        calls[0] += 1
+        if calls[0] == 2:
+            raise OSError(28, "No space left on device")
+        return real_save(procs)
+
+    txn.monkeypatch.setattr(txn.p, "_save", flaky_save)
+    assert txn.p.start() is False
+    assert len(txn.ps.spawned) == 5
+    spawned = {rec["pid"] for rec in txn.ps.spawned}
+    assert {pid for pid, _ in txn.system.signals} == spawned
+    assert not txn.paths.STATE.exists()
+    assert all(str(pid) not in txn.ps.rows for pid in spawned)
+
+
+def test_repair_rolls_back_children_when_a_later_spawn_fails(txn):
+    txn.monkeypatch.setattr(txn.p, "running", lambda: {
+        name: name in ("klipper", "moonraker") for name in txn.p.SERVICES})
+    real = txn.p._popen
+    calls = [0]
+
+    def flaky(cmd, **kwargs):
+        calls[0] += 1
+        if calls[0] == 2:
+            raise OSError(55, "bind failed")
+        return real(cmd, **kwargs)
+
+    txn.monkeypatch.setattr(txn.p, "_popen", flaky)
+    assert txn.p.repair() == []
+    assert len(txn.ps.spawned) == 1
+    spawned = {rec["pid"] for rec in txn.ps.spawned}
+    assert {pid for pid, _ in txn.system.signals} == spawned
+    assert all(str(pid) not in txn.ps.rows for pid in spawned)
+
+
 def test_a_non_boolean_lan_setting_does_not_expose_the_stack(txn):
     txn.paths.save_settings({"lan": "false"})
     txn.p.start()

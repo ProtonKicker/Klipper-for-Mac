@@ -416,13 +416,24 @@ def _chain(nodes, index):
 def _usb_props(chain):
     """The USB *device* node above a port (inclusive) -> props dict | None.
 
-    Walking all the way to the ROOT and taking the first (outermost) node that
-    carries idVendor matters: IOKit copies idVendor/idProduct/"USB Serial
-    Number" onto the interface and driver children too, and only the device
-    node has "USB Vendor Name", the true "USB Product Name" and locationID.
-    A chain with no idVendor anywhere is not a USB board -> None.
+    IOKit copies idVendor/idProduct onto interface and driver children, so the
+    nearest node with those fields is often still not the board. The other trap
+    is a USB hub: walking outward until "the first node with ids" returns the
+    hub, not the RP2040 under it. The rule here is therefore:
+
+      1. prefer the NEAREST USB *device* class carrying ids;
+      2. if no such class is visible, fall back to the nearest node with ids.
+
+    That keeps the board's own vendor/product/serial/location while still
+    surviving odd driver stacks. A chain with no idVendor anywhere is not a USB
+    board -> None.
     """
-    for node in reversed(chain):
+    for node in chain:
+        props = node["props"]
+        if ("idVendor" in props and "idProduct" in props
+                and node["cls"] in ("IOUSBHostDevice", "IOUSBDevice")):
+            return props
+    for node in chain:
         props = node["props"]
         if "idVendor" in props and "idProduct" in props:
             return props
@@ -649,4 +660,3 @@ def find_all_by_identity(vid_pid, serial=None, timeout=None):
     """
     paths, _hits = _matching_ports(vid_pid, serial, timeout)
     return paths
-

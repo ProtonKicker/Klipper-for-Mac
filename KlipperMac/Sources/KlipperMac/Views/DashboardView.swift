@@ -203,21 +203,17 @@ struct DashboardView: View {
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
             Section("Printer config") {
-                Picker("Serial device", selection: $selectedSerial) {
-                    Text("Select device…").tag("")
-                    if model.serialPorts.isEmpty {
-                        Text("No USB serial devices found").disabled(true).tag(" ")
-                    }
-                    ForEach(model.serialPorts) { port in
-                        Text("\(port.path)   \(port.label)").tag(port.path)
-                    }
-                }
-                .onChange(of: selectedSerial) { value in
-                    if !value.isEmpty {
-                        let path = value
-                        selectedSerial = ""
-                        Task { await model.setSerial(path) }
-                    }
+                // `serial --json` answered: one row per [mcu] section, because
+                // the pane has to show what printer.cfg actually holds. An empty
+                // list (a config with no MCU section — the contract says that is
+                // not a multi-MCU config) and a CLI that has no --json at all
+                // both keep the single-board picker exactly as it was: one
+                // honest row beats an empty pane, and single-board users must
+                // not see a regression.
+                if let report = model.mcuReport, !report.isEmpty {
+                    mcuRows(report)
+                } else {
+                    serialPicker
                 }
 
                 LabeledContent("Current config") {
@@ -248,6 +244,44 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    // MARK: serial device, two ways
+
+    /// The pre-multi-MCU picker, kept verbatim: one "Serial device" row for
+    /// every CLI that cannot answer `serial --json`. Single-board users with an
+    /// installed build from before the contract see exactly this.
+    private var serialPicker: some View {
+        Picker("Serial device", selection: $selectedSerial) {
+            Text("Select device…").tag("")
+            if model.serialPorts.isEmpty {
+                Text("No USB serial devices found").disabled(true).tag(" ")
+            }
+            ForEach(model.serialPorts) { port in
+                Text("\(port.path)   \(port.label)").tag(port.path)
+            }
+        }
+        .onChange(of: selectedSerial) { value in
+            if !value.isEmpty {
+                let path = value
+                selectedSerial = ""
+                Task { await model.setSerial(path) }
+            }
+        }
+    }
+
+    /// One row per [mcu] section, plus the rule the rows exist to enforce.
+    @ViewBuilder private func mcuRows(_ report: SerialReport) -> some View {
+        ForEach(report.mcus) { row in
+            McuSerialRow(row: row, ports: model.serialPorts)
+        }
+        if !report.single {
+            Text("Multiple MCUs: [mcu] keeps the clock and every other board "
+                 + "syncs to it, so each one needs a port of its own — the same "
+                 + "path twice keeps klipper from starting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -286,5 +320,126 @@ struct DashboardView: View {
         } header: {
             Text("LAN access")
         }
+    }
+}
+
+// MARK: - one [mcu] section
+
+/// One MCU of printer.cfg as its own row: what the config claims, whether the
+/// board is in front of us right now, and a port picker that addresses ONLY
+/// this section. It reads what AppModel already refreshes — no timer of its
+/// own, because a pane that polls on its own is how a GUI ends up fighting the
+/// CLI over ioreg.
+private struct McuSerialRow: View {
+    @EnvironmentObject private var model: AppModel
+    let row: McuRow
+    let ports: [SerialPort]
+    /// The picker is an action, not a setting: it answers "Select device…"
+    /// again as soon as the write is done, exactly like the single-board row.
+    @State private var chosen = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(verbatim: row.displayName)
+                    .font(.callout.weight(.medium))
+                    .help(row.section)
+                if row.isMaster {
+                    pill("timing master", tint: FlatPalette.blue)
+                }
+                conflictBadge
+                Spacer(minLength: 8)
+                if row.offersPortPicker {
+                    portPicker
+                } else if row.isAddressable {
+                    Text("CAN / fixed")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("This row is configured through a non-USB identity, "
+                              + "so the GUI keeps it read-only.")
+                }
+            }
+            HStack(spacing: 10) {
+                // verbatim: a section name or device path is user/CLI content,
+                // and Text's default initialiser would read "usb_a_b" as
+                // markdown and italicise the middle of it.
+                Text(verbatim: row.configuredLine)
+                if let present = row.isPresent {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(present ? Color.green : Color.red.opacity(0.7))
+                            .frame(width: 7, height: 7)
+                        Text(verbatim: row.identityLine)
+                    }
+                } else {
+                    Text(verbatim: row.identityLine)
+                }
+                if !row.isAddressable {
+                    Text("name cannot be set from here — edit printer.cfg")
+                        .foregroundStyle(FlatPalette.amber)
+                } else if !row.offersPortPicker {
+                    Text("set here in printer.cfg, not from a USB picker")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Port menu for THIS section. Candidates come from the scanner the poll
+    /// already runs; a configured-but-gone path is not offered (it cannot be
+    /// opened), it is shown on the line below instead. A section name the tool
+    /// cannot address keeps its row — and loses its write button, because
+    /// silently editing [mcu] instead would be the worse failure.
+    private var portPicker: some View {
+        Picker("Serial device for \(row.displayName)", selection: $chosen) {
+            Text("Select device…").tag("")
+            if ports.isEmpty {
+                Text("No USB serial devices found").disabled(true).tag(" ")
+            }
+            ForEach(ports) { port in
+                Text("\(port.path)   \(port.label)").tag(port.path)
+            }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 240)
+        .disabled(model.busy || !row.isAddressable)
+        .help(row.isAddressable
+              ? "Writes the serial: line of \(row.section) in printer.cfg"
+              : "This section name is not one Klipper accepts, so nothing can "
+              + "be written to it — fix printer.cfg instead.")
+        .onChange(of: chosen) { value in
+            if !value.isEmpty {
+                let path = value
+                chosen = ""
+                Task { await model.setSerial(path, mcu: row.mcu) }
+            }
+        }
+    }
+
+    @ViewBuilder private var conflictBadge: some View {
+        if let tip = row.conflictTooltip {
+            HStack(spacing: 4) {
+                FlatIcon(kind: .warning, size: 12, color: FlatPalette.amber)
+                Text(row.conflictLabel)
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(FlatPalette.amber)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(FlatPalette.amber.opacity(0.14)))
+            .help(tip)
+        }
+    }
+
+    private func pill(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.14)))
     }
 }

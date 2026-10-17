@@ -69,6 +69,29 @@ def test_identity_is_built_from_decimal_ioreg_ids(ioreg_says, pico_tree):
     assert detect.identity("/dev/cu.usbmodem14101")["vid_pid"] == "1D50:614E"
 
 
+def test_identity_prefers_the_board_over_a_parent_usb_hub(ioreg_says, iokit):
+    """A board hanging off a hub must keep the board's ids, not the hub's.
+
+    The live bench now has exactly this shape: a usbmodem node under an RP2040
+    below a USB2.1 hub. Walking "outward until ids appear" picked the hub's
+    05E3:0610 instead of the board's 1D50:614E.
+    """
+    board = iokit.usb_board(path="/dev/cu.usbmodem142101", location_id=337772544)
+    hub = iokit.node("USB2.1 Hub@14200000", "IOUSBHostDevice", [
+        ("USB Vendor Name", iokit.quoted("GenesysLogic")),
+        ("USB Product Name", iokit.quoted("USB2.1 Hub")),
+        ("idVendor", str(1507)),
+        ("idProduct", str(1552)),
+        ("locationID", str(337641472)),
+    ], [board])
+    ioreg_says(iokit.render(iokit.root_tree([hub], bluetooth=False)))
+    ident = detect.identity("/dev/cu.usbmodem142101")
+    assert ident is not None
+    assert ident["vid_pid"] == "1D50:614E", ident
+    assert ident["serial"] == iokit.PICO_SERIAL, ident
+    assert ident["name"] == "rp2040", ident
+
+
 # ------------------------------------------------------------- serial strings --
 def test_identity_without_serial_field(ioreg_says, iokit):
     """CH340/FTDI bridges publish no serial: serial is '' and the key degrades

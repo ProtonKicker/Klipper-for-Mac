@@ -31,6 +31,10 @@ final class AppModel: ObservableObject {
     @Published var snapshot = StackSnapshot()
     @Published var printer: PrinterStatus?
     @Published var serialPorts: [SerialPort] = []
+    /// One row per [mcu] section, straight from `serial --json`. nil means
+    /// "the installed CLI does not answer that contract yet" — every view that
+    /// reads it must then show the old single-board picker, unchanged.
+    @Published var mcuReport: SerialReport?
     @Published var presetNames: [String] = []
     /// nil until the first check answers — the Camera pane reads that as "unknown".
     @Published var camOnline: Bool?
@@ -54,6 +58,12 @@ final class AppModel: ObservableObject {
     private var clearTask: Task<Void, Never>?
     private var refreshInFlight = false
     private var refreshQueued = false
+    /// nil = never asked, false = this CLI has no `serial --json` (stop asking),
+    /// true = the contract answers and the MCU pane is live.
+    private var serialJSONSupported: Bool?
+    /// Set when a refresh arrives while another pass owns the tick, so the
+    /// trailing pass still knows the user pressed Refresh.
+    private var serialProbeForced = false
     private var observingActive = false
     private var ticks = 0
     private var lastCfgHash: String?
@@ -67,6 +77,10 @@ final class AppModel: ObservableObject {
         static let library: TimeInterval = 15
         static let updateCheck: TimeInterval = 45
         static let snapshot: TimeInterval = 15
+        /// Read-only probe on the poll tick: cheap for a human, wasteful for a
+        /// loop, so it gets the shortest leash of the bunch. A wedged ioreg must
+        /// not hold the MCU pane shut.
+        static let serialProbe: TimeInterval = 10
         static let updateApply: TimeInterval = 1_800
         static let setup: TimeInterval = 7_200
     }
@@ -194,21 +208,37 @@ final class AppModel: ObservableObject {
         // A 2s poll is usually in flight when a command finishes or the user
         // hits Refresh. Dropping those requests is what made the UI lag a poll
         // tick behind, so coalesce them into one trailing pass.
-        guard !refreshInFlight else { refreshQueued = true; return }
+        guard !refreshInFlight else {
+            refreshQueued = true
+            if reloadEnv { serialProbeForced = true }
+            return
+        }
         refreshInFlight = true
         defer { refreshInFlight = false }
         repeat {
             refreshQueued = false
-            await refreshOnce()
+            let forced = serialProbeForced
+            serialProbeForced = false
+            await refreshOnce(forceSerial: forced || reloadEnv)
         } while refreshQueued
     }
 
-    private func refreshOnce() async {
+    private func refreshOnce(forceSerial: Bool) async {
         let env = self.env
         // Presets are only listed in Settings and the scan can block on iCloud;
         // check them every ~10s instead of every tick.
         ticks += 1
         let scanPresets = presetNames.isEmpty || ticks % 5 == 1
+        // The MCU list is the same story one tier up in cost: it needs a CLI
+        // process, so it rides the ~10s tick (and the passes the user asked
+        // for), never the 2s one. Once a CLI says it has no --json we stop
+        // asking until a manual Refresh re-probes it — that is also the moment
+        // an upgraded CLI becomes visible.
+        let probeSerial = forceSerial
+            || (serialJSONSupported != false && ticks % 5 == 1)
+        // Fired first: the CLI spawn overlaps the filesystem scan below instead
+        // of adding to the poll's latency.
+        async let mcuProbe = probeSerialReport(allowed: probeSerial)
         // All filesystem/process work off the main thread — never block UI.
         let (snap, serials, presets, cfgHash) = await Task.detached(priority: .utility) {
             () -> (StackSnapshot, [SerialPort], [String]?, String?) in
@@ -240,6 +270,7 @@ final class AppModel: ObservableObject {
         async let camUp = CamProbe.isUp(port: camPort)
         let printer = snap.anyUp ? await Moonraker.status(port: env.moonrakerPort) : nil
         let cam = await camUp
+        let mcu = await mcuProbe
         if !busy { // don't churn while a command owns the screen
             // Assign only on change: every @Published write re-renders the whole
             // view tree, and most 2s polls change nothing.
@@ -248,8 +279,49 @@ final class AppModel: ObservableObject {
             if serials != serialPorts { serialPorts = serials }
             if cam != camOnline { camOnline = cam }
             if env.uiName != uiName { uiName = env.uiName }
+            switch mcu {
+            case .keep: break // probe skipped or failed: say nothing, change nothing
+            case .legacy:
+                if mcuReport != nil { mcuReport = nil }
+            case .report(let report):
+                if report != mcuReport { mcuReport = report }
+            }
         }
         if let presets, presets != presetNames { presetNames = presets }
+    }
+
+    /// `serial --json` is read-only (exit 0, conflicts as data, no traceback),
+    /// so asking is safe — the only cost is a process spawn, which is why the
+    /// caller decides when. Three answers: `.keep` (nothing happened, leave the
+    /// pane alone), `.legacy` (this CLI has no contract: show the single-board
+    /// picker), `.report` (the multi-MCU list).
+    private func probeSerialReport(allowed: Bool) async -> SerialProbe {
+        guard allowed else { return .keep }
+        guard !busy, env.installed, env.isCLIInstalled else { return .keep }
+        do {
+            let r = try await CLIRunner.shared.run(["serial", "--json"],
+                                                   timeout: CLITimeout.serialProbe)
+            guard let report = SerialReportDecoder.decode(r.output) else {
+                // An old CLI writes "unrecognized arguments: --json" and exits 2.
+                // Remember that instead of re-asking every tick: the merged
+                // stdout+stderr of the probe is what tells the two apart.
+                serialJSONSupported = false
+                return .legacy
+            }
+            serialJSONSupported = true
+            return .report(report)
+        } catch {
+            // Timeout, or the CLI vanished mid-poll. A failed probe is not a
+            // missing board: keep the last honest answer and stay silent — the
+            // user has a Refresh button, and the toast belongs to their commands.
+            return .keep
+        }
+    }
+
+    private enum SerialProbe {
+        case keep
+        case legacy
+        case report(SerialReport)
     }
 
     private func say(_ text: String, error: Bool = false) {
@@ -339,7 +411,36 @@ final class AppModel: ObservableObject {
         await refresh(reloadEnv: true)
     }
     func switchUI(_ name: String) async { _ = await cli(["ui", name, "--no-open"], ok: "Switched to \(name.capitalized)") }
-    func setSerial(_ path: String) async { _ = await cli(["serial", "--set", path], ok: "Serial device set") }
+    /// `serial --set PATH [mcuName]`. The name is only ever sent by the
+    /// multi-MCU pane — which exists only when `serial --json` answered — so a
+    /// CLI without per-section support keeps getting the exact old two-argument
+    /// command from the single-board picker.
+    func setSerial(_ path: String, mcu: String? = nil) async {
+        var args = ["serial", "--set", path]
+        let target = mcu?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let target, !target.isEmpty else {
+            _ = await cli(args, ok: "Serial device set")
+            return
+        }
+        // Belt and braces with the row's own refusal: a name the tool cannot
+        // address must never be quietly written to the timing master instead.
+        guard SerialReportDecoder.isSafeArgument(target) else {
+            say("Refusing to write a serial to [mcu \(target)] — that section "
+                + "name is not one the tool can address. Fix printer.cfg first.",
+                error: true)
+            return
+        }
+        if let row = mcuReport?.mcus.first(where: { $0.mcu == target }),
+           !row.offersPortPicker {
+            say("Refusing to write a USB serial to \(row.section) — that row is "
+                + "configured by a non-USB identity, so edit printer.cfg instead.",
+                error: true)
+            return
+        }
+        args.append(target)
+        let section = target == McuRow.masterName ? "[mcu]" : "[mcu \(target)]"
+        _ = await cli(args, ok: "Serial device set for \(section)")
+    }
     func usePreset(_ name: String) async {
         _ = await cliShort(["presets", "--use", name, "--auto-serial"])
     }

@@ -23,9 +23,16 @@ which prints the golden's bytes, decodes them, and lists each row's addressabili
 next to the conflict badge the producer sent.
 """
 import json
+import pathlib
 import re
 
 import pytest
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+DASHBOARD_VIEW = (REPO / "KlipperMac" / "Sources" / "KlipperMac"
+                  / "Views" / "DashboardView.swift")
+APP_MODEL = (REPO / "KlipperMac" / "Sources" / "KlipperMac"
+             / "Model" / "AppModel.swift")
 
 # A master attached with a real port, then one section of each kind that has to
 # be answered differently: a USB board with no port written yet, a CAN board, and
@@ -122,6 +129,42 @@ def test_the_bad_header_is_a_conflict_the_row_shows_and_the_button_lacks(
     assert "isSafeArgument" in guard, guard          # empty / control chars
     assert "trimmingCharacters" in guard, guard      # ' board' is not 'board'
     assert "badSectionName" in guard, guard          # the producer's verdict
+
+
+def test_swift_keeps_the_raw_mcu_name_so_bad_headers_stay_bad(
+        swift_contract_source):
+    """`" board"` must not be normalised to `"board"` on the GUI side."""
+    row_body = re.search(r"private static func row\(from entry: \[String: Any\]\) "
+                         r"-> McuRow\? \{(.*?)\n    \}",
+                         swift_contract_source, re.S)
+    assert row_body, "SerialReportDecoder.row moved"
+    body = row_body.group(1)
+    assert "rawText(entry[\"mcu\"])" in body, body
+    assert "rawName.trimmingCharacters" in body, body
+    section_body = re.search(r"static func mcuName\(fromSection section: String\) "
+                             r"-> String\? \{(.*?)\n    \}",
+                             swift_contract_source, re.S)
+    assert section_body, "SerialReportDecoder.mcuName moved"
+    assert ".split(" not in section_body.group(1), section_body.group(1)
+
+
+def test_a_can_row_stays_visible_but_never_gets_a_usb_picker(run_serial_json,
+                                                             swift_contract_source):
+    """Rows that carry a CAN uuid stay in the pane, but the GUI must not offer
+    a `/dev/cu.*` write for them."""
+    out, _ = run_serial_json(text=SEAM_CFG)
+    assert rows(out)["rpi"]["serial"] == "112233445566"
+    guard = re.search(r"var offersPortPicker: Bool \{(.*?)\n    \}",
+                      swift_contract_source, re.S)
+    assert guard, "McuRow.offersPortPicker moved"
+    body = guard.group(1)
+    assert "isAddressable" in body, body
+    assert "hasPrefix(\"/dev/\")" in body, body
+    dashboard = DASHBOARD_VIEW.read_text()
+    assert "if row.offersPortPicker" in dashboard, dashboard
+    assert "Task { await model.setSerial(path, mcu: row.mcu) }" in dashboard, dashboard
+    app_model = APP_MODEL.read_text()
+    assert "!row.offersPortPicker" in app_model, app_model
 
 
 # --------------------------------------------------------------- real writes --

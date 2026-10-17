@@ -849,6 +849,15 @@ def _can_persist():
     return True
 
 
+def _stop_started(procs):
+    """Best-effort SIGTERM for children that were spawned in this transaction.
+
+    Used when start()/repair() fail half-way through: a partial stack is worse
+    than no stack because nothing on disk can describe it honestly to `down`."""
+    for proc in procs.values():
+        _signal(getattr(proc, "pid", None), signal.SIGTERM)
+
+
 def start():
     state = running()
     if state is not None:
@@ -905,38 +914,43 @@ def start():
     # main venv (the file already matches and is left alone).
     if str(kpy) != py:
         ensure_runtime_shims(kpy)
+    started = {}
+    try:
+        started["klipper"] = _popen(
+            [kpy, str(klipper_klippy / "klippy.py"),
+             "-a", str(paths.API_SOCKET), "-l", str(paths.KLIPPY_LOG),
+             str(paths.PRINTER_CFG)],
+            cwd=str(klipper_klippy), env=kenv,
+        )
+        started["moonraker"] = _popen(
+            [py, "-m", "moonraker",
+             "-d", str(paths.DATA), "-c", str(paths.MOONRAKER_CONF),
+             "-l", str(paths.MOONRAKER_LOG)],
+            cwd=str(paths.MOONRAKER), env=shim_env(),
+        )
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        web_env = _web_env(repo_root)
+        bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
 
-    kproc = _popen(
-        [kpy, str(klipper_klippy / "klippy.py"),
-         "-a", str(paths.API_SOCKET), "-l", str(paths.KLIPPY_LOG),
-         str(paths.PRINTER_CFG)],
-        cwd=str(klipper_klippy), env=kenv,
-    )
-    mproc = _popen(
-        [py, "-m", "moonraker",
-         "-d", str(paths.DATA), "-c", str(paths.MOONRAKER_CONF),
-         "-l", str(paths.MOONRAKER_LOG)],
-        cwd=str(paths.MOONRAKER), env=shim_env(),
-    )
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    web_env = _web_env(repo_root)
-    bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
-
-    wproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
-         str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
-    )
-    fproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
-         str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
-    )
-    cproc = _popen(["caffeinate", "-dis"])
-
-    _note_caffeinate(cproc.pid)
-    _save({"klipper": kproc, "moonraker": mproc, "web_mainsail": wproc,
-           "web_fluidd": fproc, "caffeinate": cproc})
+        started["web_mainsail"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
+             str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env,
+        )
+        started["web_fluidd"] = _popen(
+            [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
+             str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
+            cwd=repo_root, env=web_env,
+        )
+        started["caffeinate"] = _popen(["caffeinate", "-dis"])
+        _save(started)
+    except Exception as e:
+        _stop_started(started)
+        _clear()
+        print("[!] Start failed and the partial stack was stopped: {}".format(
+            getattr(e, "strerror", None) or e))
+        return False
+    _note_caffeinate(started["caffeinate"].pid)
     # Open the power-loss session marker (and, in that same call, judge the
     # session the last crash or reboot left open). Deliberately last: nothing a
     # start() can no longer undo may depend on a marker write, and a marker this
@@ -971,28 +985,27 @@ def repair(state=None):
     web_env = _web_env(repo_root)
     bind = "0.0.0.0" if _lan_opted_in() else "127.0.0.1"
     started = {}
-    if "web_mainsail" in safe:
-        started["web_mainsail"] = _popen(
-            [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
-             str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
-            cwd=repo_root, env=web_env)
-    if "web_fluidd" in safe:
-        started["web_fluidd"] = _popen(
-            [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
-             str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
-            cwd=repo_root, env=web_env)
-    if "caffeinate" in safe:
-        started["caffeinate"] = _popen(["caffeinate", "-dis"])
-        _note_caffeinate(started["caffeinate"].pid)
     try:
+        if "web_mainsail" in safe:
+            started["web_mainsail"] = _popen(
+                [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
+                 str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
+                cwd=repo_root, env=web_env)
+        if "web_fluidd" in safe:
+            started["web_fluidd"] = _popen(
+                [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
+                 str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
+                cwd=repo_root, env=web_env)
+        if "caffeinate" in safe:
+            started["caffeinate"] = _popen(["caffeinate", "-dis"])
         _save(started)
-    except OSError:
-        for proc in started.values():
-            _signal(_own_pid(proc.pid), signal.SIGTERM)
-        print("[!] Cannot write {} - the repaired services are running but "
-              "`down` will not know them. Fix that folder, then run: "
-              "klipperformac killall".format(paths.STATE))
+    except Exception as e:
+        _stop_started(started)
+        print("[!] Repair failed and the partial services were stopped: {}".format(
+            getattr(e, "strerror", None) or e))
         return []
+    if "caffeinate" in started:
+        _note_caffeinate(started["caffeinate"].pid)
     return sorted(started)
 
 
