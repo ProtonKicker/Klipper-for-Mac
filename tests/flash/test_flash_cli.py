@@ -67,6 +67,9 @@ def test_cmd_flash_does_not_exit_on_success(fstack, monkeypatch):
       "--set", "CONFIG_REBOOT=y", "--dry-run"], ("defconfig",
                                                  "generic-bigtreetech-skr-pico"
                                                  "-v1.0.cfg")),
+    (["flash", "build-rp2040", "--chip", "rp2040", "--bootloader", "none",
+      "--jobs", "8", "--set", "CONFIG_REBOOT=y", "--dry-run"],
+     ("bootloader", "none")),
     (["flash", "uf2", "--bin", "/tmp/k.uf2", "--volume", "RPI-RP2",
       "--timeout", "90", "--dry-run"], ("volume", "RPI-RP2")),
     (["flash", "uf2", "/tmp/k.uf2"], ("path", "/tmp/k.uf2")),
@@ -89,6 +92,7 @@ def test_the_flags_the_spec_names_all_exist(fstack, monkeypatch, argv, expect):
 
 @pytest.mark.parametrize("action,extra", [
     ("uf2", ["--bin", "/tmp/k.uf2"]),
+    ("build-rp2040", []),
     ("dfu", ["--bin", "/tmp/k.bin", "--vidpid", "0483:df11"]),
     ("serial", ["--bin", "/tmp/k.bin", "--port", "/dev/cu.usbserial0"]),
     ("build", ["--defconfig", "generic-bigtreetech-skr-pico-v1.0.cfg"]),
@@ -216,8 +220,8 @@ def test_flash_help_names_the_three_transports(fstack, capsys):
     assert "BOOTSEL" in out
     assert "dfu-util" in out
     assert "boot0" in out
-    for action in ("detect", "probe", "doctor", "build", "uf2", "dfu", "serial",
-                   "rp2040"):
+    for action in ("detect", "probe", "doctor", "build", "build-rp2040", "uf2",
+                   "dfu", "serial", "rp2040"):
         assert action in out
 
 

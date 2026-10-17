@@ -1,4 +1,4 @@
-"""`flash build` (preview only) and `flash doctor` (report only).
+"""`flash build` (preview only), `flash build-rp2040`, and `flash doctor`.
 
 The flash spec argues that building is feasible on macOS (defconfig -> .config ->
 `make olddefconfig` -> `make out/klipper.uf2` with the brew cross compiler, all
@@ -44,6 +44,18 @@ def _venv(fstack):
     py.parent.mkdir(parents=True, exist_ok=True)
     py.write_text("#!/bin/sh\n")
     return py
+
+
+def _embedded_toolchain(fstack):
+    """A complete local ARM toolchain tree under ~/.klipperformac/toolchains."""
+    root = fstack.flash._toolchains_root() / "gcc-arm-embedded-test" / "Payload"
+    (root / "bin").mkdir(parents=True, exist_ok=True)
+    (root / "arm-none-eabi" / "include").mkdir(parents=True, exist_ok=True)
+    for name in ("arm-none-eabi-gcc", "arm-none-eabi-objcopy",
+                 "arm-none-eabi-readelf"):
+        (root / "bin" / name).write_text("#!/bin/sh\n")
+    (root / "arm-none-eabi" / "include" / "string.h").write_text("/* newlib */\n")
+    return root
 
 
 def _tree(root):
@@ -224,6 +236,7 @@ def test_no_venv_means_no_probe(fstack):
 def test_doctor_lines_cover_every_transport_and_the_venv(fstack):
     _checkout(fstack)
     _venv(fstack)
+    _embedded_toolchain(fstack)
     fstack.tools("dfu-util", "diskutil")
     fstack.use_recorder({"python": (0, "3.5")})
     text = "\n".join(fstack.flash.doctor_lines())
@@ -232,8 +245,74 @@ def test_doctor_lines_cover_every_transport_and_the_venv(fstack):
     assert "brew install stm32flash" in text
     assert "bossac" in text and "not implemented yet" in text
     assert "cross compiler" in text
+    assert "embedded toolchain" in text
     assert "pyserial (venv):" in text and "3.5" in text
-    assert "nothing here installs anything" in text
+    assert "`flash build-rp2040` is the macOS build path" in text
+
+
+def test_toolchain_status_reports_a_complete_local_embedded_toolchain(fstack):
+    _checkout(fstack)
+    root = _embedded_toolchain(fstack)
+    st = fstack.flash.toolchain_status()
+    assert st["embedded_toolchain"] == str(root)
+    if st["cached_embedded_pkg"] is not None:
+        assert st["cached_embedded_pkg"].endswith(".pkg")
+
+
+def test_build_rp2040_plan_uses_seeded_usb_config_and_local_toolchain(fstack):
+    _checkout(fstack)
+    root = _embedded_toolchain(fstack)
+    ok, lines = fstack.flash.build_rp2040_plan(
+        chip="rp2040", bootloader="none", jobs=8,
+        overrides=[("CONFIG_REBOOT", "y")])
+    text = "\n".join(lines)
+    assert ok, lines
+    assert "seeded rp2040 USB config" in text
+    assert "CONFIG_MACH_RP2040=y" in text
+    assert "CONFIG_RPXXXX_USB=y" in text
+    assert "CONFIG_RPXXXX_FLASH_START_0100=y" in text
+    assert "CONFIG_REBOOT=y" in text
+    assert str(root / "bin") in text
+    assert "toolchain source: local" in text
+    assert "out/lib/elf2uf2/elf2uf2" in text
+
+
+def test_build_rp2040_firmware_runs_make_and_caches_the_artifact(fstack,
+                                                                 uf2bytes):
+    _checkout(fstack)
+    _embedded_toolchain(fstack)
+
+    def reply(argv):
+        if argv[:3] == ["make", "-C", str(fstack.paths.KLIPPER)] and \
+                argv[-1] == "out/klipper.uf2":
+            out = fstack.paths.KLIPPER / "out"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "klipper.uf2").write_bytes(uf2bytes.uf2_image())
+        return (0, "", "")
+
+    rec = fstack.use_recorder({"make": reply})
+    ok, lines = fstack.flash.build_rp2040_firmware(chip="rp2040", jobs=4)
+    text = "\n".join(lines)
+    assert ok, lines
+    assert rec.commands() == [
+        ["make", "-C", str(fstack.paths.KLIPPER), "clean"],
+        ["make", "-C", str(fstack.paths.KLIPPER), "olddefconfig"],
+        ["make", "-C", str(fstack.paths.KLIPPER), "out/lib/elf2uf2/elf2uf2"],
+        ["make", "-C", str(fstack.paths.KLIPPER), "-j4", "out/klipper.uf2"],
+    ]
+    assert "Cached " in text
+    saved = sorted((fstack.paths.APP_HOME / "firmware").glob("klipper-rp2040-*.uf2"))
+    assert saved, "the built uf2 should be copied into the firmware cache"
+    assert not (fstack.paths.KLIPPER / ".config").exists(), \
+        "the seeded config should be cleaned up after the build"
+
+
+def test_build_rp2040_firmware_refuses_without_toolchain(fstack):
+    _checkout(fstack)
+    fstack.flash.cached_embedded_pkg = lambda: None
+    ok, lines = fstack.flash.build_rp2040_firmware(chip="rp2040")
+    assert not ok
+    assert "no complete ARM embedded toolchain" in "\n".join(lines)
 
 
 def test_doctor_names_the_exact_brew_formulae_for_what_is_missing(fstack,

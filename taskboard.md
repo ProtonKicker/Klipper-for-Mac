@@ -32,6 +32,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Installed/unpacked a full ARM embedded toolchain locally and built a fresh RP2040 `klipper.uf2`
 - [x] Added `klipperformac flash rp2040` for macOS-native runtime-to-bootloader flashing attempts
 - [x] Proved the current bench board does not enter bootloader on the host-driven 1200-baud request
+- [x] Productized the macOS RP2040 firmware build path as `klipperformac flash build-rp2040`
+- [x] Verified `flash build-rp2040` succeeds end-to-end on this Mac and caches a fresh UF2
 
 ## Landed Fixes
 
@@ -58,6 +60,9 @@ Continue the robustness-testing loop from the saved transcript:
    - bound the probe with a clean timeout message instead of a hanging subprocess
    - add `flash rp2040 --bin ... --port ...` to request RP2040 bootloader mode from a live USB runtime device on macOS
    - support both picoboot USB and BOOTSEL volume follow-up paths without relying on Linux `/dev/serial/by-path`
+   - add `flash build-rp2040` to build and cache RP2040/RP2350 UF2 firmware on macOS
+   - auto-unpack a cached `gcc-arm-embedded` pkg into `~/.klipperformac/toolchains/`
+   - generate macOS wrapper tools for `g++`, `cpp`, and `readelf` so upstream's build works unchanged
 
 ## Tests Added
 
@@ -84,6 +89,11 @@ Continue the robustness-testing loop from the saved transcript:
   - picoboot path
   - dispatch requires `--port`
 
+- `tests/flash/test_flash_build_doctor.py`
+  - local embedded toolchain detection
+  - `build-rp2040` dry-run plan
+  - real build command orchestration and artifact caching
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -98,7 +108,14 @@ Continue the robustness-testing loop from the saved transcript:
 - built firmware artifact:
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T131241Z.uf2`
   - SHA256 `cf1693d82e82eb1ae88d44befba6040db0e36480c1eb76588eaae94d12cefedb`
-- `make qa-full` now passes at `3090 passed, 25 deselected`
+- built through product command:
+  - [x] `klipperformac flash build-rp2040`
+  - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
+- `make qa-full` now passes at `3096 passed, 25 deselected`
+- `klipperformac flash doctor` now reports:
+  - embedded toolchain path
+  - cached cask package path
+  - `flash build-rp2040` as the macOS build path
 
 ## Live Tier Status
 
@@ -138,13 +155,15 @@ Evidence:
 - `./bin/klipperformac flash rp2040 --bin ... --port /dev/cu.usbmodem142101`
   times out waiting for the bootloader, so the board does not honor the
   upstream 1200-baud handoff on this bench
+- firmware build is no longer the blocker: a fresh RP2040 UF2 can now be built
+  and cached from the pinned upstream checkout on this Mac
 
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
 - [ ] Run read-only flash detection (`klipperformac flash detect`) and capture the board's current runtime/bootloader posture
 - [ ] Put the board into BOOTSEL physically, then run:
-      - `klipperformac flash uf2 --bin ~/.klipperformac/firmware/klipper-rp2040-20261017T131241Z.uf2`
+      - `klipperformac flash uf2 --bin ~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
       - or `klipperformac flash rp2040 --bin ... --port ...` if a future board honors the handoff
 - [ ] If the board becomes ready, re-run:
       - `./bin/klipperformac doctor`

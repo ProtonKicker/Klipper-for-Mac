@@ -48,6 +48,7 @@ import sys
 import time
 import fcntl
 import termios
+import glob
 
 from . import detect, paths, process
 
@@ -154,6 +155,8 @@ IDENTITY_TIMEOUT = 5
 DEFAULT_JOBS = 4
 PROBE_TIMEOUT = 20
 RP2040_BOOT_TIMEOUT = 20
+LOCAL_TOOLCHAINS_DIR = "toolchains"
+RP2040_BUILD_TIMEOUT = 600
 
 _PROBE_RUNTIME_SRC = r"""
 import json
@@ -1559,8 +1562,7 @@ def toolchain_status():
 
     `ready` means the transports a user can flash with today: a board in
     BOOTSEL needs nothing at all, DFU needs dfu-util, serial needs
-    stm32flash. The cross compiler only matters to `flash build`, which this
-    round prints instead of running.
+    stm32flash. The embedded toolchain matters to `flash build-rp2040`.
     """
     notes = []
     missing = []
@@ -1586,10 +1588,13 @@ def toolchain_status():
                      "they cannot be re-verified against this checkout.")
     script = upstream_flash_script()
     volume_flow = bool(find_tool("diskutil")) and os.path.isdir(volumes_dir())
+    embedded, _origin = embedded_toolchain()
     return {"ready": bool(found["dfu-util"] or found["stm32flash"]
                          or volume_flow),
             "flashable": bool(volume_flow),
             "missing": missing, "found": found, "brew": brew_path(),
+            "embedded_toolchain": embedded,
+            "cached_embedded_pkg": cached_embedded_pkg(),
             "uf2_header": uf2_h,
             "elf2uf2_source": (paths.KLIPPER / "lib" / "elf2uf2" /
                                "main.cpp").is_file(),
@@ -1652,6 +1657,14 @@ def doctor_lines():
                "--dry-run this round"))
     lines.append(_doctor_row("ok" if st["brew"] else "!", "Homebrew:",
                              st["brew"] or "not found"))
+    embedded = st.get("embedded_toolchain")
+    lines.append(_doctor_row(
+        "ok" if embedded else "i", "embedded toolchain:",
+        embedded or "missing or incomplete - `flash build-rp2040` can unpack "
+        "a cached gcc-arm-embedded package into ~/.klipperformac/toolchains"))
+    if st.get("cached_embedded_pkg"):
+        lines.append(_doctor_row("i", "cached cask pkg:",
+                                 st["cached_embedded_pkg"]))
     lines.append(_doctor_row(
         "ok" if st["venv_py"] else "!", "stack venv python:",
         "{}{}".format(paths.VENV_PY, "" if st["venv_py"]
@@ -1679,7 +1692,8 @@ def doctor_lines():
     lines.append(_doctor_row(
         "i", "", "nothing here installs anything, builds anything, or writes "
         "to a board. `klipperformac flash detect` says what is attached; "
-        "`doctor` exits {} when the UF2 transport is usable."
+        "`doctor` exits {} when the UF2 transport is usable. "
+        "`flash build-rp2040` is the macOS build path."
         .format(0 if st["flashable"] else 1)))
     return lines
 
@@ -1790,6 +1804,260 @@ def build_plan(defconfig=None, chip="rp2040", jobs=DEFAULT_JOBS, overrides=()):
     return True, lines
 
 
+def _toolchains_root():
+    return paths.APP_HOME / LOCAL_TOOLCHAINS_DIR
+
+
+def _toolchain_complete(root):
+    root = os.path.realpath(str(root))
+    bindir = os.path.join(root, "bin")
+    required = ["arm-none-eabi-gcc", "arm-none-eabi-objcopy",
+                "arm-none-eabi-readelf"]
+    if not all(os.path.isfile(os.path.join(bindir, name)) for name in required):
+        return False
+    inc = os.path.join(root, "arm-none-eabi", "include", "string.h")
+    return os.path.isfile(inc)
+
+
+def _embedded_toolchain_candidates():
+    out = []
+    env = os.environ.get("KLIPPERFORMAC_ARM_TOOLCHAIN")
+    if env:
+        out.append((env, "env"))
+    for path in sorted(glob.glob(str(_toolchains_root() / "*"))):
+        if os.path.isdir(path):
+            payload = os.path.join(path, "Payload")
+            out.append((payload if os.path.isdir(payload) else path, "local"))
+    for base in ("/usr/local/Cellar/arm-none-eabi-gcc",
+                 "/opt/homebrew/Cellar/arm-none-eabi-gcc"):
+        for path in sorted(glob.glob(os.path.join(base, "*"))):
+            out.append((path, "cellar"))
+    return out
+
+
+def embedded_toolchain():
+    """(root, origin) of a complete bare-metal ARM toolchain, or (None, "")."""
+    for root, origin in _embedded_toolchain_candidates():
+        if _toolchain_complete(root):
+            return os.path.realpath(root), origin
+    return None, ""
+
+
+def cached_embedded_pkg():
+    """Homebrew cask cache path for gcc-arm-embedded, or None."""
+    pattern = os.path.expanduser(
+        "~/Library/Caches/Homebrew/downloads/*arm-gnu-toolchain*-arm-none-eabi.pkg")
+    hits = sorted(glob.glob(pattern))
+    return hits[-1] if hits else None
+
+
+def ensure_embedded_toolchain():
+    """Return a usable toolchain root, unpacking a cached pkg locally if needed."""
+    root, origin = embedded_toolchain()
+    if root:
+        return True, root, origin
+    pkg = cached_embedded_pkg()
+    if not pkg:
+        return False, "", ("no complete ARM embedded toolchain found, and no "
+                           "cached gcc-arm-embedded package was found under "
+                           "~/Library/Caches/Homebrew/downloads")
+    target = _toolchains_root() / os.path.basename(pkg).replace(".pkg", "")
+    root = target / "Payload"
+    if _toolchain_complete(root):
+        return True, str(root), "local"
+    os.makedirs(str(_toolchains_root()), exist_ok=True)
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+    code, out, err = _run(["pkgutil", "--expand-full", pkg, str(target)],
+                          FLASH_TOOL_TIMEOUT)
+    if code != 0:
+        return False, "", ("could not unpack {}: {}".format(
+            os.path.basename(pkg),
+            "; ".join(_tail(out, err, count=4)) if (out or err)
+            else "pkgutil failed"))
+    if _toolchain_complete(root):
+        return True, str(root), "pkg-cache"
+    return False, "", ("unpacked {} but a complete toolchain was still not "
+                       "found under {}".format(os.path.basename(pkg), root))
+
+
+def make_macos_tool_wrappers(toolchain_root):
+    """Wrapper dir that makes Klipper's RP2040 build work on macOS."""
+    wrapper = _toolchains_root() / "macos-build-wrap"
+    os.makedirs(wrapper, exist_ok=True)
+    gcc = os.path.join(toolchain_root, "bin", "arm-none-eabi-gcc")
+    readelf = os.path.join(toolchain_root, "bin", "arm-none-eabi-readelf")
+    with open(wrapper / "g++", "w") as f:
+        f.write("#!/bin/sh\nexec /usr/bin/clang++ -std=gnu++11 \"$@\"\n")
+    with open(wrapper / "readelf", "w") as f:
+        f.write("#!/bin/sh\nexec \"{}\" \"$@\"\n".format(readelf))
+    with open(wrapper / "cpp", "w") as f:
+        f.write(
+            "#!/usr/bin/env python3\n"
+            "import subprocess, sys\n"
+            "CPP = {!r}\n"
+            "args = ['-E', '-x', 'assembler-with-cpp']\n"
+            "outfile = None\n"
+            "it = iter(sys.argv[1:])\n"
+            "for arg in it:\n"
+            "    if arg == '-MD':\n"
+            "        continue\n"
+            "    if arg == '-MT':\n"
+            "        next(it, None)\n"
+            "        continue\n"
+            "    if arg == '-o':\n"
+            "        outfile = next(it, None)\n"
+            "        continue\n"
+            "    args.append(arg)\n"
+            "proc = subprocess.run([CPP, *args], capture_output=True)\n"
+            "if outfile is not None:\n"
+            "    with open(outfile, 'wb') as fh:\n"
+            "        fh.write(proc.stdout)\n"
+            "else:\n"
+            "    sys.stdout.buffer.write(proc.stdout)\n"
+            "sys.stderr.buffer.write(proc.stderr)\n"
+            "raise SystemExit(proc.returncode)\n".format(gcc))
+    for name in ("g++", "readelf", "cpp"):
+        os.chmod(wrapper / name, 0o755)
+    return str(wrapper)
+
+
+def rp2040_seed_config(chip="rp2040", bootloader="none", overrides=()):
+    """Minimal Klipper firmware .config for an RP2040/RP2350 USB device."""
+    chip = (chip or "rp2040").strip().lower()
+    if chip not in ("rp2040", "rp2350"):
+        return False, ["--chip {!r}: rp2040 or rp2350 expected.".format(chip)]
+    boot = (bootloader or "none").strip().lower()
+    if boot not in ("none", "16k"):
+        return False, ["--bootloader {!r}: none or 16k expected."
+                       .format(bootloader)]
+    lines = ["CONFIG_MACH_RPXXXX=y"]
+    if chip == "rp2040":
+        lines.append("CONFIG_MACH_RP2040=y")
+    else:
+        lines.append("CONFIG_MACH_RP2350=y")
+    lines.append("CONFIG_RPXXXX_USB=y")
+    if chip == "rp2040":
+        lines.append("CONFIG_RPXXXX_FLASH_START_4000=y"
+                     if boot == "16k" else "CONFIG_RPXXXX_FLASH_START_0100=y")
+    else:
+        lines.append("CONFIG_RPXXXX_FLASH_START_4000=y"
+                     if boot == "16k" else "CONFIG_RPXXXX_FLASH_START_0000=y")
+    for key, value in overrides:
+        if re.fullmatch(r"CONFIG_[A-Za-z0-9_]+", key):
+            lines.append("{}={}".format(key, value))
+    return True, lines
+
+
+def build_rp2040_plan(chip="rp2040", jobs=DEFAULT_JOBS, bootloader="none",
+                      overrides=()):
+    """Concrete plan for a seeded RP2040 firmware build on macOS."""
+    ok, seed = rp2040_seed_config(chip=chip, bootloader=bootloader,
+                                  overrides=overrides)
+    if not ok:
+        return False, seed
+    if not paths.KLIPPER.is_dir():
+        return False, ["No upstream klipper checkout at {} (run: klipperformac "
+                       "setup)".format(paths.KLIPPER)]
+    ok, root, origin = ensure_embedded_toolchain()
+    if not ok:
+        return False, [origin]
+    wrapper = make_macos_tool_wrappers(root)
+    lines = [
+        "Would build {} from a seeded {} USB config:".format(
+            paths.KLIPPER / "out" / "klipper.uf2", chip),
+        "  write {} with:".format(paths.KLIPPER / ".config"),
+    ] + ["    " + line for line in seed] + [
+        "  make -C {} olddefconfig".format(paths.KLIPPER),
+        "  mkdir -p {}".format(paths.KLIPPER / "out" / "lib" / "elf2uf2"),
+        "  make -C {} out/lib/elf2uf2/elf2uf2".format(paths.KLIPPER),
+        "  env PATH={}:{}:$PATH make -C {} -j{} out/klipper.uf2".format(
+            wrapper, os.path.join(root, "bin"), paths.KLIPPER, jobs),
+        "  verify_uf2() the result and copy it into {}".format(
+            paths.APP_HOME / FIRMWARE_DIR_NAME),
+        "[i] toolchain source: {}".format(origin),
+        "[i] wrappers live under {}".format(wrapper),
+    ]
+    return True, lines
+
+
+def build_rp2040_firmware(chip="rp2040", jobs=DEFAULT_JOBS, bootloader="none",
+                          overrides=()):
+    """Actually build and cache a Klipper RP2040/RP2350 UF2 on macOS."""
+    ok, seed = rp2040_seed_config(chip=chip, bootloader=bootloader,
+                                  overrides=overrides)
+    if not ok:
+        return False, seed
+    if not paths.KLIPPER.is_dir():
+        return False, ["No upstream klipper checkout at {} (run: klipperformac "
+                       "setup)".format(paths.KLIPPER)]
+    ok, root, origin = ensure_embedded_toolchain()
+    if not ok:
+        return False, [origin]
+    wrapper = make_macos_tool_wrappers(root)
+    old_cfg = None
+    cfg_path = paths.KLIPPER / ".config"
+    if cfg_path.exists():
+        try:
+            old_cfg = cfg_path.read_text()
+        except OSError:
+            old_cfg = None
+    lines = ["Building {} firmware with toolchain from {}.".format(chip, origin)]
+    try:
+        cfg_path.write_text("\n".join(seed) + "\n")
+        env = os.environ.copy()
+        env["PATH"] = "{}:{}:{}".format(wrapper, os.path.join(root, "bin"),
+                                        env.get("PATH", ""))
+        code, out, err = _run(["make", "-C", str(paths.KLIPPER), "clean"],
+                              RP2040_BUILD_TIMEOUT, env=env)
+        if code != 0:
+            return False, lines + ["make clean failed:"] + _tail(out, err, count=6)
+        os.makedirs(paths.KLIPPER / "out" / "lib" / "elf2uf2", exist_ok=True)
+        code, out, err = _run(["make", "-C", str(paths.KLIPPER), "olddefconfig"],
+                              RP2040_BUILD_TIMEOUT, env=env)
+        if code != 0:
+            return False, lines + ["make olddefconfig failed:"] \
+                + _tail(out, err, count=6)
+        code, out, err = _run(["make", "-C", str(paths.KLIPPER),
+                               "out/lib/elf2uf2/elf2uf2"],
+                              RP2040_BUILD_TIMEOUT, env=env)
+        if code != 0:
+            return False, lines + ["building elf2uf2 failed:"] \
+                + _tail(out, err, count=10)
+        code, out, err = _run(["make", "-C", str(paths.KLIPPER),
+                               "-j{}".format(jobs), "out/klipper.uf2"],
+                              RP2040_BUILD_TIMEOUT, env=env)
+        if code != 0:
+            return False, lines + ["firmware build failed:"] \
+                + _tail(out, err, count=10)
+        built = paths.KLIPPER / "out" / "klipper.uf2"
+        ok, why = verify_uf2(str(built), chip=chip)
+        if not ok:
+            return False, lines + ["built artifact failed verification: " + why]
+        os.makedirs(paths.APP_HOME / FIRMWARE_DIR_NAME, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        target = paths.APP_HOME / FIRMWARE_DIR_NAME / \
+            "klipper-{}-{}.uf2".format(chip, stamp)
+        shutil.copyfile(str(built), str(target))
+        lines += [
+            "Built {}".format(built),
+            "Cached {}".format(target),
+            "Tool wrappers {}".format(wrapper),
+        ]
+        return True, lines
+    except OSError as e:
+        return False, lines + ["build setup failed: {}".format(
+            getattr(e, "strerror", None) or e)]
+    finally:
+        try:
+            if old_cfg is None:
+                cfg_path.unlink(missing_ok=True)
+            else:
+                cfg_path.write_text(old_cfg)
+        except OSError:
+            pass
+
+
 # ------------------------------------------------------------------- CLI glue
 def artifact_arg(args):
     """--bin PATH, or the positional PATH the spec uses. Exactly one."""
@@ -1861,9 +2129,24 @@ def dispatch(args):
                                overrides=_overrides(args))
         _print(lines)
         return 0 if ok else 1
+    if action == "build-rp2040":
+        if bool(getattr(args, "dry_run", False)):
+            ok, lines = build_rp2040_plan(
+                chip=getattr(args, "chip", "rp2040"),
+                jobs=getattr(args, "jobs", None) or DEFAULT_JOBS,
+                bootloader=getattr(args, "bootloader", "none"),
+                overrides=_overrides(args))
+        else:
+            ok, lines = build_rp2040_firmware(
+                chip=getattr(args, "chip", "rp2040"),
+                jobs=getattr(args, "jobs", None) or DEFAULT_JOBS,
+                bootloader=getattr(args, "bootloader", "none"),
+                overrides=_overrides(args))
+        _print(lines)
+        return 0 if ok else 1
     if action not in ("uf2", "dfu", "serial", "rp2040"):
         _print("Unknown flash action: {!r} (detect, probe, uf2, dfu, serial, "
-               "rp2040, doctor, status, build)".format(action))
+               "rp2040, doctor, status, build, build-rp2040)".format(action))
         return 2
     ok, spec = artifact_arg(args)
     if not ok:
@@ -1956,6 +2239,17 @@ def add_parser(sub):
                    help="override a Kconfig symbol (repeatable)")
     b.add_argument("--dry-run", action="store_true",
                    help="accepted for symmetry: build never runs")
+
+    br = fa.add_parser("build-rp2040", help="build and cache an RP2040/RP2350 "
+                                            "Klipper UF2 on macOS")
+    br.add_argument("--chip", choices=("rp2040", "rp2350"), default="rp2040")
+    br.add_argument("--bootloader", choices=("none", "16k"), default="none",
+                    help="firmware bootloader offset profile (default none)")
+    br.add_argument("--jobs", type=int, default=DEFAULT_JOBS)
+    br.add_argument("--set", action="append", metavar="CONFIG_X=value",
+                    help="override a Kconfig symbol (repeatable)")
+    br.add_argument("--dry-run", action="store_true",
+                    help="print the macOS build plan; do not compile")
 
     u = fa.add_parser("uf2", help="write a .uf2 to an RP2040/RP2350 BOOTSEL "
                                   "volume (press BOOTSEL, plug in)")
