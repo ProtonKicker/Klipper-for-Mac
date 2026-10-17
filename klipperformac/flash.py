@@ -46,6 +46,8 @@ import struct
 import subprocess
 import sys
 import time
+import fcntl
+import termios
 
 from . import detect, paths, process
 
@@ -151,6 +153,7 @@ RESET_TIMEOUT = 15         # the RP2040 ROM unmounts the volume by itself
 IDENTITY_TIMEOUT = 5
 DEFAULT_JOBS = 4
 PROBE_TIMEOUT = 20
+RP2040_BOOT_TIMEOUT = 20
 
 _PROBE_RUNTIME_SRC = r"""
 import json
@@ -680,6 +683,77 @@ def _wait_any_volume(timeout, sleep=None):
             return None, ["  cancelled - nothing was written to the board."]
 
 
+def find_bootsel_usb(chip=None):
+    """One RP2040/RP2350 boot ROM USB row from ioreg, else None."""
+    want = None if chip in (None, "auto") else str(chip).strip().lower()
+    for row in ioreg_usb_devices():
+        vidpid = (row.get("vidpid") or "").lower()
+        kind = UF2_BOOTSEL_VIDPID.get(vidpid)
+        if not kind:
+            continue
+        if want and kind != want:
+            continue
+        return row
+    return None
+
+
+def _wait_rp2040_bootloader(timeout, chip=None, sleep=None):
+    """Wait for either picoboot USB or a BOOTSEL volume to appear."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while True:
+        try:
+            usb = find_bootsel_usb(chip=chip)
+            if usb:
+                return ("usb", usb,
+                        ["  bootloader USB {} appeared.".format(
+                            (usb.get("vidpid") or "").lower())])
+            volume = find_bootsel_volume()
+            if volume:
+                return ("volume", volume,
+                        ["  /Volumes/{} appeared.".format(volume)])
+            if time.monotonic() >= deadline:
+                return (None, None,
+                        ["  timed out after {} s. Nothing was written."
+                         .format(timeout)])
+            _nap(sleep)(VOLUME_POLL)
+        except KeyboardInterrupt:
+            return (None, None,
+                    ["  cancelled - nothing was written to the board."])
+
+
+def request_rp2040_bootloader(port):
+    """Best-effort 1200-baud/DTR pulse like upstream flash_usb.py."""
+    try:
+        with open(port, "rb") as handle:
+            fd = handle.fileno()
+            fcntl.ioctl(fd, termios.TIOCMBIS,
+                        struct.pack("I", termios.TIOCM_DTR))
+            attrs = termios.tcgetattr(fd)
+            attrs[4] = attrs[5] = termios.B1200
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            fcntl.ioctl(fd, termios.TIOCMBIC,
+                        struct.pack("I", termios.TIOCM_DTR))
+        return True, ""
+    except (OSError, termios.error, ValueError) as e:
+        return False, getattr(e, "strerror", None) or str(e)
+
+
+def ensure_rp2040_flash_tool():
+    """Build lib/rp2040_flash/rp2040_flash if it is missing."""
+    tool = paths.KLIPPER / "lib" / "rp2040_flash" / "rp2040_flash"
+    if tool.is_file() and os.access(tool, os.X_OK):
+        return True, str(tool)
+    code, out, err = _run(["make", "-C", str(paths.KLIPPER),
+                           "lib/rp2040_flash/rp2040_flash"],
+                          FLASH_TOOL_TIMEOUT)
+    if code != 0:
+        return False, "could not build rp2040_flash" + (
+            ": " + "; ".join(_tail(out, err, count=4)) if (out or err) else "")
+    if tool.is_file() and os.access(tool, os.X_OK):
+        return True, str(tool)
+    return False, "rp2040_flash was not produced at {}".format(tool)
+
+
 def flash_uf2(bin_path, volume=None, timeout=VOLUME_TIMEOUT, dry_run=False,
               sleep=None):
     """Write a .uf2 to an RP2040/RP2350 BOOTSEL volume - the SKR Pico path.
@@ -768,6 +842,81 @@ def flash_uf2(bin_path, volume=None, timeout=VOLUME_TIMEOUT, dry_run=False,
         "[!] /Volumes/{} is still there after the eject, so the firmware did "
         "not take: unplug the board, hold BOOTSEL, replug and retry."
         .format(name)]
+
+
+def flash_rp2040(bin_path, port, chip="rp2040", timeout=RP2040_BOOT_TIMEOUT,
+                 dry_run=False, sleep=None):
+    """Flash a Klipper UF2 to an RP2040 from its runtime USB serial link.
+
+    This is the macOS-native answer to upstream's Linux-only `make flash`
+    workflow for boards that are already running a Klipper-style USB app.
+    """
+    chip = (chip or "rp2040").strip().lower()
+    if chip not in ("rp2040", "rp2350"):
+        return False, ["--chip {!r}: rp2040 or rp2350 expected.".format(chip)]
+    ok, why = verify_uf2(bin_path, chip=chip)
+    if not ok:
+        return False, ["Refusing to write: " + why]
+    serial_port = None
+    boot_vidpid = str(port or "").strip().lower()
+    if boot_vidpid in UF2_BOOTSEL_VIDPID:
+        if UF2_BOOTSEL_VIDPID[boot_vidpid] != chip:
+            return False, ["{} is a {} bootloader, not {}."
+                           .format(boot_vidpid, UF2_BOOTSEL_VIDPID[boot_vidpid],
+                                   chip)]
+    else:
+        resolved, note = resolve_port(port)
+        if resolved is None:
+            return False, ["No board now matches {} - replug it and check "
+                           "`klipperformac flash detect`.".format(note or port)]
+        serial_port = resolved
+        if not re.fullmatch(r"/dev/[\w./-]{1,64}", serial_port):
+            return False, ["--port {!r} is not a /dev/... serial port path, and "
+                           "it is not an identity key either (usb:.../loc:... from "
+                           "`flash detect --json`).".format(serial_port)]
+        if not port_present(serial_port):
+            return False, ["{} does not exist. Serial ports right now: {}"
+                           .format(serial_port,
+                                   ", ".join(p["path"] for p in detect.scan())
+                                   or "(none)")]
+    if dry_run:
+        return True, [
+            "Dry run - nothing was written and no board was touched.",
+            "  firmware         {}".format(bin_path),
+            "  chip             {}".format(chip),
+            "  runtime port     {}".format(serial_port or "(already in bootloader)"),
+            "  bootloader wait  up to {} s for picoboot USB or a UF2 volume"
+            .format(timeout),
+        ]
+    lines = []
+    if serial_port is not None:
+        lines.append("Requesting RP2040 bootloader on {} via 1200 baud..."
+                     .format(serial_port))
+        ok, why = request_rp2040_bootloader(serial_port)
+        if not ok:
+            return False, lines + [
+                "Could not request bootloader on {}: {}".format(serial_port, why)]
+    else:
+        lines.append("Board already named as {} bootloader.".format(boot_vidpid))
+    lines.append("Waiting up to {} s for the RP2040 bootloader..."
+                 .format(timeout))
+    mode, target, wait_lines = _wait_rp2040_bootloader(timeout, chip=chip,
+                                                       sleep=sleep)
+    lines += wait_lines
+    if mode == "volume":
+        ok, more = flash_uf2(bin_path, volume=target, timeout=timeout,
+                             dry_run=False, sleep=sleep)
+        return ok, lines + more
+    if mode != "usb":
+        return False, lines + _bootloader_instructions()
+    ok, tool = ensure_rp2040_flash_tool()
+    if not ok:
+        return False, lines + [tool]
+    ok, more = run_flasher([tool, bin_path], dry_run=False,
+                           lines=lines + ["Flashing via rp2040_flash..."])
+    if ok:
+        more.append("Start the stack:  klipperformac up")
+    return ok, more
 
 
 def _copy_to_volume(bin_path, mount):
@@ -1712,9 +1861,9 @@ def dispatch(args):
                                overrides=_overrides(args))
         _print(lines)
         return 0 if ok else 1
-    if action not in ("uf2", "dfu", "serial"):
+    if action not in ("uf2", "dfu", "serial", "rp2040"):
         _print("Unknown flash action: {!r} (detect, probe, uf2, dfu, serial, "
-               "doctor, status, build)".format(action))
+               "rp2040, doctor, status, build)".format(action))
         return 2
     ok, spec = artifact_arg(args)
     if not ok:
@@ -1749,6 +1898,16 @@ def dispatch(args):
             bin_path, port, chip=getattr(args, "chip", "stm32f407"),
             tool=getattr(args, "tool", "auto"),
             dry_run=bool(getattr(args, "dry_run", False))))
+    elif action == "rp2040":
+        port = getattr(args, "port", None)
+        if not port:
+            _print(["--port is required: give the runtime /dev/cu.* node or the "
+                    "stable identity key from `flash detect --json`."])
+            return 1
+        ok, lines = guarded(lambda: flash_rp2040(
+            bin_path, port, chip=getattr(args, "chip", "rp2040"),
+            timeout=getattr(args, "timeout", None) or RP2040_BOOT_TIMEOUT,
+            dry_run=bool(getattr(args, "dry_run", False))))
     else:  # uf2/dfu/serial were the only options the check above allowed
         _print("Unknown flash action: {!r}".format(action))
         return 2
@@ -1760,8 +1919,8 @@ def add_parser(sub):
     """The `flash` subcommand. Kept whole in here so cli.py's main() only gains
     one call and one handler entry."""
     p = sub.add_parser(
-        "flash", help="write firmware to a board: UF2 (BOOTSEL volume), DFU "
-                      "(dfu-util) or STM32 serial (boot0)")
+        "flash", help="write firmware to a board: UF2 (BOOTSEL volume), RP2040 "
+                      "runtime USB, DFU (dfu-util) or STM32 serial (boot0)")
     fa = p.add_subparsers(dest="action")
     fa.required = True
 
@@ -1810,6 +1969,22 @@ def add_parser(sub):
                         .format(VOLUME_TIMEOUT))
     u.add_argument("--dry-run", action="store_true",
                    help="print what would be written; touch nothing")
+
+    r = fa.add_parser("rp2040", help="flash a .uf2 to an RP2040/RP2350 that is "
+                                      "already on USB as a runtime device")
+    r.add_argument("path", nargs="?")
+    r.add_argument("--bin", metavar="FILE",
+                   help="the .uf2 to write")
+    r.add_argument("--port", metavar="PATH", required=True,
+                   help="/dev/cu.* runtime port, or the stable identity key "
+                        "from `flash detect --json`")
+    r.add_argument("--chip", choices=("rp2040", "rp2350"),
+                   default="rp2040")
+    r.add_argument("--timeout", type=int, metavar="SEC",
+                   default=RP2040_BOOT_TIMEOUT,
+                   help="seconds to wait for the bootloader (default {})"
+                        .format(RP2040_BOOT_TIMEOUT))
+    r.add_argument("--dry-run", action="store_true")
 
     f = fa.add_parser("dfu", help="write a .bin with dfu-util (STM32 in DFU "
                                   "mode)")

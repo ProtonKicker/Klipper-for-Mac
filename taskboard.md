@@ -29,6 +29,9 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Ran live tier before/after fixes to measure remaining failures
 - [x] Added `klipperformac flash probe` for an explicit read-only board handshake while the stack is down
 - [x] Proved the current bench board times out even under a direct read-only Klipper handshake
+- [x] Installed/unpacked a full ARM embedded toolchain locally and built a fresh RP2040 `klipper.uf2`
+- [x] Added `klipperformac flash rp2040` for macOS-native runtime-to-bootloader flashing attempts
+- [x] Proved the current bench board does not enter bootloader on the host-driven 1200-baud request
 
 ## Landed Fixes
 
@@ -53,6 +56,8 @@ Continue the robustness-testing loop from the saved transcript:
 6. `klipperformac/flash.py`
    - add `flash probe --port ...` to test a direct, read-only Klipper serial handshake
    - bound the probe with a clean timeout message instead of a hanging subprocess
+   - add `flash rp2040 --bin ... --port ...` to request RP2040 bootloader mode from a live USB runtime device on macOS
+   - support both picoboot USB and BOOTSEL volume follow-up paths without relying on Linux `/dev/serial/by-path`
 
 ## Tests Added
 
@@ -73,6 +78,12 @@ Continue the robustness-testing loop from the saved transcript:
   - probe success/failure/non-JSON/timeout paths
   - flash help lists the new probe action
 
+- `tests/flash/test_flash_rp2040.py`
+  - rp2040 dry-run
+  - timeout and volume delegation behavior
+  - picoboot path
+  - dispatch requires `--port`
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -84,6 +95,10 @@ Continue the robustness-testing loop from the saved transcript:
 - `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101`
   now gives a bounded direct result instead of hanging:
   - `MCU probe failed ... timed out after 20s`
+- built firmware artifact:
+  - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T131241Z.uf2`
+  - SHA256 `cf1693d82e82eb1ae88d44befba6040db0e36480c1eb76588eaae94d12cefedb`
+- `make qa-full` now passes at `3090 passed, 25 deselected`
 
 ## Live Tier Status
 
@@ -101,6 +116,8 @@ Remaining live failures all share one bench-state problem:
 - `FIRMWARE_RESTART` does not recover the board to ready
 - powerloss live tests fail because they require a ready stack first
 - a direct port-level handshake now fails the same way even with the stack down
+- a host-driven RP2040 bootloader request also times out, so no automated flash
+  can proceed until the board is put into BOOTSEL physically
 
 ## Suspected Live Blocker
 
@@ -118,12 +135,17 @@ Evidence:
 - `klippy.log` shows repeated `mcu 'mcu': Unable to connect`
 - `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101` times out
   waiting for `identify_response` even with klippy stopped
+- `./bin/klipperformac flash rp2040 --bin ... --port /dev/cu.usbmodem142101`
+  times out waiting for the bootloader, so the board does not honor the
+  upstream 1200-baud handoff on this bench
 
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
 - [ ] Run read-only flash detection (`klipperformac flash detect`) and capture the board's current runtime/bootloader posture
-- [ ] Decide whether to re-flash the bench board; do this only deliberately because it changes live hardware state
+- [ ] Put the board into BOOTSEL physically, then run:
+      - `klipperformac flash uf2 --bin ~/.klipperformac/firmware/klipper-rp2040-20261017T131241Z.uf2`
+      - or `klipperformac flash rp2040 --bin ... --port ...` if a future board honors the handoff
 - [ ] If the board becomes ready, re-run:
       - `./bin/klipperformac doctor`
       - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live`
