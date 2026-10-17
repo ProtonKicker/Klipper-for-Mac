@@ -36,6 +36,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Verified `flash build-rp2040` succeeds end-to-end on this Mac and caches a fresh UF2
 - [x] Added offline regression coverage for `up`/`down`/`restart` lifecycle edge branches and `_wait_ready()` timeout diagnostics
 - [x] Hardened `data --set` relocation so post-move failures roll back files, settings, and the previously running stack
+- [x] Hardened config path sync so hand-edited but valid `[virtual_sdcard]` and `[server]` sections still get repaired safely
 
 ## Landed Fixes
 
@@ -69,6 +70,12 @@ Continue the robustness-testing loop from the saved transcript:
 7. `klipperformac/cli.py`
    - make `relocate_data()` roll back if settings write, config sync, or restart fails after files moved
    - restore the old data pointer and previous settings before surfacing the failure
+
+8. `klipperformac/configgen.py`
+   - add a section-scoped key upsert helper instead of assuming canonical config layout
+   - keep `sync_virtual_sdcard()` working when `path:` is not the first key or was edited away
+   - keep `sync_moonraker_conf()` scoped to `[server]` so unrelated `klippy_uds_address:` keys survive unchanged
+   - restore missing `[server]` keys instead of silently leaving a half-pinned Moonraker config behind
 
 ## Tests Added
 
@@ -112,6 +119,12 @@ Continue the robustness-testing loop from the saved transcript:
   - rollback on config sync failure
   - rollback on restart failure
 
+- `tests/test_configgen_paths.py`
+  - hand-edited `[virtual_sdcard]` still rewrites to the active data folder
+  - missing `path:` is restored inside `[virtual_sdcard]`
+  - only `[server].klippy_uds_address` is rewritten
+  - missing `[server]` keys are restored during sync
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -129,11 +142,18 @@ Continue the robustness-testing loop from the saved transcript:
 - built through product command:
   - [x] `klipperformac flash build-rp2040`
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-- `make qa-full` now passes at `3106 passed, 25 deselected`
+- `make qa-full` now passes at `3110 passed, 25 deselected`
+- focused config/path regressions:
+  - `107 passed` across `tests/test_configgen_lan.py`, `tests/test_configgen_webcam.py`, `tests/test_configgen_paths.py`, and `tests/deep/test_clmisc_data_ui.py`
+  - `9 passed` in `tests/regress/test_i_02_generated_xheaders_pin.py`
 - `klipperformac flash doctor` now reports:
   - embedded toolchain path
   - cached cask package path
   - `flash build-rp2040` as the macOS build path
+- `./bin/klipperformac doctor` now reports:
+  - `[ok] upstream checkouts pristine`
+  - `[ok] c_helper builds with compat shims`
+  - `[i] host scheduling posture: klippy not running`
 
 ## Live Tier Status
 
@@ -165,7 +185,6 @@ Current best read:
 
 Evidence:
 
-- `./bin/klipperformac doctor` still reports `klipper state: error`
 - `./bin/klipperformac status` shows `klippy startup`
 - `klippy.log` shows repeated `mcu 'mcu': Unable to connect`
 - `./bin/klipperformac flash probe --port /dev/cu.usbmodem142101` times out

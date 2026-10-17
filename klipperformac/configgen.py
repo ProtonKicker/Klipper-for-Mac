@@ -241,6 +241,50 @@ def _server_span(text):
     return m.end(), m.end() + (nxt.start() if nxt else len(text) - m.end())
 
 
+def _section_info(text, name):
+    """(header_text, body_start, body_end) for [name], or None."""
+    m = re.search(r"(?im)^[ \t]*\[" + re.escape(name) +
+                  r"\][ \t]*(?:\r?\n|$)", text)
+    if m is None:
+        return None
+    nxt = re.search(r"(?m)^[ \t]*\[", text[m.end():])
+    end = m.end() + (nxt.start() if nxt else len(text) - m.end())
+    return text[m.start():m.end()], m.end(), end
+
+
+def _section_eol(text, header_text):
+    if header_text.endswith("\r\n"):
+        return "\r\n"
+    if header_text.endswith("\n"):
+        return "\n"
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _section_key_indent(body):
+    m = re.search(r"(?m)^([ \t]*)[A-Za-z0-9_][^:\r\n]*[ \t]*:", body)
+    return m.group(1) if m else ""
+
+
+def _upsert_section_key(text, section, key, value):
+    """Rewrite `key:` only inside `[section]`, adding it when missing."""
+    info = _section_info(text, section)
+    if info is None:
+        eol = "\r\n" if "\r\n" in text else "\n"
+        block = "[{}]{}{}: {}{}".format(section, eol, key, value, eol)
+        return block + (eol + text if text else "")
+    header_text, start, end = info
+    body = text[start:end]
+    pat = r"(?im)^([ \t]*" + re.escape(key) + r"[ \t]*:[ \t]*)[^\r\n]*$"
+    if re.search(pat, body):
+        new_body = re.sub(pat, lambda m: m.group(1) + value, body, count=1)
+    else:
+        eol = _section_eol(text, header_text)
+        indent = _section_key_indent(body)
+        prefix = "" if header_text.endswith(("\n", "\r\n")) else eol
+        new_body = prefix + indent + key + ": " + value + eol + body
+    return text[:start] + new_body + text[end:]
+
+
 def _rewrite_server_host(text, want_host):
     """Pin `host:` inside the [server] section, adding the line (or the section)
     when it is missing.
@@ -251,21 +295,7 @@ def _rewrite_server_host(text, want_host):
     host line is an OPEN port while our CLI says "this Mac only". Our generated
     config therefore always carries a host line, and this rewrite guarantees one
     survives, so `lan off` can never be a no-op that reports success."""
-    span = _server_span(text)
-    if span is None:
-        # No [server] section: prepend the one line Moonraker needs. Existing
-        # content keeps its place; Moonraker reads sections in any order.
-        return "[server]\nhost: {}\n\n".format(want_host) + text
-    body = text[span[0]:span[1]]
-    if re.search(r"(?im)^[ \t]*host[ \t]*:", body):
-        new_body = re.sub(r"(?im)^[ \t]*host[ \t]*:[^\r\n]*$",
-                          "host: " + want_host, body, count=1)
-    else:
-        head_end = re.match(r"[^\r\n]*(?:\r\n|\n|$)", body).end()
-        eol = "\r\n" if body[:head_end].endswith("\r\n") else "\n"
-        new_body = (body[:head_end].rstrip("\r\n") + eol + "host: " + want_host
-                    + eol + body[head_end:])
-    return text[:span[0]] + new_body + text[span[1]:]
+    return _upsert_section_key(text, "server", "host", want_host)
 
 
 def server_host():
@@ -340,10 +370,7 @@ def sync_virtual_sdcard():
     if "[virtual_sdcard]" not in text:
         return False
     desired = str(paths.DATA / "gcodes")
-    updated = re.sub(
-        r"(\[virtual_sdcard\]\s*\n\s*path:\s*)[^\n]*",
-        lambda m: m.group(1) + desired,
-        text, count=1)
+    updated = _upsert_section_key(text, "virtual_sdcard", "path", desired)
     if updated != text:
         paths.write_config(paths.PRINTER_CFG, updated, encoding)
         return True
@@ -360,10 +387,7 @@ def sync_moonraker_conf():
         return False
     text, encoding = paths.read_config(paths.MOONRAKER_CONF)
     desired = str(paths.API_SOCKET)
-    updated, n = re.subn(
-        r"(klippy_uds_address:\s*)[^\n]*",
-        lambda m: m.group(1) + desired,
-        text)
+    updated = _upsert_section_key(text, "server", "klippy_uds_address", desired)
     updated = _rewrite_server_host(
         updated, "0.0.0.0" if paths.lan_enabled() else "127.0.0.1")
     if updated != text:
