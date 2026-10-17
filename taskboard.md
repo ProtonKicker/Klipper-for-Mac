@@ -46,6 +46,8 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Added a real opt-in hardware test for `flash probe` that stops the stack, handshakes the bench board, and restores the stack
 - [x] Deduped the common BOOTSEL double-report so one RP2040 does not show up twice as both a UF2 volume and a USB bootloader device
 - [x] Fixed the per-MCU live probe tests to reload the real install, removing the last artificial skips from `make test-live`
+- [x] Added a direct `swiftc` logic harness so GUI parser/state checks run in QA even while `swift test` is blocked on this Mac
+- [x] Fixed the Swift Moonraker parser to read print progress from `virtual_sdcard`, which is where the live API actually serves it
 
 ## Landed Fixes
 
@@ -118,6 +120,17 @@ Continue the robustness-testing loop from the saved transcript:
 17. `tests/climcu/test_live_mcu_probe.py`
    - reload `paths` and `cli` against the real `~/.klipperformac` install before each live test
    - stop depending on whichever env/module state happened to be imported first in the full live suite
+
+18. `KlipperMac/Sources/KlipperMac/Core/Moonraker.swift`
+   - factor the parser into a pure `status(info:query:)` helper so it can be checked without SwiftPM
+   - query `virtual_sdcard` and read progress from there instead of from `print_stats`, matching the live Moonraker payload
+
+19. `scripts/qa/swift_logic.sh`
+   - compile and run a small direct Swift logic harness with `swiftc`
+   - give this Mac a runnable Swift-side gate even though `swift test` is blocked by the local Command Line Tools install
+
+20. `scripts/qa/fast.sh`
+   - run the new direct Swift logic checks as part of the existing Swift step
 
 ## Tests Added
 
@@ -198,6 +211,11 @@ Continue the robustness-testing loop from the saved transcript:
 - `tests/climcu/test_live_mcu_probe.py`
   - reload the real install for live per-MCU probing instead of inheriting stale module state
 
+- `KlipperMac/TestsLogic/SwiftLogicChecks.swift`
+  - serial JSON fixture + legacy detection checks
+  - Moonraker parser checks for `virtual_sdcard` progress and partial payloads
+  - stack snapshot overall-state checks
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -233,6 +251,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `38 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
 - live per-MCU probe tier:
   - `3 passed` in `tests/climcu/test_live_mcu_probe.py`
+- direct Swift logic harness:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
@@ -241,6 +261,9 @@ Continue the robustness-testing loop from the saved transcript:
   - `mcu: rp2040`
   - `clock_freq: 12000000`
   - `version: 461c4e3`
+- live Moonraker payload check:
+  - `/printer/objects/query?print_stats&extruder&heater_bed&gcode_move` does not include `progress` under `print_stats`
+  - the Swift app now asks for `virtual_sdcard` and parses progress from there
 - `./bin/klipperformac selftest` with the stack down now starts with:
   - `[i]  stack appears stopped: selftest will report connection failures until \`klipperformac up\`.`
 - `klipperformac flash doctor` now reports:
@@ -259,6 +282,7 @@ Continue the robustness-testing loop from the saved transcript:
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
+- `make qa-fast` now runs direct Swift parser/state checks through `scripts/qa/swift_logic.sh`
 
 ## Live Tier Status
 
@@ -285,7 +309,7 @@ Evidence:
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
-- [ ] Expand the new Swift coverage into `StackSnapshot` / `Moonraker.status()` degraded-state cases and transient CLI noise
+- [ ] Expand the direct Swift harness and future `swift test` coverage into more degraded-state cases (`klippy startup`, partial object trees, transient CLI noise)
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac
 - [ ] Expand the new Swift tests into `StackSnapshot` / `Moonraker.status()` degraded-state cases (`klippy startup`, partial object trees, transient `serial --json` noise)
 

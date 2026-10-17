@@ -4,7 +4,7 @@
 #
 # Goal: everything a human should run a hundred times a day, in <20 seconds:
 #   sh      bash -n (syntax) on every shell script in the repo
-#   swift   swiftc -parse on every Swift source (syntax only, no codegen)
+#   swift   swiftc -parse on every Swift source + direct swiftc logic checks
 #   py      ruff check klipperformac           (config: pyproject.toml)
 #   compile python -m compileall klipperformac (catches syntax errors ruff can)
 #   test    the fast offline subset: tests/test_*.py + tests/regress,
@@ -138,7 +138,7 @@ fi
 
 # ============================================================ step: swift ===
 if qa_enabled swift; then
-    qa_header "swift: swiftc -parse (syntax only) on KlipperMac sources"
+    qa_header "swift: swiftc -parse on sources + direct swift logic checks"
     if ! command -v swiftc >/dev/null 2>&1; then
         if [ "${QA_SKIP_SWIFT:-0}" = 1 ]; then
             qa_note_skip "swift: swiftc not installed"
@@ -157,6 +157,14 @@ if qa_enabled swift; then
             # -parse = lex+parse only: no SDK, no codegen, no signing. ~1s.
             if printf '%s\n' "$swift_srcs" | xargs swiftc -parse >/tmp/qa_swift.err 2>&1; then
                 printf '  OK %s Swift file(s) parse\n' "$cnt"
+                if sh scripts/qa/swift_logic.sh >/tmp/qa_swift_logic.out 2>/tmp/qa_swift_logic.err; then
+                    printf '  OK direct swift logic checks\n'
+                else
+                    printf '  FAIL direct swift logic checks\n'
+                    sed -e 's/^/      /' /tmp/qa_swift_logic.err | tail -30
+                    sed -e 's/^/      /' /tmp/qa_swift_logic.out | tail -30
+                    qa_note_fail swift-logic
+                fi
             else
                 printf '  FAIL swiftc -parse (%s files)\n' "$cnt"
                 sed -e 's/^/      /' /tmp/qa_swift.err | tail -30

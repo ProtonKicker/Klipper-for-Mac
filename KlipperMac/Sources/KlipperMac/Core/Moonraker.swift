@@ -51,22 +51,27 @@ enum Moonraker {
         // Both endpoints are independent — fetch together so a status poll costs
         // one round trip instead of two sequential ones.
         async let infoTask = getJSON("/server/info", port: port)
-        async let queryTask = getJSON("/printer/objects/query?print_stats&extruder&heater_bed&gcode_move",
+        async let queryTask = getJSON("/printer/objects/query?print_stats&virtual_sdcard&extruder&heater_bed&gcode_move",
                                       port: port, timeout: 1)
-        guard let info = await infoTask, let r = info["result"] as? [String: Any] else { return nil }
+        guard let info = await infoTask else { return nil }
+        return status(info: info, query: await queryTask)
+    }
 
+    static func status(info: [String: Any], query: [String: Any]?) -> PrinterStatus? {
+        guard let r = info["result"] as? [String: Any] else { return nil }
         var ps = PrinterStatus(
             connected: r["klippy_connected"] as? Bool ?? false,
             klippyState: r["klippy_state"] as? String ?? "?"
         )
 
-        if let q = await queryTask,
+        if let q = query,
            let st = (q["result"] as? [String: Any])?["status"] as? [String: Any] {
             let stats = st["print_stats"] as? [String: Any]
+            let vsd = st["virtual_sdcard"] as? [String: Any]
             ps.printState = stats?["state"] as? String
             ps.filename = stats?["filename"] as? String
             ps.message = stats?["message"] as? String
-            if let pr = stats?["progress"] as? Double { ps.progress = pr }
+            if let pr = vsd?["progress"] as? Double { ps.progress = pr }
 
             func temps(_ key: String) -> Temp? {
                 guard let o = st[key] as? [String: Any] else { return nil }
