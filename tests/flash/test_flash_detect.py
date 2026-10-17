@@ -130,6 +130,33 @@ def test_a_mounted_bootloader_volume_becomes_a_target(fstack, uf2bytes):
     assert targets[0]["mount"].endswith("/RPI-RP2")
 
 
+def test_one_bootsel_volume_and_one_boot_usb_row_merge_into_one_target(fstack):
+    fstack.make_volume("RPI-RP2")
+    targets = fstack.flash.classify_targets(
+        [], [{"vidpid": "2e8a:0003", "product": "rp2040", "serial": "ABC123",
+              "location": "14100000"}], ["RPI-RP2"])
+    assert len(targets) == 1
+    row = targets[0]
+    assert row["kind"] == "uf2-volume"
+    assert row["state"] == "uf2-bootloader"
+    assert row["mount"].endswith("/RPI-RP2")
+    assert row["vidpid"] == "2e8a:0003"
+    assert row["serial"] == "ABC123"
+    assert row["location"] == "14100000"
+    assert "UF2 bootloader volume (rp2040)" == row["product"]
+
+
+def test_multiple_bootsel_targets_stay_separate_when_the_match_is_ambiguous(fstack):
+    fstack.make_volume("RPI-RP2")
+    fstack.make_volume("RPI-RP2-1")
+    targets = fstack.flash.classify_targets(
+        [], [{"vidpid": "2e8a:0003", "product": "rp2040", "serial": "ABC123",
+              "location": "14100000"}], ["RPI-RP2", "RPI-RP2-1"])
+    assert len(targets) == 3
+    assert [t["kind"] for t in targets].count("uf2-volume") == 2
+    assert [t["kind"] for t in targets].count("usb") == 1
+
+
 def test_anordinary_volume_is_not_a_target(fstack):
     """A USB stick is mounted, writable and not a board: the INFO_UF2.TXT shape
     is the proof, and the classifier uses the same function the writer uses."""

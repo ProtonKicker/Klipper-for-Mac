@@ -44,6 +44,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Fixed the powerloss live-test harness/fixture path so the live tier can actually talk to Moonraker inside `tests/powerloss/`
 - [x] Recovered the live bench from "startup" to `klippy ready`, then re-ran doctor, selftest, and the full live tier
 - [x] Added a real opt-in hardware test for `flash probe` that stops the stack, handshakes the bench board, and restores the stack
+- [x] Deduped the common BOOTSEL double-report so one RP2040 does not show up twice as both a UF2 volume and a USB bootloader device
 
 ## Landed Fixes
 
@@ -108,6 +109,10 @@ Continue the robustness-testing loop from the saved transcript:
 
 15. `tests/powerloss/conftest.py`
    - keep the offline `no_network` guard for the directory, but let `@pytest.mark.live` tests use real sockets
+
+16. `klipperformac/flash.py`
+   - merge the common one-volume/one-USB BOOTSEL case into one richer `flash detect` target instead of double-reporting the same RP2040
+   - keep ambiguous multi-volume/multi-device cases separate rather than guessing across boards
 
 ## Tests Added
 
@@ -181,6 +186,10 @@ Continue the robustness-testing loop from the saved transcript:
   - live `flash probe` handshake against the real bench board while the stack is temporarily down
   - stack restore in `finally` so the rest of the live tier still runs
 
+- `tests/flash/test_flash_detect.py`
+  - dedupe a single BOOTSEL volume plus a single BOOTSEL USB device into one target
+  - keep ambiguous multi-BOOTSEL cases unmerged
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -198,7 +207,7 @@ Continue the robustness-testing loop from the saved transcript:
 - built through product command:
   - [x] `klipperformac flash build-rp2040`
   - [x] `~/.klipperformac/firmware/klipper-rp2040-20261017T134142Z.uf2`
-- `make qa-full` now passes at `3111 passed, 25 deselected`
+- `make qa-full` now passes at `3119 passed, 26 deselected`
 - focused config/path regressions:
   - `107 passed` across `tests/test_configgen_lan.py`, `tests/test_configgen_webcam.py`, `tests/test_configgen_paths.py`, and `tests/deep/test_clmisc_data_ui.py`
   - `9 passed` in `tests/regress/test_i_02_generated_xheaders_pin.py`
@@ -212,6 +221,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `2 passed` in `tests/powerloss/test_live_kill.py` with the live marker enabled
 - live flash readonly tier:
   - `6 passed` in `tests/flash/test_flash_live_readonly.py`
+- focused flash detect/probe/live regressions:
+  - `38 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
@@ -268,7 +279,6 @@ Evidence:
 ## Next Suggested Moves
 
 - [ ] Read current live `klippy.log` and confirm whether the SKR Pico is flashed with the expected Klipper firmware
-- [ ] Decide whether to dedupe BOOTSEL volume + USB bootloader double-reporting in `flash detect`
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run `KlipperMacTests`
 - [ ] Expand the new Swift coverage into `StackSnapshot` / `Moonraker.status()` degraded-state cases and transient CLI noise
 - [ ] Fix the local Apple toolchain / install full Xcode so `swift test` can run the new `KlipperMacTests` target on this Mac

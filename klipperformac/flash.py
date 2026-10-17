@@ -1487,6 +1487,45 @@ def claimed_by_section(sections=None):
     return out
 
 
+def _merge_bootsel_rows(rows):
+    """Collapse the common BOOTSEL double-report into one richer target.
+
+    On macOS one RP2040 in BOOTSEL can appear twice at once:
+      * as a writable UF2 volume under /Volumes
+      * as a USB bootloader device in the IOUSB plane
+
+    That is one board, not two actions. The safe merge rule is conservative:
+    only when there is exactly one UF2 volume row and exactly one USB BOOTSEL
+    row do we combine them. Ambiguous cases (multiple volumes or multiple USB
+    bootloaders) are left alone rather than guessed across boards.
+    """
+    volumes = [r for r in rows if r.get("kind") == "uf2-volume"]
+    usb = [r for r in rows if r.get("kind") == "usb"
+           and r.get("state") == "uf2-bootloader"]
+    if len(volumes) != 1 or len(usb) != 1:
+        return rows
+    merged = dict(volumes[0])
+    boot = usb[0]
+    for key in ("vidpid", "serial", "location"):
+        if boot.get(key):
+            merged[key] = boot[key]
+    product = boot.get("product") or ""
+    if product:
+        merged["product"] = "UF2 bootloader volume ({})".format(product)
+    merged["hint"] = "board is in BOOTSEL: safe to write a .uf2"
+    out = []
+    dropped = {id(volumes[0]), id(usb[0])}
+    inserted = False
+    for row in rows:
+        if id(row) in dropped:
+            if not inserted:
+                out.append(merged)
+                inserted = True
+            continue
+        out.append(row)
+    return out
+
+
 def classify_targets(ports, usb, volumes, claimed=None):
     """Pure classifier behind `flash detect`: what is attached, in which state.
 
@@ -1548,7 +1587,7 @@ def classify_targets(ports, usb, volumes, claimed=None):
                      "key": row.get("key") or "",
                      "location": row.get("location") or "",
                      "mcu": claimed.get(path, "")})
-    return rows
+    return _merge_bootsel_rows(rows)
 
 
 def detect_boards():
