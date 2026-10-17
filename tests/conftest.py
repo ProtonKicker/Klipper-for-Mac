@@ -10,7 +10,7 @@ import types
 import pytest
 
 MODULES = ("paths", "configgen", "detect", "versions", "shaper", "process",
-           "cam", "installer", "cli")
+           "cam", "installer", "cli", "batteryguard")
 
 
 @pytest.fixture

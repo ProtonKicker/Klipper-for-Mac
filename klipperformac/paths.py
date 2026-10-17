@@ -284,7 +284,7 @@ def set_data(path):
     """Point all data-derived paths at a new folder (relocation-safe)."""
     global DATA, CONFIG, PRESETS, PRINTER_CFG, MOONRAKER_CONF, RUN, STATE
     global LOGS, WEB, WEB_MAINSAIL, WEB_FLUIDD, API_SOCKET, KLIPPY_LOG
-    global MOONRAKER_LOG, CAM_STATE, CAM_LOG, TIMELAPSE, CLI_LOCK
+    global MOONRAKER_LOG, CAM_STATE, CAM_LOG, TIMELAPSE, CLI_LOCK, POWERLOSS
     DATA = Path(path).expanduser()
     CONFIG = DATA / "config"
     PRESETS = CONFIG / "presets"
@@ -303,6 +303,12 @@ def set_data(path):
     CAM_LOG = LOGS / "klippacam.log"
     TIMELAPSE = DATA / "timelapse"
     CLI_LOCK = RUN / "cli.lock"
+    # Power-loss evidence (clean-stop marker + print journal). Deliberately NOT
+    # under run/: process._load() deletes run/state.json the first time it reads
+    # a record from another boot (process.py:110-112), so anything hung off the
+    # stack record dies with it exactly when a recovery tool needs it - after a
+    # reboot or a crash. This folder survives both.
+    POWERLOSS = DATA / "powerloss"
 
 
 # One-time migration from the pre-rename home (package was called "maklipper").

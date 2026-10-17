@@ -32,7 +32,7 @@ import sys
 import pytest
 
 MODULES = ("paths", "configgen", "detect", "versions", "shaper", "process",
-           "cam", "installer", "cli")
+           "cam", "installer", "cli", "batteryguard")
 
 
 def _load(modules=MODULES):
@@ -82,6 +82,13 @@ def fake(monkeypatch, tmp_path):
     # Never signal anything: this Mac has a live stack.
     monkeypatch.setattr(ns["process"], "kill_all", lambda: [])
     monkeypatch.setattr(ns["cam"], "kill_orphans", lambda: [])
+    # `down`/`killall`/`uninstall` also stop the battery watchdog; a real
+    # kill_orphans() here would scan the machine and could signal the guard of
+    # the developer's live install (the ledger is what it normally reads, and
+    # the scan is machine-wide).
+    monkeypatch.setattr(ns["batteryguard"], "kill_orphans", lambda: [])
+    monkeypatch.setattr(ns["batteryguard"], "stop",
+                        lambda *a, **k: (False, ["Battery guard was not on."]))
     ns["home"] = home
     ns["data"] = data
     ns["root"] = root

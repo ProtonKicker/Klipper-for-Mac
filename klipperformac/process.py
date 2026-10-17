@@ -8,6 +8,11 @@ Modeled on the startup sequence of the `instances` app, adapted for macOS:
     a fully-dead state self-heals on next start().
   * Children get their own sessions (start_new_session) so closing the
     terminal cannot kill a running print, and caffeinate guards sleep.
+  * start()/stop()/kill_all() also write the power-loss markers
+    (klipperformac/powerloss.py): an open session file while nothing runs is how
+    a crash or a power cut is recognised at the next read. They live in
+    data/powerloss/ and NOT here, because _load() deletes run/state.json the
+    moment kern.boottime moves - evidence that erases itself cannot testify.
 """
 import json
 import os
@@ -18,7 +23,7 @@ import socket
 import subprocess
 import time
 
-from . import paths, shaper
+from . import paths, powerloss, shaper
 from .compat import (QOS_ENV_VALUE, QOS_ENV_VAR, build_env,
                      ensure_runtime_shims, invalidate_stale_build, shim_env)
 
@@ -428,6 +433,288 @@ def _clear_caffeinate_record():
         pass
 
 
+# ---- battery guard: an optional tracked child, kept owned ----------------
+#
+# The low-battery watchdog (klipperformac/batteryguard.py) is a detached child
+# the user turns on and off, like the camera - deliberately NOT a member of
+# SERVICES/MARKERS: `status`, state.json and the GUI stack list describe the
+# stack, and an optional guard would read as a service that is always DOWN.
+# Because its argv carries no path this install can point at (`-m
+# klipperformac.batteryguard run`), _service_kind() cannot tell it from another
+# checkout's guard, so - exactly like caffeinate - every pid we start is written
+# down in its own ledger and only what we wrote down, re-validated against the
+# exact argv shape, is ever ours to signal. That is also what makes `down` and
+# `killall` able to reap it: an untracked watchdog is a process nobody can turn
+# off, and this one posts to the printer on battery.
+GUARD_ARGV = ["-m", "klipperformac.batteryguard", "run"]
+_GUARD_LIMIT = 16
+
+
+def guard_record_path():
+    return paths.RUN / "batteryguard.json"
+
+
+def _read_guard_record():
+    try:
+        with open(guard_record_path()) as f:
+            rec = json.load(f)
+    except Exception:
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def is_guard_argv(cmd):
+    """The argv tail our guard is spawned with, in the argv positions it lands
+    in: `<interpreter> -m klipperformac.batteryguard run ...`."""
+    toks = cmd.split()
+    return len(toks) >= 4 and toks[1:4] == GUARD_ARGV
+
+
+# A python interpreter, in either spelling macOS gives you: the path that was
+# exec'd (`.../venv/bin/python`) or the one a framework build re-exec's itself
+# into (`.../Python.framework/Versions/x.y/Resources/Python.app/Contents/MacOS/
+# Python`). Measured on this Mac: the second one is what `ps` reports for a
+# venv python that is a symlink into a framework build, so an identity rule that
+# only accepts the first would make this install's own guard unkillable.
+_PYTHONISH = re.compile(r"(?:^|/)(?:python[\d.]*)$|(?:/|\b)MacOS/Python$")
+
+
+def is_guard_cmd(cmd):
+    """Does this command line read as OUR guard?
+
+    Asked both of a pid this install's ledger names (the ledger already vouches
+    for app_home and boot_time) and of every line of the machine-wide orphan
+    scan - so this is the whole kill-authority rule, and the argv tail alone is
+    not it. A *different* install's guard is spawned with a byte-identical
+    argv, and it is not ours to signal: another account's watchdog dying means
+    a print nobody authorised losing its battery protection (AGENTS.md: only
+    what is provably ours is ever touched). The interpreter therefore has to
+    be either under this install's folders, or a python binary that is NOT
+    claimed by a foreign install - the framework path `ps` reports for our own
+    venv symlink after its re-exec is exactly that (measured on this Mac)."""
+    toks = cmd.split()
+    if not is_guard_argv(cmd):
+        return False
+    if _under_install(toks[0]):
+        return True
+    return bool(_PYTHONISH.search(toks[0])) and not _foreign_install(toks[0])
+
+
+# Two pieces of evidence that a python path belongs to SOMEONE ELSE's install:
+# the default app-home marker (.klipperformac) in a folder that is not ours -
+# _under_install() already returned True for ours before we are asked - and a
+# /Users/<account> prefix that names a different account's home. A system
+# framework python (/usr/local/Cellar/.../MacOS/Python) carries neither and is
+# what this install's own guard looks like once `ps` renders the re-exec.
+_APPHOME_MARKER = re.compile(r"(?:^|/)\.klipperformac(?:/|$)")
+_USERS_ACCOUNT = re.compile(r"^/Users/([^/]+)")
+
+
+def _foreign_install(token):
+    """True when this interpreter path names another install's or another
+    account's folders, so whatever argv follows it is not ours to reap."""
+    if _APPHOME_MARKER.search(token):
+        return True
+    m = _USERS_ACCOUNT.match(token)
+    if not m:
+        return False
+    for probe in (os.path.expanduser("~"), str(paths.APP_HOME),
+                  str(paths.DATA)):
+        own = _USERS_ACCOUNT.match(probe or "")
+        if own and own.group(1) == m.group(1):
+            return False  # this account's own folder (e.g. a repo checkout)
+    return True
+
+
+def note_guard(pid):
+    """Write a guard pid we just started down (tmp+replace). False when the
+    record cannot be written - the caller must then kill the child, because an
+    untracked guard cannot be turned off by `down`/`killall`."""
+    pids = _recorded_guard_pids(boot_check=False)
+    if pid not in pids:
+        pids.append(pid)
+    data = {"boot_time": _boot_time(), "app_home": str(paths.APP_HOME),
+            "pids": pids[-_GUARD_LIMIT:],
+            "argv": GUARD_ARGV}
+    tmp = guard_record_path().with_name("batteryguard.json.tmp")
+    try:
+        paths.RUN.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(guard_record_path())
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _recorded_guard_pids(boot_check=True):
+    """Raw pids from the guard record, same-install (and same-boot) only.
+
+    boot_check is off for the read-modify-write inside note_guard(), where a
+    live check would drop the very pids we are keeping."""
+    rec = _read_guard_record()
+    pids = rec.get("pids")
+    if not isinstance(pids, list):
+        return []
+    if rec.get("app_home") != str(paths.APP_HOME):
+        return []  # another instance's list is not our process ledger
+    if boot_check and rec.get("boot_time") not in (_boot_time(), None):
+        return []  # a record from an earlier boot: those pids are gone
+    out = []
+    for value in pids:
+        pid = _own_pid(value)
+        if pid is not None and pid not in out:
+            out.append(pid)
+    return out
+
+
+def live_guard_pids():
+    """Recorded pids that are still our guard's exact argv (a recycled pid
+    belongs to somebody else and is left alone)."""
+    pids = _recorded_guard_pids()
+    if not pids:
+        return []
+    live = _live_cmds(pids)
+    return [p for p in pids if is_guard_cmd(live.get(str(p), ""))]
+
+
+def guard_record_ours():
+    """True when the guard ledger is this install's own (or absent).
+
+    A record naming ANOTHER app home belongs to another instance's watchdog:
+    its pids are already excluded from live_guard_pids(), and its file is not
+    ours to delete either - otherwise a second checkout's `down` would blind the
+    first one to its own guard."""
+    rec = _read_guard_record()
+    if not rec:
+        return True
+    return rec.get("app_home") == str(paths.APP_HOME)
+
+
+def launch_guard(interval, log_file):
+    """Spawn the detached watchdog and write it to the ledger.
+
+    (pid, None) on success, (None, reason) when it cannot be started or cannot
+    be tracked - in the latter the child is already signalled, so a caller can
+    never end up with an untracked guard. The environment is _web_env()'s: the
+    repo importable (that is what makes `-m klipperformac.batteryguard` resolve)
+    and never klippy's QoS switch; argv stays exactly the shape is_guard_cmd()
+    matches, so identification needs no extra flag."""
+    if not paths.VENV_PY.exists():
+        return None, "no venv python at {} (run: klipperformac setup)".format(
+            paths.VENV_PY)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    argv = [str(paths.VENV_PY)] + GUARD_ARGV + ["--interval", str(interval)]
+    try:
+        proc = _popen(argv, cwd=repo_root, env=_web_env(repo_root),
+                      stdout=log_file, stderr=log_file)
+    except (OSError, ValueError) as e:
+        # ValueError too: exec refuses an argv element with a NUL byte.
+        return None, "could not start the guard: {}".format(e)
+    if not note_guard(proc.pid):
+        # Unwritable ledger: refuse the child we just made rather than leak a
+        # watchdog nobody can turn off (see AGENTS.md on invisible strays).
+        _signal(proc.pid, signal.SIGTERM)
+        return None, "cannot write {} - the guard was started and then " \
+                     "stopped again, because an untracked guard cannot be " \
+                     "turned off by `down`".format(guard_record_path())
+    return proc.pid, None
+
+
+def reap_children(targets, timeout=2.0):
+    """waitpid what we spawned: a killed child is gone from `ps` but stays a
+    zombie in OUR process table until waited for, and kill(pid, 0) answers a
+    zombie - so "is it really dead?" (the child tests' wait_dead, `down`'s
+    reporting) must not be decided before the reap. A pid that is not our child
+    answers ECHILD: nothing to reap (the guard is usually reparented to
+    launchd; this loop only bites when the killer is the parent itself)."""
+    pending = [pid for pid in targets if _own_pid(pid) is not None]
+    deadline = time.time() + timeout
+    while pending and time.time() < deadline:
+        for pid in list(pending):
+            try:
+                done = os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError, ValueError):
+                pending.remove(pid)
+                continue
+            if done[0]:
+                pending.remove(pid)
+        if pending:
+            time.sleep(0.05)
+
+
+def reap_guard(pids, timeout=2.0):
+    """TERM, a short grace, then KILL the stragglers; reaps our own children so
+    a zombie does not read as alive. Returns the pids signalled."""
+    targets = [pid for pid in (_own_pid(p) for p in pids) if pid is not None]
+    for pid in targets:
+        _signal(pid, signal.SIGTERM)
+    if not targets:
+        return []
+    deadline = time.time() + timeout
+    live = set(str(p) for p in targets)
+    while live and time.time() < deadline:
+        time.sleep(0.1)
+        live = {str(p) for p in targets if str(p) in _live_cmds([p])}
+    for pid in targets:
+        if str(pid) in live:
+            _signal(pid, signal.SIGKILL)
+    # Reap what we spawned (see reap_children): ps has already forgotten a
+    # killed child by now, but it stays a zombie in OUR process table until
+    # waitpid() takes it, and `wait_dead` (or the next `_live_cmds`) must not
+    # be the thing that decides whether the ledger can be cleared -
+    # process.stop() reaps for the same reason.
+    reap_children(targets, timeout=2.0)
+    return targets
+
+
+def clear_guard_record():
+    try:
+        guard_record_path().unlink()
+    except OSError:
+        pass
+
+
+def stop_guard(timeout=3.0):
+    """Signal the guard(s) this install recorded and forget the ledger.
+    Returns the pids stopped."""
+    pids = live_guard_pids()
+    stopped = reap_guard(pids, timeout=timeout)
+    clear_guard_record()
+    return stopped
+
+
+def scan_guard_orphans():
+    """Pids of a guard of THIS install that the ledger lost (hand-deleted
+    record, crash between spawn and note). Machine-wide `ps`, but only argv
+    is_guard_cmd() vouches for is ever returned."""
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,command="],
+                             capture_output=True).stdout.decode(
+                                 errors="replace")
+    except Exception:
+        return []
+    pids = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            number = int(parts[0])
+        except ValueError:
+            continue
+        pid = _own_pid(number)
+        if pid is None or pid == os.getpid():
+            continue
+        if is_guard_cmd(parts[1]):
+            pids.append(pid)
+    return pids
+
+
 # ---- ports: what is actually listening ---------------------------------
 def stack_port(name):
     return {"moonraker": paths.MOONRAKER_PORT, "web_mainsail": paths.WEB_PORT,
@@ -650,6 +937,11 @@ def start():
     _note_caffeinate(cproc.pid)
     _save({"klipper": kproc, "moonraker": mproc, "web_mainsail": wproc,
            "web_fluidd": fproc, "caffeinate": cproc})
+    # Open the power-loss session marker (and, in that same call, judge the
+    # session the last crash or reboot left open). Deliberately last: nothing a
+    # start() can no longer undo may depend on a marker write, and a marker this
+    # folder refuses to accept is reported by `status`/`doctor`, not fatal here.
+    powerloss.note_session_start()
     return True
 
 
@@ -741,6 +1033,11 @@ def stop(timeout=6.0):
     if not targets:
         _clear()  # nothing here is ours to stop; let the next start() be clean
         return False
+    # Read once, HERE, for the power-loss marker (klipperformac/powerloss.py):
+    # "was this session still alive when the graceful path ran?" asked after the
+    # kills always answers "no", and every honest `down` would be reported as a
+    # crash. Only the marker is written from here; the journal is not.
+    alive = running()
 
     def _alive():
         """str() pids of the targets that ps still lists."""
@@ -775,6 +1072,12 @@ def stop(timeout=6.0):
                 print("[!] {} (pid {}) refused to die; leaving state file for "
                       "inspection: {}".format(n, dict(targets).get(n), paths.STATE))
         return False
+    # The clean-stop marker, written BEFORE the stack record is cleared: the
+    # marker is the one thing that says "this session ended the way the user
+    # asked", and it lives in data/powerloss/, never in run/state.json - because
+    # _load() deletes that file the moment kern.boottime moves, so a marker a
+    # reboot erases cannot testify about a crash (see klipperformac/powerloss.py).
+    powerloss.note_clean_stop(state=alive)
     _clear()
     _clear_caffeinate_record()
     return True
@@ -819,6 +1122,11 @@ def kill_all():
             pending.remove(pid)
     _clear()
     _clear_caffeinate_record()
+    if killed:
+        # A SIGKILL sweep is never a graceful stop: mark the session unclean with
+        # the user's own command as the reason, so `status`/`doctor` can tell a
+        # `killall` apart from a power cut instead of calling both "clean".
+        powerloss.note_forced_stop()
     return sorted(killed)
 
 

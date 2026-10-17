@@ -1,5 +1,6 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
-logs | serial | update | open | doctor | timing | backup | cam | uninstall."""
+logs | serial | update | open | doctor | timing | backup | cam | batteryguard |
+powerloss | login | supervise | uninstall."""
 import argparse
 import contextlib
 import fcntl
@@ -16,7 +17,8 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from . import cam, configgen, detect, installer, paths, process, shaper, versions
+from . import (batteryguard, cam, configgen, detect, installer, launchd, paths,
+               powerloss, process, shaper, versions)
 
 
 def _die(msg):
@@ -146,6 +148,25 @@ def _klippy_state(timeout=3):
     return state if isinstance(state, str) else None
 
 
+def _powerloss_stack_up():
+    """Are klipper AND moonraker alive? The power-loss marker is only judged when
+    they are not (powerloss.last_stop): a live stack with an open session file is
+    that session, not an unclean stop. Read from process.running() - the same
+    evidence `status` prints - so the two can never disagree about this Mac."""
+    state = process.running() or {}
+    return bool(state.get("klipper") and state.get("moonraker"))
+
+
+def _save_powerloss(**kwargs):
+    """powerloss.save_settings() with the same one-line treatment as any other
+    settings write (the file is shared with the SwiftUI app)."""
+    try:
+        return powerloss.save_settings(**kwargs)
+    except OSError as e:
+        _die("Could not write {} (your settings are unchanged): {}".format(
+            paths.SETTINGS, getattr(e, "strerror", None) or e))
+
+
 def _lan_conf_expected():
     """What moonraker.conf pins [server] host to right now: 'open', 'closed'
     or 'unpinned' (no config/section/key - which upstream Moonraker reads as
@@ -211,6 +232,27 @@ def _lan_urls(indent="  "):
 def cmd_up(args):
     with _cli_lock():
         _cmd_up(args)
+        _guard_autostart()
+
+
+def _guard_autostart():
+    """Bring the battery watchdog back with the stack when the user switched it
+    on. This command never ENABLES anything: `up` only honours the setting
+    `klipperformac batteryguard on` wrote, and stays silent when it says off."""
+    try:
+        if not batteryguard.battery_settings().get("enabled"):
+            return
+        ok, lines = batteryguard.start()
+    except Exception as e:
+        # Telemetry must never be the reason a stack that came up looks broken.
+        print("[!] battery guard: not started ({})".format(e))
+        return
+    cfg = batteryguard.battery_settings()
+    if ok:
+        print("Battery guard: on (pause {}%, critical {}%)".format(
+            cfg["pauseAt"], cfg["criticalAt"]))
+    else:
+        print("\n".join(lines))
 
 
 def _cmd_up(args):
@@ -238,13 +280,24 @@ def _cmd_up(args):
                   "only, the running klipper/moonraker are left alone."
                   .format(", ".join(dead_ui)))
             process.repair(state)
+            _want_up("up (repair)")
         else:
             print("Already running.")
+            # The intent is recorded even when there was nothing to do: the
+            # whole point of the want file is that a later crash of a stack the
+            # user last touched with `up` is a crash, not a refusal.
+            _want_up("up")
             return
     else:
         note = shaper.interpreter_for_klipper()[1]
+        # The verdict of the session before this one, read BEFORE start() rolls
+        # it into history: at up-time is the moment the question "did the power
+        # go out, or did somebody just type `down`?" still has an answer worth
+        # giving the user before they start a new print on the same machine.
+        prior = powerloss.verdict_lines(stack_up=False)
         if not process.start():
             sys.exit(1)  # start() said why (port held, record not writable)
+        _want_up("up")
         if note:
             print(note)
         print("Klipper stack starting:")
@@ -254,6 +307,8 @@ def _cmd_up(args):
         for line in _lan_urls():
             print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
+        for line in prior:
+            print(line)
         _power_warning()
         if not _wait_ready():
             sys.exit(1)
@@ -288,10 +343,46 @@ def _wait_ready(timeout=35):
     return False
 
 
+def _want_up(reason="up"):
+    """Record "the user wants this stack running" for the login supervisor.
+
+    Deliberately never fatal: run/ is the least important folder in this tool's
+    life, and a command that already started the stack must not fail because a
+    two-line intent file could not be written. What it does cost is stated:
+    supervision cannot see the intent, so a crash is not repaired."""
+    try:
+        launchd.want_set(reason)
+    except Exception as e:
+        print("[!] autostart intent not recorded ({}): `klipperformac login` "
+              "supervision cannot see that you want the stack up".format(e))
+
+
+def _want_down(reason="down"):
+    """Clear that intent, BEFORE the stack is stopped.
+
+    This ordering is what keeps launchd from fighting a human: the supervisor
+    takes the same cli lock we are holding, so it cannot sweep between the clear
+    and the stop, and by the time it can, "down" is already on record."""
+    try:
+        launchd.want_clear(reason)
+    except Exception as e:
+        print("[!] autostart intent not cleared ({}): a running supervisor "
+              "could bring the stack back".format(e))
+
+
 def cmd_down(args):
     with _cli_lock():
+        # The watchdog goes down BEFORE the stack: it pauses and cancels through
+        # Moonraker's API, and a guard racing a dying Moonraker would only log a
+        # failure it did not cause (and could cancel a print nobody asked about
+        # on the way out). `stop()` is idempotent: off twice is still off.
+        _want_down("down")
+        guard_off, _guard_lines = batteryguard.stop()
         stopped = process.stop()
     cam_off, cam_lines = cam.stop()
+    if guard_off:
+        print("Battery guard stopped with the stack (still enabled: `up` "
+              "starts it again; `batteryguard off` turns it off for good).")
     if cam_off:
         print("Stopped (camera turned off too)." if stopped
               else "Stack was not running; camera stopped.")
@@ -316,9 +407,14 @@ def cmd_down(args):
 def cmd_killall(args):
     """Force-kill the whole stack plus any stray service processes that a
     plain `down` would leave behind (untracked proxies, orphan klipper/
-    moonraker/caffeinate)."""
+    moonraker/caffeinate, and a battery guard whose ledger was lost)."""
     with _cli_lock():
-        killed = process.kill_all() + cam.kill_orphans()
+        # Same rule as `down`: saying "kill everything" is the user's intent,
+        # and a login supervisor that brought the stack back 10 s later would
+        # turn a cleanup command into a fight.
+        _want_down("killall")
+        killed = process.kill_all() + cam.kill_orphans() \
+            + batteryguard.kill_orphans()
     if not killed:
         print("Nothing to kill.")
         return
@@ -329,8 +425,49 @@ def cmd_killall(args):
 
 def cmd_restart(args):
     with _cli_lock():
+        batteryguard.stop()
         process.stop()
         _cmd_up(args)
+        _guard_autostart()
+
+
+def _status_powerloss_line():
+    """The power-loss row of a RUNNING stack: is the byte offset of an active
+    print being written down at all? The unclean-stop verdict is not printed here
+    - with the stack up, the open session marker is that session, not evidence
+    (powerloss.last_stop says why), and `up` already reported the session before
+    this one."""
+    cfg = powerloss.settings()
+    if not cfg["journal"]:
+        return ("  powerloss    journal off  (a power cut then leaves no seam: "
+                "klipperformac powerloss on)")
+    records = powerloss.read_records()
+    last = records[-1] if records else None
+    tail = "  last {} @ byte {}".format(last.get("filename"),
+                                        last.get("file_position")) if last \
+        else "  no snapshot yet"
+    return "  powerloss    journal on  {} records{}".format(len(records), tail)
+
+
+def _status_guard_lines():
+    """The battery watchdog row for the stopped branch of `status`: printed
+    when there is something to know - a live guard, or one the user enabled
+    that is waiting for the stack. A guard nobody ever turned on stays silent:
+    `status` on a machine with nothing installed is exactly one word
+    ("stopped", pinned by tests/deep/test_clmisc_data_ui.py), and the camera
+    analogy this row follows is the same - camera off is only ever listed in
+    the running branch, where the user is reading a table of what is up."""
+    guard = batteryguard.running()
+    cfg = batteryguard.battery_settings()
+    if guard is not None:
+        return ["  {:<12} on  pid {}  pause {}%  critical {}%".format(
+            "batteryguard", guard.get("pid"), cfg["pauseAt"],
+            cfg["criticalAt"])]
+    if cfg["enabled"]:
+        return ["  {:<12} armed  pause {}%  critical {}% (starts with the "
+                "stack)".format("batteryguard", cfg["pauseAt"],
+                                cfg["criticalAt"])]
+    return []
 
 
 def cmd_status(args):
@@ -343,6 +480,10 @@ def cmd_status(args):
                   "klipperformac killall".format(
                       ", ".join("port {}".format(p) for p, _ in left)))
         for line in _lan_urls(indent="  "):
+            print(line)
+        for line in _status_guard_lines():
+            print(line)
+        for line in powerloss.verdict_lines(stack_up=False):
             print(line)
         return
     pins = versions.load_pins()
@@ -370,6 +511,20 @@ def cmd_status(args):
         print("  camera       off  (turn on: klipperformac cam on)")
     else:
         print("  camera       not installed (build: klipperformac cam build)")
+    # The battery guard is optional and toggled, so it is reported like the
+    # camera - never as a service that looks DOWN whenever it is off.
+    guard = batteryguard.running()
+    guard_cfg = batteryguard.battery_settings()
+    if guard is not None:
+        print("  batteryguard on  pid {}  pause {}%  critical {}%".format(
+            guard.get("pid"), guard_cfg["pauseAt"], guard_cfg["criticalAt"]))
+    elif guard_cfg["enabled"]:
+        print("  batteryguard armed  pause {}%  critical {}% (starts with the "
+              "stack)".format(guard_cfg["pauseAt"], guard_cfg["criticalAt"]))
+    else:
+        print("  batteryguard off  (laptop prints: klipperformac "
+              "batteryguard on)")
+    print(_status_powerloss_line())
     updates, errors = versions.check_updates()
     for e in errors:
         print("  [!] " + e)
@@ -2119,6 +2274,257 @@ def cmd_cam(args):
         sys.exit(1)
 
 
+def cmd_batteryguard(args):
+    """on|off|status|set|check for the low-battery watchdog.
+
+    The guard is a REST client of upstream Moonraker - it pauses, cancels and
+    brings the stack down through the same public API `klipperformac gcode`
+    uses, and never writes a Klipper or Moonraker file (AGENTS.md 1)."""
+    action = args.action
+    on_off = {"on": True, "off": False}
+
+    def _flag(value, name):
+        if value is None:
+            return None
+        if value in on_off:
+            return on_off[value]
+        _die("batteryguard: --{} must be on or off (got '{}')".format(
+            name, value))
+
+    patch = {}
+    for flag, key in (("pause_at", "pauseAt"), ("critical_at", "criticalAt"),
+                      ("poll", "pollSec"), ("at_pause", "atPause"),
+                      ("at_critical", "atCritical")):
+        value = getattr(args, flag, None)
+        if value is None:
+            continue
+        patch[key] = value
+    for flag, key in (("resume_on_ac", "resumeOnAc"), ("notify", "notify")):
+        value = _flag(getattr(args, flag, None), flag.replace("_", "-"))
+        if value is not None:
+            patch[key] = value
+    if getattr(args, "dry_run", False) and action in ("on", "set"):
+        patch["dryRun"] = True
+
+    if action in ("on", "set"):
+        # Thresholds are checked before anything is written or started: a typo
+        # must not half-apply and must not launch a watchdog with a threshold
+        # that can never fire (criticalAt above pauseAt).
+        try:
+            checked = batteryguard.validate(**patch)
+        except ValueError as e:
+            _die("batteryguard: " + str(e))
+        if action == "on":
+            checked["enabled"] = True
+        try:
+            batteryguard.save_battery_settings(**checked)
+        except OSError as e:
+            _die("Could not write {} (your settings are unchanged): {}".format(
+                paths.SETTINGS, getattr(e, "strerror", None) or e))
+        cfg = batteryguard.battery_settings()
+        print("Battery settings: pause {}%, critical {}%, poll {}s, "
+              "at pause {}, at critical {}, resume on AC {}, "
+              "notifications {}, dry run {}.".format(
+                  cfg["pauseAt"], cfg["criticalAt"], cfg["pollSec"],
+                  cfg["atPause"], cfg["atCritical"],
+                  "on" if cfg["resumeOnAc"] else "off",
+                  "on" if cfg["notify"] else "off",
+                  "on" if cfg["dryRun"] else "off"))
+        if action == "set":
+            print("Nothing was started or stopped. A running guard re-reads "
+                  "these on its next poll; turn it on with: klipperformac "
+                  "batteryguard on")
+            return
+
+    if action == "on":
+        with _cli_lock():
+            ok, lines = batteryguard.start()
+        if ok and process.running() is None:
+            lines.append("[!] The stack is down, so there is nothing to pause "
+                         "yet; `klipperformac up` starts the guard with it.")
+        print("\n".join(lines))
+        if not ok:
+            sys.exit(1)
+        return
+
+    if action == "off":
+        try:
+            batteryguard.save_battery_settings(enabled=False)
+        except OSError as e:
+            _die("Could not write {} (your settings are unchanged): {}".format(
+                paths.SETTINGS, getattr(e, "strerror", None) or e))
+        with _cli_lock():
+            ok, lines = batteryguard.stop()
+        print("\n".join(lines))
+        print("Battery guard is off: nothing is watching the battery any more.")
+        if not ok:
+            sys.exit(1)
+        return
+
+    if action == "status":
+        print("\n".join(batteryguard.status_lines()))
+        return
+
+    if action == "check":
+        percent = getattr(args, "percent", None)
+        source = getattr(args, "source", None)
+        if percent is not None and batteryguard.clean_percent(percent) is None:
+            _die("batteryguard check: --percent needs a battery percentage "
+                 "0-100 (got {!r})".format(percent))
+        if percent is not None and source is None:
+            # An injected level without a source would be a guess about whether
+            # this Mac is even at risk: refuse instead of defaulting to battery.
+            _die("batteryguard check: --percent {} also needs --source "
+                 "battery|ac".format(percent))
+        dry = bool(getattr(args, "dry_run", False))
+        ok, _lines, _episode = batteryguard.check(percent=percent,
+                                                 source=source, dry=dry)
+        if not ok:
+            sys.exit(1)
+        return
+
+    _die("batteryguard: unknown action {!r}".format(action))
+
+
+def cmd_powerloss(args):
+    """The power-loss slice: the unclean-stop truth, the journal setting, and the
+    way back to a journaled seam. Everything read-only unless the user names an
+    action, and nothing here resumes a print by itself (upstream has no
+    recover_at_seam to call - see klipperformac/powerloss.py)."""
+    action = getattr(args, "action", None) or "status"
+    if action == "on" or action == "off":
+        wanted = {"journal": action == "on"}
+        if getattr(args, "interval", None) is not None:
+            wanted["intervalSec"] = args.interval
+        cfg = _save_powerloss(**wanted)
+        if action == "on":
+            print("Power-loss journal ON: every {}s a print is active, one line "
+                  "lands in\n  {}  (cap {} bytes, newest {} records kept)".format(
+                      cfg["intervalSec"], powerloss.journal_path(),
+                      cfg["maxBytes"], cfg["keepRecords"]))
+            print("Nothing writes while no print is running, and nothing is ever "
+                  "resumed automatically.")
+            print("To keep polling while you print, run in another terminal (or "
+                  "backgrounded):\n  klipperformac powerloss watch")
+            print("`up` does not start that loop on its own: a resident disk "
+                  "writer is yours to turn on.")
+        else:
+            print("Power-loss journal OFF (snapshots stop; the journal file and "
+                  "the stop markers stay: {})".format(powerloss.folder()))
+        return
+    if action == "snapshot":
+        record = powerloss.journal_tick(force=True)
+        if record is None:
+            print("Nothing to journal: no print is running (the journal records "
+                  "only while klipper is printing or paused).")
+            return
+        print(powerloss.describe_record(record))
+        return
+    if action == "watch":
+        cfg = powerloss.settings()
+        if not cfg["journal"]:
+            _die("The journal is off: klipperformac powerloss on")
+        print("Journaling every {}s until the stack stops answering "
+              "(Ctrl-C ends it).".format(cfg["intervalSec"]))
+        written = powerloss.watch(interval=getattr(args, "interval", None),
+                                  sweeps=getattr(args, "sweeps", None))
+        print("Journaled {} snapshot(s).".format(written))
+        return
+    if action == "tail":
+        lines = powerloss.tail_lines(getattr(args, "lines", 10))
+        if not lines:
+            print("Journal is empty (klipperformac powerloss on, then print "
+                  "something).")
+            return
+        print("\n".join(lines))
+        return
+
+    # status: the whole picture, in the order a person acts on it.
+    for line in powerloss.explain(stack_up=_powerloss_stack_up()):
+        print(line)
+
+
+def cmd_powerloss_test(args):
+    """LIVE bench test: cut a printing klipper and a printing moonraker dead with
+    SIGKILL and prove what survives. Refuses to run without KLIPPERFORMAC_ALLOW_LIVE=1,
+    because it ends a print on purpose (AGENTS.md: nothing destructive by
+    default) and it drives a real board."""
+    if os.environ.get("KLIPPERFORMAC_ALLOW_LIVE") != "1":
+        _die("klipperformac powerloss-test SIGKILLs a printing klipper, then a "
+             "printing Moonraker, on the board attached to this Mac.\n"
+             "     That is what the test proves, so it only runs when you say "
+             "the board is yours to cut off:\n"
+             "         KLIPPERFORMAC_ALLOW_LIVE=1 klipperformac powerloss-test\n"
+             "     (offline evidence for the same sequence: "
+             "tests/powerloss/test_kill_sequence_machine.py)")
+    if not _powerloss_stack_up():
+        _die("The stack is not up (klipper and moonraker both have to be "
+             "running): klipperformac up, then wait for `klippy ready`")
+    # The one thing this command must never do is cut off a print the user cares
+    # about. "the board is mine to kill" is not "this 9-hour print is mine to
+    # ruin", so the live stack is asked what it is doing before anything starts.
+    live = powerloss.query_stats() or {}
+    if live.get("state") in ("printing", "paused"):
+        _die("A print is live ({}: {} at byte {}). `powerloss-test` SIGKILLs "
+             "klipper mid-print: finish, cancel or pause-and-decide on that job "
+             "first.".format(live.get("state"), live.get("filename"),
+                             live.get("file_position")))
+    try:
+        harness = powerloss.LiveHarness()
+    except Exception as e:
+        _die("powerloss-test: cannot start ({})".format(e))
+    print("Power-loss kill sequence on the bench board. A G4-only test print is "
+          "started (no motion, no heat, no extrusion) and killed twice. The "
+          "journal is switched on for the run; nothing else in your settings is "
+          "touched.")
+    ok, _checks = powerloss.run_kill_sequence(harness,
+                                              ticks=getattr(args, "ticks", 3))
+    if not ok:
+        print("[!] A check failed: the machine is left as the sequence found it. "
+              "Read: klipperformac powerloss status")
+        sys.exit(1)
+    print("Power-loss kill sequence: PASS (journal survived both SIGKILLs, the "
+          "marker told unclean from clean, the stack rebuilt).")
+
+
+def cmd_login(args):
+    """klipperformac login on|off|status - start the stack at macOS login.
+
+    The mechanism is a per-user LaunchAgent running `klipperformac supervise`;
+    the policy is the want file this command writes. `status` is read-only and
+    takes no lock, because reading a plist and asking launchd a question must
+    never be able to block behind a `setup`."""
+    action = args.action
+    if action == "status":
+        status = launchd.login_status()
+        if getattr(args, "json", False):
+            print(json.dumps(status, indent=2, sort_keys=True))
+            return
+        for line in launchd.status_lines(status):
+            print(line)
+        return
+    if getattr(args, "tick", None) is not None and action == "off":
+        print("[!] --tick is ignored by `login off` (it only rewrites the "
+              "agent it removes).")
+    with _cli_lock():
+        if action == "on":
+            ok, lines = launchd.login_on(tick=args.tick,
+                                         dry_run=args.dry_run)
+        else:
+            ok, lines = launchd.login_off()
+    for line in lines:
+        print(line)
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_supervise(args):
+    """The LaunchAgent's own program. Typed by hand only to debug: it is a
+    resident loop, and `klipperformac login on` is how it gets installed."""
+    sys.exit(launchd.run(tick=getattr(args, "tick", None),
+                         sweeps=getattr(args, "sweeps", None)))
+
+
 def cmd_selftest(args):
     env = dict(os.environ)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2926,6 +3332,39 @@ def cmd_doctor(args):
             ok = False
         else:
             print("[i]  camera: " + cam_msg)
+    # The low-battery watchdog: honest lines about this Mac's battery, the
+    # guard's own state, and whether printer.cfg can even be paused. Advisory
+    # until the user turns the guard on - a desktop with no battery is not a
+    # broken install, an enabled guard that cannot read the battery is.
+    # The lid-close caveat is printed whatever the verdict, so the truth about
+    # clamshell sleep is never hidden behind a green tick (AGENTS.md 5).
+    try:
+        guard_wanted = batteryguard.battery_settings()["enabled"]
+        for b_ok, b_msg in batteryguard.doctor():
+            if b_ok:
+                print("[ok] " + b_msg)
+            elif guard_wanted:
+                print("[!] " + b_msg)
+                ok = False
+            else:
+                print("[i]  " + b_msg)
+    except Exception as e:
+        print("[i]  battery: not reported ({})".format(e))
+    # Power loss: did the last session end the way the user asked, and is the
+    # byte offset of an active print being written down at all - plus the honest
+    # answer to "what does upstream offer", which on macOS is: a job row flipped
+    # to 'interrupted' (filename + elapsed time, never a position), no restart
+    # awareness with [machine] provider none, no state file in klipper, and no
+    # recover_at_seam anywhere upstream. ADVISORY, like the backup block below: a
+    # badly-ended last session is history, not a broken install, and this
+    # command's exit code is the install-correctness gate (AGENTS.md 4).
+    try:
+        for pl_ok, pl_msg in powerloss.doctor(
+                query=bool(state and state.get("moonraker")),
+                stack_up=_powerloss_stack_up()):
+            print(("[ok] " if pl_ok else "[!] ") + pl_msg)
+    except Exception as e:
+        print("[i]  power loss: not reported ({})".format(e))
     # Backups: the one question doctor can answer that nothing else does - "if
     # this Mac died tonight, is there anything to restore from?" Printed as
     # ADVISORY lines that never flip `ok`, deliberately: `doctor`'s exit code is
@@ -2933,7 +3372,9 @@ def cmd_doctor(args):
     # it), and a healthy install whose owner has simply not run `backup create`
     # yet is not a broken install. Same reasoning as the on-battery line above,
     # and the same reason the camera lines only bite when a camera is configured.
-    # The [!] tag is still the honest signal the user acts on.
+    # The [!] tag is still the honest signal the user acts on. LAST, too, which
+    # tests/backup/test_backup_doctor_wired.py pins: the restore question is the
+    # one a person reads on the way out of the report.
     from . import backup as _backup          # local: cli.py must not need it
     try:
         for bak_ok, bak_msg in _backup.doctor_lines():
@@ -2985,8 +3426,21 @@ def _deletable_tree(path, looks, what):
 def cmd_uninstall(args):
     """Remove the app (launcher symlink + app home). Asks before touching the
     user data folder unless --data/--keep-data says otherwise."""
+    agent_problem = None
     with _cli_lock():
-        killed = process.kill_all() + cam.kill_orphans()
+        # Step 0, before anything is deleted or killed: a loaded LaunchAgent
+        # survives the tree it points at. uninstall removes the venv python and
+        # the data folder, and launchd then respawns a supervisor whose
+        # interpreter is gone - a crash loop with nowhere to write a log, on
+        # every login, on a machine that no longer has Klipper for Mac.
+        agent_ok, agent_lines = launchd.uninstall_teardown()
+        for line in agent_lines:
+            print(line)
+        if not agent_ok:
+            agent_problem = ("login agent at {} was left in place".format(
+                launchd.plist_path()))
+        killed = process.kill_all() + cam.kill_orphans() \
+            + batteryguard.kill_orphans()
     if killed:
         print("Stopped {} process(es).".format(len(killed)))
 
@@ -3035,6 +3489,11 @@ def cmd_uninstall(args):
 
     refused = []
     removed = []
+    if agent_problem:
+        # Uninstall that reports "Uninstalled." while a login item nobody can
+        # unload is still in ~/Library/LaunchAgents would be a lie.
+        print("[!] " + agent_problem)
+        refused.append(agent_problem)
     for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
         problem = _deletable_tree(home, paths.looks_like_app_home,
                                   "the app folder")
@@ -3126,6 +3585,60 @@ def main(argv=None):
     sub.add_parser("status", help="show state, pins, available updates")
     p = sub.add_parser("lan", help="open/close the stack to your local network")
     p.add_argument("state", nargs="?", choices=("on", "off"))
+    p = sub.add_parser("batteryguard",
+                       help="pause/cancel the print before the laptop battery "
+                            "dies (localhost REST only, upstream untouched)")
+    p.add_argument("action", choices=("on", "off", "status", "set", "check"))
+    p.add_argument("--pause-at", type=int, metavar="PCT",
+                   help="battery percent that pauses the print (default 15)")
+    p.add_argument("--critical-at", type=int, metavar="PCT",
+                   help="battery percent that cancels and stops the stack "
+                        "(default 7, must not be above --pause-at)")
+    p.add_argument("--poll", type=int, metavar="SEC",
+                   help="seconds between battery reads (5-3600, default 30)")
+    p.add_argument("--at-pause", choices=batteryguard.AT_PAUSE,
+                   help="what to do at --pause-at (default pause)")
+    p.add_argument("--at-critical", choices=batteryguard.AT_CRITICAL,
+                   help="what to do at --critical-at (default cancel)")
+    p.add_argument("--resume-on-ac", choices=("on", "off"),
+                   help="resume the print when the cable comes back "
+                        "(OPT-IN, default off): only a print this guard "
+                        "paused is ever resumed")
+    p.add_argument("--notify", choices=("on", "off"),
+                   help="desktop notification + speech for each action")
+    p.add_argument("--percent", metavar="PCT",
+                   help="with check: judge this battery percent instead of "
+                        "reading this Mac (needs --source)")
+    p.add_argument("--source", choices=("battery", "ac"),
+                   help="with check --percent: which power that percent is on")
+    p.add_argument("--dry-run", action="store_true",
+                   help="check: say what would happen and touch nothing "
+                        "(no POST, no notification, no state write)")
+    p = sub.add_parser("powerloss",
+                       help="what a power loss costs on macOS: the unclean-stop "
+                            "truth + a bounded journal of the print's byte offset "
+                            "(localhost REST only, upstream untouched, never "
+                            "auto-resumes)")
+    p.add_argument("action", nargs="?", default="status",
+                   choices=("status", "on", "off", "snapshot", "watch", "tail"))
+    p.add_argument("--interval", type=float, metavar="SEC",
+                   help="with on/watch: seconds between snapshots "
+                        "({}-{}, default {})".format(
+                            int(powerloss.MIN_INTERVAL),
+                            int(powerloss.MAX_INTERVAL),
+                            int(powerloss.DEFAULTS["intervalSec"])))
+    p.add_argument("--sweeps", type=int, metavar="N",
+                   help="with watch: stop after N polls instead of running "
+                        "until the stack answers no more")
+    p.add_argument("-n", "--lines", type=int, default=10,
+                   help="with tail: how many snapshots to print (1-500)")
+    p = sub.add_parser("powerloss-test",
+                       help="LIVE: start a G4-only print, SIGKILL klipper then "
+                            "moonraker, prove the journal and markers survive it "
+                            "and the stack rebuilds. Needs "
+                            "KLIPPERFORMAC_ALLOW_LIVE=1.")
+    p.add_argument("--ticks", type=int, default=3,
+                   help="journal polls while the first print is running")
     p = sub.add_parser("logs", help="view logs")
     p.add_argument("service", choices=("klipper", "moonraker"), default="klipper",
                    nargs="?")
@@ -3206,6 +3719,27 @@ def main(argv=None):
                    help="with config: show current settings")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
+    p = sub.add_parser("login",
+                       help="start the stack at macOS login (LaunchAgent + "
+                            "supervisor); `down` always wins over it")
+    p.add_argument("action", choices=("on", "off", "status"))
+    p.add_argument("--tick", type=float, metavar="SEC",
+                   help="seconds between supervisor sweeps (agent plist; "
+                        "default {}s, floor {})".format(int(launchd.DEFAULT_TICK),
+                                                        int(launchd.MIN_TICK)))
+    p.add_argument("--dry-run", action="store_true",
+                   help="on: show the agent that would be written and loaded, "
+                        "touch and launch-load nothing")
+    p.add_argument("--json", action="store_true",
+                   help="status: one machine-readable object (the GUI reads "
+                        "this)")
+    p = sub.add_parser("supervise",
+                       help="internal: the resident loop the login agent runs "
+                            "(see: klipperformac login on)")
+    p.add_argument("--tick", type=float, metavar="SEC",
+                   help="seconds between sweeps (default {})".format(
+                       int(launchd.DEFAULT_TICK)))
+    p.add_argument("--sweeps", type=int, metavar="N", help=argparse.SUPPRESS)
     p = sub.add_parser("timing",
                        help="read-only scheduling + power telemetry: what "
                             "macOS is doing to klippy right now")
@@ -3229,6 +3763,9 @@ def main(argv=None):
         "killall": cmd_killall, "restart": cmd_restart,
         "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
         "lan": cmd_lan,
+        "batteryguard": cmd_batteryguard,
+        "powerloss": cmd_powerloss,
+        "powerloss-test": cmd_powerloss_test,
         "data": cmd_data,
         "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
         "timing": cmd_timing,
@@ -3237,5 +3774,6 @@ def main(argv=None):
         "cam": cmd_cam,
         "flash": cmd_flash,
         "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
+        "login": cmd_login, "supervise": cmd_supervise,
     }
     handlers[args.cmd](args)
