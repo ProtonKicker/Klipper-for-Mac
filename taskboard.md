@@ -45,6 +45,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Recovered the live bench from "startup" to `klippy ready`, then re-ran doctor, selftest, and the full live tier
 - [x] Added a real opt-in hardware test for `flash probe` that stops the stack, handshakes the bench board, and restores the stack
 - [x] Deduped the common BOOTSEL double-report so one RP2040 does not show up twice as both a UF2 volume and a USB bootloader device
+- [x] Fixed the per-MCU live probe tests to reload the real install, removing the last artificial skips from `make test-live`
 
 ## Landed Fixes
 
@@ -113,6 +114,10 @@ Continue the robustness-testing loop from the saved transcript:
 16. `klipperformac/flash.py`
    - merge the common one-volume/one-USB BOOTSEL case into one richer `flash detect` target instead of double-reporting the same RP2040
    - keep ambiguous multi-volume/multi-device cases separate rather than guessing across boards
+
+17. `tests/climcu/test_live_mcu_probe.py`
+   - reload `paths` and `cli` against the real `~/.klipperformac` install before each live test
+   - stop depending on whichever env/module state happened to be imported first in the full live suite
 
 ## Tests Added
 
@@ -190,6 +195,9 @@ Continue the robustness-testing loop from the saved transcript:
   - dedupe a single BOOTSEL volume plus a single BOOTSEL USB device into one target
   - keep ambiguous multi-BOOTSEL cases unmerged
 
+- `tests/climcu/test_live_mcu_probe.py`
+  - reload the real install for live per-MCU probing instead of inheriting stale module state
+
 ## Verification Snapshot
 
 - `make qa-full` -> PASS
@@ -223,6 +231,8 @@ Continue the robustness-testing loop from the saved transcript:
   - `6 passed` in `tests/flash/test_flash_live_readonly.py`
 - focused flash detect/probe/live regressions:
   - `38 passed, 6 deselected` across `tests/flash/test_flash_detect.py`, `tests/flash/test_flash_probe.py`, and `tests/flash/test_flash_live_readonly.py`
+- live per-MCU probe tier:
+  - `3 passed` in `tests/climcu/test_live_mcu_probe.py`
 - `make qa-fast` -> PASS after the latest Python + Swift edits
 - `./bin/klipperformac flash detect` now says:
   - `USB-CDC runtime device; use \`klipperformac flash probe --port /dev/cu.usbmodem142101\` to confirm identify_response`
@@ -245,7 +255,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `./bin/klipperformac status` -> `klippy ready`
   - `./bin/klipperformac doctor` -> PASS with `[ok] klipper state: ready`
   - `./bin/klipperformac selftest` -> PASS
-  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `23 passed, 3 skipped`
+  - `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` -> `26 passed`
 - `swiftc -parse` on the touched Swift files -> PASS
 - `swift test` is currently blocked on this Mac by the local Command Line Tools install:
   - `xcrun --sdk macosx --show-sdk-platform-path` fails under `/Library/Developer/CommandLineTools`
@@ -254,12 +264,7 @@ Continue the robustness-testing loop from the saved transcript:
 
 Latest `KLIPPERFORMAC_ALLOW_LIVE=1 make test-live` result:
 
-- 23 passed
-- 3 skipped
-
-Current skips are limited to the per-MCU live probe file, which says:
-
-- `no printer.cfg: the stack was never set up on this Mac`
+- 26 passed
 
 ## Live Bench Notes
 

@@ -12,56 +12,66 @@ install.
 """
 import pytest
 
+import importlib
+import types
+
 from klipperformac import cli, paths
 
 pytestmark = pytest.mark.live
 
 
-def _stack_up():
-    return cli._klippy_state(timeout=3) is not None
+@pytest.fixture
+def real_stack(monkeypatch):
+    for var in ("KLIPPERFORMAC_HOME", "KLIPPERFORMAC_DATA",
+                "KLIPPERFORMAC_VOLUMES_DIR"):
+        monkeypatch.delenv(var, raising=False)
+    real_paths = importlib.reload(importlib.import_module("klipperformac.paths"))
+    real_cli = importlib.reload(importlib.import_module("klipperformac.cli"))
+    return types.SimpleNamespace(paths=real_paths, cli=real_cli)
 
 
 @pytest.fixture(autouse=True)
-def require_stack():
-    if not paths.PRINTER_CFG.is_file():
+def require_stack(real_stack):
+    if not real_stack.paths.PRINTER_CFG.is_file():
         pytest.skip("no printer.cfg: the stack was never set up on this Mac")
-    if not _stack_up():
+    if real_stack.cli._klippy_state(timeout=3) is None:
         pytest.skip("klippy is not answering /printer/info: live probe skipped")
 
 
-def test_every_configured_mcu_is_answered_for():
+def test_every_configured_mcu_is_answered_for(real_stack):
     """The doctor line per section, from the real printer.cfg on this Mac.
 
     'unknown' is tolerated (it is a soft degrade by design); an MCU klippy
     did not load while claiming ready is a real fault and fails here."""
-    entries = cli._mcu_entries(cfg_path=paths.PRINTER_CFG)
+    entries = real_stack.cli._mcu_entries(cfg_path=real_stack.paths.PRINTER_CFG)
     names = [e["mcu"] for e in entries if e.get("configured", True)]
     assert names, "printer.cfg has no [mcu] section on this bench"
-    lines = cli._mcu_report_lines(cfg_path=paths.PRINTER_CFG)
+    lines = real_stack.cli._mcu_report_lines(cfg_path=real_stack.paths.PRINTER_CFG)
     assert [text for _tag, text, _v in lines], "one line per section"
-    assert cli._mcu_lines_fail(lines, cli._klippy_state(timeout=3)) is False
+    assert real_stack.cli._mcu_lines_fail(
+        lines, real_stack.cli._klippy_state(timeout=3)) is False
     ok = [line for line in lines if line[2] == "ok"]
-    if cli._klippy_state(timeout=3) == "ready":
+    if real_stack.cli._klippy_state(timeout=3) == "ready":
         assert len(ok) == len(names), lines
 
 
-def test_the_master_reports_the_firmware_klipper_is_running():
+def test_the_master_reports_the_firmware_klipper_is_running(real_stack):
     """The detail of the one line that must always be true while ready: the
     version the MCU object reports is the version /printer/info reports."""
-    if cli._klippy_state(timeout=3) != "ready":
+    if real_stack.cli._klippy_state(timeout=3) != "ready":
         pytest.skip("klippy is not ready on this bench right now")
-    verdict, detail = cli._mcu_runtime("mcu")
+    verdict, detail = real_stack.cli._mcu_runtime("mcu")
     assert verdict == "ok", detail
-    info = cli._moonraker_get("/printer/info", timeout=3) or {}
+    info = real_stack.cli._moonraker_get("/printer/info", timeout=3) or {}
     version = (info.get("result") or {}).get("software_version")
     assert detail == version, (detail, version)
 
 
-def test_the_contract_from_the_real_bench_is_parseable(capsys):
+def test_the_contract_from_the_real_bench_is_parseable(real_stack, capsys):
     """`serial --json` on the real machine: exit 0, one JSON document, and the
     bench's SKR Pico present under whatever node macOS gave it today."""
-    cli.cmd_serial(cli.argparse.Namespace(set=None, auto=False, json=True,
-                                          mcu=None))
+    real_stack.cli.cmd_serial(real_stack.cli.argparse.Namespace(
+        set=None, auto=False, json=True, mcu=None))
     import json
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {"mcus", "single"}
