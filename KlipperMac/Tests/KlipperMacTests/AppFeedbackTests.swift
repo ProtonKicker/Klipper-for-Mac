@@ -43,4 +43,21 @@ final class AppFeedbackTests: XCTestCase {
         XCTAssertEqual(AppFeedback.statusBadgePresentation(overall: .stopped),
                        StatusBadgePresentation(text: "Stopped", tone: .neutral))
     }
+
+    func testInlineWarningTrimsAndSuppressesBlankMessages() {
+        XCTAssertEqual(AppFeedback.inlineWarning(message: "  printer not ready \n"),
+                       InlineWarningPresentation(message: "printer not ready",
+                                                 tone: .warning))
+        XCTAssertNil(AppFeedback.inlineWarning(message: " \n\t "))
+    }
+
+    func testProgressPresentationClampsFractionAndLabelTogether() {
+        XCTAssertEqual(AppFeedback.progressPresentation(0.625),
+                       ProgressPresentation(fraction: 0.625, label: "63%"))
+        XCTAssertEqual(AppFeedback.progressPresentation(1.7),
+                       ProgressPresentation(fraction: 1, label: "100%"))
+        XCTAssertEqual(AppFeedback.progressPresentation(-0.2),
+                       ProgressPresentation(fraction: 0, label: "0%"))
+        XCTAssertNil(AppFeedback.progressPresentation(nil))
+    }
 }

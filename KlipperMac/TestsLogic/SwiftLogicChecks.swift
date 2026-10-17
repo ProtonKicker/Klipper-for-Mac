@@ -126,6 +126,25 @@ enum SwiftLogicChecks {
         expect(AppFeedback.statusBadgePresentation(overall: .stopped)
                == StatusBadgePresentation(text: "Stopped", tone: .neutral),
                "stopped status badge should be neutral")
+
+        expect(AppFeedback.inlineWarning(message: "  printer not ready \n")
+               == InlineWarningPresentation(message: "printer not ready",
+                                            tone: .warning),
+               "inline warning should trim and preserve warning tone")
+        expect(AppFeedback.inlineWarning(message: " \n\t ") == nil,
+               "blank warning rows should not render")
+
+        expect(AppFeedback.progressPresentation(0.625)
+               == ProgressPresentation(fraction: 0.625, label: "63%"),
+               "progress presentation should keep in-range values")
+        expect(AppFeedback.progressPresentation(1.7)
+               == ProgressPresentation(fraction: 1, label: "100%"),
+               "progress presentation should clamp high values")
+        expect(AppFeedback.progressPresentation(-0.2)
+               == ProgressPresentation(fraction: 0, label: "0%"),
+               "progress presentation should clamp low values")
+        expect(AppFeedback.progressPresentation(nil) == nil,
+               "missing progress should not render")
     }
 
     private static func testMoonrakerParsesVirtualSDcardProgress() {

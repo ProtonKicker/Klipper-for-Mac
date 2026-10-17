@@ -17,6 +17,16 @@ struct StatusBadgePresentation: Equatable {
     let tone: PresentationTone
 }
 
+struct InlineWarningPresentation: Equatable {
+    let message: String
+    let tone: PresentationTone
+}
+
+struct ProgressPresentation: Equatable {
+    let fraction: Double
+    let label: String
+}
+
 enum AppFeedback {
     static func bannerMessage(_ text: String, limit: Int = 400) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,6 +50,19 @@ enum AppFeedback {
         case .stopped:
             return StatusBadgePresentation(text: "Stopped", tone: .neutral)
         }
+    }
+
+    static func inlineWarning(message: String?) -> InlineWarningPresentation? {
+        guard let message else { return nil }
+        guard let trimmed = bannerMessage(message, limit: 400) else { return nil }
+        return InlineWarningPresentation(message: trimmed, tone: .warning)
+    }
+
+    static func progressPresentation(_ value: Double?) -> ProgressPresentation? {
+        guard let value else { return nil }
+        let fraction = min(max(value, 0), 1)
+        return ProgressPresentation(fraction: fraction,
+                                    label: "\(Int((fraction * 100).rounded()))%")
     }
 
     static func firstLine(_ text: String) -> String {

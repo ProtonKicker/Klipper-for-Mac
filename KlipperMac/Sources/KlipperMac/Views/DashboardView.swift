@@ -74,9 +74,9 @@ struct DashboardView: View {
                 if model.busy { ProgressView().controlSize(.small) }
                 Spacer()
             }
-            if let warning = model.printer?.stackWarning {
+            if let warning = AppFeedback.inlineWarning(message: model.printer?.stackWarning) {
                 Label {
-                    Text(warning)
+                    Text(warning.message)
                 } icon: {
                     FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
                 }
@@ -168,9 +168,9 @@ struct DashboardView: View {
         if let p = model.printer {
             Section("Printer") {
                 LabeledContent("Klipper", value: p.connectivityLabel)
-                if let note = p.readinessNote {
+                if let note = AppFeedback.inlineWarning(message: p.readinessNote) {
                     Label {
-                        Text(note)
+                        Text(note.message)
                     } icon: {
                         FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
                     }
@@ -182,10 +182,10 @@ struct DashboardView: View {
                 }
                 if let file = p.filename, !file.isEmpty {
                     LabeledContent("File", value: file)
-                    if let prog = p.progress {
+                    if let prog = AppFeedback.progressPresentation(p.progress) {
                         VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: min(max(prog, 0), 1))
-                            Text("\(Int((prog * 100).rounded()))%")
+                            ProgressView(value: prog.fraction)
+                            Text(prog.label)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
