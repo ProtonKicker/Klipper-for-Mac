@@ -722,3 +722,31 @@ Two SKR Picos now run ONE klipper instance over two USB CDC links:
 - flash probe + gcode G4 across both boards: ok
 Remaining known tickets: flash_uf2 success criterion (runtime-return check),
 GUI dark-mode/perf verification round, dual-homing trsync caveat documented.
+
+## Deep audit 2026-10-17/18 (parse-the-app, linter, edge cases)
+
+Ran a full-codebase audit after picking up from Qoder/Trae. Read: tui.py,
+batteryguard.py, configgen.py, powerloss.py, install.sh, proxy.py, mcus.py,
+shaper.py, cam.py, paths.py top, cli.py key sections.
+
+QA snapshot:
+- `make qa-fast` -> PASS (161 passed in 3.22s)
+- `make qa-full` -> PASS
+- ruff clean (E/F/B9/W; baseline in pyproject.toml)
+- Swift: 27 files parse, direct swift logic checks pass
+- `klipperformac doctor` -> upstream checkouts pristine
+
+Confirmed bugs/gaps:
+1. HIGH: tui.py has zero tests. PR-needed: `tests/tui/test_*.py`.
+2. MEDIUM: tui.py:408 preset name path traversal — no `/` filter.
+3. LOW: cli.py:11 unused `import socket` (confirmed dead: no `socket.` usage).
+4. LOW: No `uninstall.sh` script — `cmd_uninstall` exists but no standalone.
+5. LOW: install.sh never cold-tested offline — no hermetic test.
+6. LOW: F841 dead variables in cli.py (lines ~264, 735, 1035).
+7. TOOLING: no pyright/bandit gate yet. No mutation testing on mcus/configgen.
+8. PRODUCT: flash_uf2 treats volume-disappeared as success (needs runtime-return wait).
+9. ACCES: dark-mode FlatIcons contrast 1.16:1 / destructive 2.17:1 below WCAG AA.
+10. DOCS: dual-homing trsync caveat not in mcus.validate.
+
+Output: rewrote `next_steps.md` with P0/P1/P2/P3 priorities, specific repros.
+All findings listed per-file in the new next_steps.md.
