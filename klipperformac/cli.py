@@ -1566,6 +1566,31 @@ def cmd_serial(args):
         print("[!] mcu sections were not read: {}".format(e), file=sys.stderr)
         entries = []
     target = getattr(args, "set", None)
+    add_name = getattr(args, "add_mcu", None)
+    if add_name:
+        # Let "serial --add-mcu kraken --set /dev/cu..." do the whole "make a
+        # slot and fill it" in one call. The position-arg mcu name is ignored:
+        # --add-mcu owns the name. Validation mirrors the write path below.
+        name = str(add_name).strip()
+        if not paths.PRINTER_CFG.exists():
+            _die("No printer.cfg yet. Run: klipperformac setup")
+        header = detect.mcu_header(name)
+        if header is None:
+            _die("Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
+                 "klipper would read a section back as a different object than "
+                 "the name you typed.".format(name))
+        try:
+            text, encoding = paths.read_config(paths.PRINTER_CFG)
+            updated = _mcus_module().add_mcu_section(text, name)
+            paths.write_config(paths.PRINTER_CFG, updated, encoding)
+        except Exception as e:
+            _die("Could not add {}: {}".format(header,
+                                                getattr(e, "strerror", None)
+                                                or str(e)))
+        # The write flow runs on a snapshot from before the add; re-read so
+        # the section is present for the conflict / canbus / "not in" checks.
+        sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports,
+                                idents=idents)
     if not as_json:
         # --json means stdout is exactly one JSON document: no port rows, no
         # advice, no "Wrote serial to". Diagnostics go to stderr instead.
@@ -3939,16 +3964,21 @@ def main(argv=None):
     p.add_argument("-n", "--lines", type=int, default=40)
     p.add_argument("-f", "--follow", action="store_true")
     p = sub.add_parser("serial", help="list USB ports and [mcu*] sections / "
-                                      "set one section's serial")
+                                      "set one section's serial / add a board")
     p.add_argument("--set", metavar="PATH")
     p.add_argument("--auto", action="store_true")
+    p.add_argument("--add-mcu", metavar="NAME",
+                   help="add an [mcu NAME] stub first, then --set its port: gives "
+                        "a board a slot when the config did not have one yet "
+                        "(still requires --set PATH)")
     p.add_argument("--json", action="store_true",
                    help="machine-readable: {\"mcus\": [...], \"single\": bool} "
                         "for every [mcu*] section with its port, USB identity "
                         "and conflict; always exits 0 in read-only mode")
     p.add_argument("mcu", nargs="?", metavar="MCUNAME",
                    help="the [mcu ...] section to write with --set/--auto "
-                        "(default: mcu, the timing master)")
+                        "(default: mcu, the timing master). With --add-mcu, "
+                        "ignored: --add-mcu's name wins.")
     p = sub.add_parser("data", help="show or move the user data folder")
     p.add_argument("--set", metavar="PATH")
     p = sub.add_parser("update", help="check (or apply) upstream component updates")

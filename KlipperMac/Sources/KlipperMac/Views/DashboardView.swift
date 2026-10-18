@@ -262,6 +262,12 @@ struct DashboardView: View {
                     serialPicker
                 }
 
+                // "+ Add another board": drops a new ``[mcu <name>]`` stub into
+                // printer.cfg via `serial --add-mcu`, then the new row's own port
+                // picker assigns the port. A stub from a config that had no
+                // slot for this board is how you go from 2 MCUs to 3 (or N).
+                AddBoardRow()
+
                 LabeledContent("Current config") {
                     Button {
                         showLibrary = true
@@ -463,7 +469,6 @@ private struct McuSerialRow: View {
                         pill(badge)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 if row.offersPortPicker {
                     portPicker
                 } else if let status = row.pickerStatusPresentation {
@@ -601,6 +606,44 @@ private struct McuSerialRow: View {
             return FlatPalette.blue.opacity(0.14)
         case .warning:
             return FlatPalette.amber.opacity(0.14)
+        }
+    }
+}
+
+/// "+ Add another board" button, the companion to the per-section rows above.
+/// Drops a new ``[mcu <name>]`` stub into printer.cfg through the
+/// `--add-mcu` serial subcommand — so a config can grow from two MCUs to three
+/// (or N) without leaving the pane. The new row's own port picker does the
+/// port assignment, never this button.
+private struct AddBoardRow: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var prompt = false
+    @State private var name = ""
+
+    var body: some View {
+        HStack {
+            Button {
+                name = ""
+                prompt = true
+            } label: {
+                Label("Add another board", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            Spacer()
+        }
+        .alert("Add another board", isPresented: $prompt) {
+            TextField("Section name (e.g. tool, display)", text: $name)
+            Button("Cancel", role: .cancel) { name = "" }
+            Button("Add") {
+                let chosen = name
+                name = ""
+                Task { await model.addBoard(chosen) }
+            }
+            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        } message: {
+            Text("Adds an \"[mcu <name>]\" slot to printer.cfg. Plug the new "
+                 + "board in first, then use the new row's dropdown to assign "
+                 + "it a port. One word — no ':' or ']'.")
         }
     }
 }

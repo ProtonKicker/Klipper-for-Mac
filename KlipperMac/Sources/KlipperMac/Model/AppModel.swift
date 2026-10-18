@@ -451,6 +451,26 @@ final class AppModel: ObservableObject {
     /// multi-MCU pane — which exists only when `serial --json` answered — so a
     /// CLI without per-section support keeps getting the exact old two-argument
     /// command from the single-board picker.
+    /// Add a brand-new ``[mcu <name>]`` slot to printer.cfg — for boards the
+    /// user just plugged in that the current config had no section for yet.
+    /// The stub gets no serial: the new row's own port picker fills it, so a
+    /// half-written port never lands on the wrong node. `--json` style feedback
+    /// for the toast comes straight back from the CLI.
+    func addBoard(_ name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            say("A board is nothing without a name — try that again.", error: true)
+            return
+        }
+        guard SerialReportDecoder.isSafeArgument(trimmed) else {
+            say("Refusing to add [mcu \(trimmed)] — that section name is not one "
+                + "the tool can address: a single word, no ':' or ']'. Fix it "
+                + "and try again.", error: true)
+            return
+        }
+        _ = await cliShort(["serial", "--add-mcu", trimmed],
+                           ok: "Added [mcu \(trimmed)]")
+    }
     func setSerial(_ path: String, mcu: String? = nil) async {
         var args = ["serial", "--set", path]
         let target = mcu?.trimmingCharacters(in: .whitespacesAndNewlines)
