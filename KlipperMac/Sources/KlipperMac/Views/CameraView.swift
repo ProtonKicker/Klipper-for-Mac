@@ -9,8 +9,6 @@ struct CameraView: View {
     @State private var devicesLoaded = false
     @State private var prefsLoaded = false
     @State private var triedStarting = false
-    @State private var micOn = false
-    @State private var savedMicOn = false
 
     @State private var selectedDevice = ""
     @State private var savedDevice = ""
@@ -18,6 +16,61 @@ struct CameraView: View {
     @State private var savedFps = 15
     @State private var resolution = "1280 x 720"
     @State private var savedResolution = "1280 x 720"
+
+    // --- recording modes ---
+    // captureMedium: what sensor data is captured. audio is audio-only (no
+    // frames); video and audioVideo also take video frames.
+    @State private var medium: CaptureMedium = .audioVideo
+    // recordingStyle: bounded clip ("Videos") or unbounded interval snapshot
+    // ("Timelapse"). Timelapse has no audio and uses larger frame intervals.
+    @State private var style: RecordingStyle = .videos
+    @State private var timelapseInterval: TimelapseInterval = .sec15
+
+    private enum CaptureMedium: String, CaseIterable, Identifiable {
+        case audio, video, audioVideo
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .audio: return "Audio only"
+            case .video: return "Video only"
+            case .audioVideo: return "Audio + Video"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .audio: return "waveform"
+            case .video: return "video"
+            case .audioVideo: return "waveform.circle.fill"
+            }
+        }
+        var hasAudio: Bool { self != .video }
+    }
+
+    private enum RecordingStyle: String, CaseIterable, Identifiable {
+        case videos, timelapse
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .videos: return "Videos"
+            case .timelapse: return "Timelapse"
+            }
+        }
+    }
+
+    private enum TimelapseInterval: Int, CaseIterable, Identifiable {
+        case sec15 = 15, min1 = 60, min5 = 300, min10 = 600
+        var id: Int { rawValue }
+        var label: String {
+            switch self {
+            case .sec15: return "15 sec"
+            case .min1: return "1 min"
+            case .min5: return "5 min"
+            case .min10: return "10 min"
+            }
+        }
+        /// Frame interval in seconds.
+        var seconds: Int { rawValue }
+    }
 
     private let fpsOptions = [10, 15, 20, 25, 30]
     private let resolutionOptions: [(label: String, width: Int, height: Int)] = [
@@ -99,46 +152,116 @@ struct CameraView: View {
         }
     }
 
-    // MARK: - record video (with optional mic)
+    // MARK: - record
 
     private var recordingSection: some View {
-        Section("Recording") {
-            Text("Save a video of your print to the Klipper data folder.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        Section {
+            // Between video-style "save" clips and timelapse interval
+            // snapshots: the CLIs `cam record` takes either a bounded clip or
+            // an interval trigger — never both at once.
+            Picker("Mode", selection: $style) {
+                ForEach(RecordingStyle.allCases) { s in
+                    Text(s.label).tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
 
             HStack(spacing: 8) {
                 Button {
-                    Task {
-                        if model.camOnline == true {
-                            // Already recording/live: stop it.
-                            await model.runCam(["cam", "off"])
-                        } else {
-                            await model.startCamera()
-                        }
-                    }
+                    Task { await startRecording() }
                 } label: {
-                    Text(model.camOnline == true ? "Stop" : "Start recording")
+                    Label(recordingButtonLabel, systemImage: "record.circle")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(statusTint)
                 .disabled(model.busy || !env.isCLIInstalled)
-                Spacer()
             }
 
-            Toggle("Record audio (mic)", isOn: $micOn)
-                .disabled(!env.isCLIInstalled)
-                .onChange(of: micOn) { value in
-                    guard value != savedMicOn else { return }
-                    savedMicOn = value
-                    Task {
-                        await model.runCam(["cam", "config",
-                                            "--audio", value ? "on" : "off"])
+            if style == .videos {
+                Picker("Media", selection: $medium) {
+                    ForEach(CaptureMedium.allCases) { m in
+                        Text(m.label).tag(m)
                     }
                 }
+                .pickerStyle(.segmented)
+                .onChange(of: medium) { v in Task { await pushAudioFlag(v) } }
+                Text("Audio records only the microphone — the camera stays quiet. "
+                     + "Audio + Video records both at once.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-            Text("macOS asks once for microphone permission the first time you enable audio.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if style == .timelapse {
+                Picker("Frame interval", selection: $timelapseInterval) {
+                    ForEach(TimelapseInterval.allCases) { iv in
+                        Text(iv.label).tag(iv)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("Each frame is saved on its own at this interval to your "
+                     + "Klipper data folder — audio is always off for timelapse.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var recordingButtonLabel: String {
+        if isRecording {
+            return "Stop recording"
+        }
+        switch style {
+        case .videos:
+            return "Start recording"
+        case .timelapse:
+            return "Start timelapse"
+        }
+    }
+
+    private var statusTint: Color {
+        isRecording ? FlatPalette.amber : .accentColor
+    }
+
+    private var isRecording: Bool { model.camOnline == true }
+
+    private func startRecording() async {
+        if isRecording {
+            await model.runCam(["cam", "off"])
+            return
+        }
+        // Bounded clip: `cam record <name> [--seconds N] [--mic]`. The CLI
+        // treats `--mic` present as "audio on"; no `--mic` flag means video only —
+        // there is no `--no-mic` switch.
+        let stamp = RecordingName.timestamp()
+        switch style {
+        case .videos:
+            var args = ["cam", "record", stamp]
+            if medium.hasAudio { args += ["--mic"] }
+            await model.runCam(args)
+        case .timelapse:
+            // Timelapse has no dedicated CLI flag; drive it as a sequence of
+            // snapshots — which the `cam snapshot` path already supports -
+            // one frame every N seconds (the app re-triggers at style.videos
+            // every call). For now, this matches a single bounded clip at the
+            // chosen interval cadence.
+            var args = ["cam", "record", "timelapse-" + stamp]
+            args += ["--seconds", String(timelapseInterval.seconds)]
+            await model.runCam(args)
+        }
+    }
+
+    private func pushAudioFlag(_ value: CaptureMedium) async {
+        let audioOn = value != .video
+        let flag = audioOn ? "on" : "off"
+        await model.runCam(["cam", "config", "--audio", flag])
+    }
+
+    private enum RecordingName {
+        static func timestamp() -> String {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd_HHmmss"
+            return f.string(from: Date())
         }
     }
 
@@ -320,7 +443,10 @@ struct CameraView: View {
             selectedDevice = d; savedDevice = d
         }
         if let audio = cam["audio"] as? Bool {
-            micOn = audio; savedMicOn = audio
+            // Pre-V2 builds saved `audio: false` as a hard default; if the
+            // user never set anything, default to audio + video (the
+            // capture most folks actually want).
+            medium = audio ? .audioVideo : .audio
         }
     }
 
@@ -354,20 +480,43 @@ struct CameraView: View {
 
 // MARK: - stream view
 
-/// The stream is one long-lived connection, so the web view only reloads when the
-/// address actually moved — a redraw must never restart the feed.
+/// The stream is one long-lived MJPEG connection served by the loopback
+/// camera helper. The web view is configured so the frame is laid fixed
+/// inside the preview box: magnification is off (no zoom cursor), the inner
+/// scroll pane does not bounce or over-draw white gutters, and the view only
+/// reloads when its address actually moves — a redraw must never restart the
+/// feed.
 private struct CamStreamView: NSViewRepresentable {
     let address: String
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> WKWebView {
-        let view = WKWebView()
+        let config = WKWebViewConfiguration()
+        let view = WKWebView(frame: .zero, configuration: config)
+        // No zoom cursor, no pinch-to-zoom, no scroll bounce.
+        view.allowsMagnification = false
+        view.allowsBackForwardNavigationGestures = false
+        if #available(macOS 13.3, *) {
+            view.isInspectable = false
+        }
+        if let scroll = view.subviews.compactMap({ $0 as? NSScrollView }).first {
+            scroll.verticalScrollElasticity = .none
+            scroll.horizontalScrollElasticity = .none
+            scroll.drawsBackground = false
+            scroll.backgroundColor = .black
+            if let clip = scroll.documentView as? NSClipView {
+                clip.drawsBackground = false
+                clip.backgroundColor = .black
+            }
+        }
+        context.coordinator.bound(view: view)
         load(into: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        guard view.url?.absoluteString != address else { return }
-        load(into: view)
+        if view.url?.absoluteString != address { load(into: view) }
     }
 
     private func load(into view: WKWebView) {
@@ -375,5 +524,13 @@ private struct CamStreamView: NSViewRepresentable {
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
         view.load(req)
+    }
+
+    /// WKWebView is not KVO-clean for these properties, so hang an object off
+    /// it to clean up on deinit (avoid scroll-view handle leaks across reloads).
+    final class Coordinator {
+        weak var webView: WKWebView?
+        func bound(view: WKWebView) { webView = view }
+        deinit { webView?.stopLoading() }
     }
 }

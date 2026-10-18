@@ -449,14 +449,21 @@ private struct McuSerialRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(verbatim: row.displayName)
-                    .font(.callout.weight(.medium))
-                    .help(row.section)
-                ForEach(Array(row.badgePresentations.enumerated()), id: \.offset) { _, badge in
-                    pill(badge)
+            HStack(spacing: 12) {
+                // Name + badges ride the left; the picker rides the right
+                // with just the row's own spacing between them. No greedy
+                // Spacer — grow the label column instead so the gap tracks the
+                // row content, not the window width.
+                HStack(spacing: 6) {
+                    Text(verbatim: row.displayName)
+                        .font(.callout.weight(.medium))
+                        .help(row.section)
+                    ForEach(Array(row.badgePresentations.enumerated()),
+                            id: \.offset) { _, badge in
+                        pill(badge)
+                    }
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if row.offersPortPicker {
                     portPicker
                 } else if let status = row.pickerStatusPresentation {
