@@ -329,13 +329,13 @@ struct DashboardView: View {
     /// Map of configured serial path → owning section (or the last pending pick
     /// if the report hasn't caught up yet).
     private var claimants: [String: String] {
-        var map: [String: String] = []
-        if let report = mcuReport {
+        var map: [String: String] = [:]
+        if let report = model.mcuReport {
             for mcu in report.mcus {
                 if let s = mcu.serial, s.hasPrefix("/dev/") { map[s] = mcu.section }
             }
         }
-        for (mcu, path) in pendingSerials {
+        for (mcu, path) in model.pendingSerials {
             if !path.isEmpty, mcu == McuRow.masterName { map[path] = "[mcu]" }
         }
         return map
@@ -347,13 +347,13 @@ struct DashboardView: View {
     /// or nil when none is set. Reads from the CLI report (the master mcu row's
     /// serial), falls back to a pending pick.
     private var serialConfigured: String? {
-        if let s = mcuReport?
+        if let s = model.mcuReport?
             .mcus.first(where: { $0.mcu == McuRow.masterName })?
             .serial?.trimmingCharacters(in: .whitespacesAndNewlines),
            s.hasPrefix("/dev/") {
             return s
         }
-        return pendingSerials[McuRow.masterName]
+        return model.pendingSerials[McuRow.masterName]
     }
 
     private var serialPickerLabel: String {
@@ -368,7 +368,7 @@ struct DashboardView: View {
         // the conflict that produces the yellow "already claimed" banner. We
         // dim them and tag them "used by [mcu X]" instead.
         let claimants: [String: String] = {
-            var map: [String: String] = []
+            var map: [String: String] = [:]
             for mcu in report.mcus {
                 if let s = mcu.serial, s.hasPrefix("/dev/") {
                     map[s] = mcu.section
@@ -527,8 +527,7 @@ private struct McuSerialRow: View {
             }
         } label: {
             Text(portPickerButtonText)
-                .foregroundStyle(portPickerButtonIsPlaceholder ? .secondary
-                                 : .primary)
+                .foregroundStyle(portPlaceholder ? .secondary : .primary)
         }
         .frame(maxWidth: 240)
         .disabled(model.busy || !row.isAddressable || ports.isEmpty)
