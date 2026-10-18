@@ -456,10 +456,7 @@ private struct McuSerialRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                // Name + badges ride the left; the picker rides the right
-                // with just the row's own spacing between them. No greedy
-                // Spacer — grow the label column instead so the gap tracks the
-                // row content, not the window width.
+                // Name + badges ride the left; the picker rides the right.
                 HStack(spacing: 6) {
                     Text(verbatim: row.displayName)
                         .font(.callout.weight(.medium))
@@ -469,6 +466,7 @@ private struct McuSerialRow: View {
                         pill(badge)
                     }
                 }
+                Spacer()
                 if row.offersPortPicker {
                     portPicker
                 } else if let status = row.pickerStatusPresentation {
@@ -483,6 +481,7 @@ private struct McuSerialRow: View {
                 // and Text's default initialiser would read "usb_a_b" as
                 // markdown and italicise the middle of it.
                 Text(verbatim: row.configuredLine)
+                Spacer()
                 let identity = row.identityIndicatorPresentation
                 if identity.showsIndicator {
                     HStack(spacing: 4) {
@@ -546,13 +545,28 @@ private struct McuSerialRow: View {
         .help(row.pickerHelpText)
     }
 
-    /// Resolved product name for a USB path (identity name → scanner label → path).
+    /// Resolved picker label for one /dev/cu.* node. The identity "name" (e.g.
+    /// "rp2040") is the friendly headline, but two boards of the same class — a
+    /// BTT Octopus and an SKR Pico both sit behind rp2040 USB-CDC and both
+    /// report identity name "rp2040" — would read identically in the picker with
+    /// that alone. The USB serial number is stable per board, so we hang it off
+    /// the headline whenever one is available: "rp2040 · 54A1…" vs "rp2040 ·
+    /// B2C3…".
     private func portName(_ path: String) -> String {
-        if let n = model.serialPortNames[path], !n.isEmpty { return n }
-        if let port = ports.first(where: { $0.path == path }) {
-            return port.label.isEmpty ? port.path : port.label
+        var headline = path
+        if let n = model.serialPortNames[path], !n.isEmpty {
+            headline = n
+        } else if let port = ports.first(where: { $0.path == path }) {
+            headline = port.label.isEmpty ? path : port.label
         }
-        return path
+        // The serial disambiguates identical-class cards that share the
+        // product name + vid:pid. Don't leak it when there is no headline to
+        // anchor it to — an orphan serial is a worse label than the path.
+        if let s = model.serialPortUSBSerials[path], !s.isEmpty {
+            let short = s.count > 8 ? String(s.prefix(8)) + "…" : s
+            return "\(headline) · \(short)"
+        }
+        return headline
     }
 
     /// Button label for this section's picker. Source of truth order:
@@ -629,7 +643,7 @@ private struct AddBoardRow: View {
                 Label("Add another board", systemImage: "plus")
             }
             .buttonStyle(.borderless)
-            Spacer()
+            .fixedSize()
         }
         .alert("Add another board", isPresented: $prompt) {
             TextField("Section name (e.g. tool, display)", text: $name)
