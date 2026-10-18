@@ -163,13 +163,14 @@ def helper_path():
         raw = os.environ.get(env)
         if raw:
             path = Path(raw).expanduser()
-            if path.is_file():
+            if paths.is_file(path):
                 return path
-    installed = paths.CAM_BIN if paths.CAM_BIN.is_file() else None
-    blocked_dest = paths.CAM_BIN.exists() and not paths.CAM_BIN.is_file()
+    installed = paths.CAM_BIN if paths.is_file(paths.CAM_BIN) else None
+    blocked_dest = paths.path_exists(paths.CAM_BIN) and \
+        not paths.is_file(paths.CAM_BIN)
     for cand in GUI_BUNDLES:
         inside = Path(cand).expanduser()
-        if not inside.is_file():
+        if not paths.is_file(inside):
             continue
         if blocked_dest:
             return inside

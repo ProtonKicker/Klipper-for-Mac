@@ -1685,10 +1685,10 @@ def relocate_data(new):
                 "the stack is started from a different folder than this "
                 "terminal, so give a full path (starting with / or ~)."
                 .format(typed))
-    if new.exists():
+    if paths.path_exists(new):
         new = new.resolve()
     old = paths.DATA
-    resolved_old = old.resolve() if old.exists() else old
+    resolved_old = old.resolve() if paths.path_exists(old) else old
     if new == resolved_old:
         return "Data folder already set to: {}".format(new)
     if new == Path.home() or new.parent == new:
@@ -1699,8 +1699,12 @@ def relocate_data(new):
                 "uninstall --data` deletes the data folder, and a top-level "
                 "folder holds far more than the printer. Give a folder of its "
                 "own, e.g. {}").format(new, paths.DEFAULT_DATA / "data")
-    if new.is_dir():
-        entries = [p for p in new.iterdir() if not p.name.startswith(".")]
+    if paths.is_dir(new):
+        try:
+            entries = [p for p in new.iterdir() if not p.name.startswith(".")]
+        except OSError as e:
+            _die("Invalid data folder {}: {}".format(
+                new, getattr(e, "strerror", None) or e))
         if entries and not paths.looks_like_data_dir(new):
             return ("Refusing to move the printer data into {}: it already "
                     "holds {} item(s) and does not look like a Klipper-for-Mac "
@@ -1728,10 +1732,10 @@ def relocate_data(new):
     moved_names = []
     old_settings = paths.load_settings()
     try:
-        if old.exists():
+        if paths.path_exists(old):
             for p in sorted(old.iterdir()):
                 dest = new / p.name
-                if dest.exists():
+                if paths.path_exists(dest):
                     print("[!] " + str(dest) + " already exists — left "
                           + str(p) + " in place")
                     continue

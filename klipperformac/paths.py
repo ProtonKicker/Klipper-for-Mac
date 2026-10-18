@@ -413,3 +413,28 @@ def ensure_dirs():
                 "data folder path is a file: {} (move or delete that file, or "
                 "point at another folder: klipperformac data --set PATH)"
                 .format(d))
+
+
+# Python below 3.13 lets Path.exists()/is_file()/is_dir() RAISE
+# (ENAMETOOLONG, EACCES, ...) on hostile user-supplied strings - the stack's
+# own 3.11 interpreter included. Everything that touches a path we did not
+# construct (env vars, CLI args, config values) must go through these.
+def path_exists(p):
+    try:
+        return os.path.exists(os.fspath(p))
+    except (OSError, ValueError):
+        return False
+
+
+def is_file(p):
+    try:
+        return os.path.isfile(os.fspath(p))
+    except (OSError, ValueError):
+        return False
+
+
+def is_dir(p):
+    try:
+        return os.path.isdir(os.fspath(p))
+    except (OSError, ValueError):
+        return False

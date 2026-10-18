@@ -97,7 +97,7 @@ def _load():
     the file stale must not delete it: that record is the only thing down/
     killall know about a printing stack, and without it `up` reaps it.
     """
-    if not paths.STATE.exists():
+    if not paths.is_file(paths.STATE):
         return None
     try:
         with open(paths.STATE) as f:
