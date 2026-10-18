@@ -688,3 +688,22 @@ Evidence:
   currently silent - flash probe times out) and 142301
   SER=454741505A89CADA (live Klipper rp2040, answering identify).
   [mcu] bound to the live one; dual-MCU bench test in progress.
+
+## Open bench issue (flash bounce) - needs physical checks + 1 product gap
+
+- flashed board (port 14230000, BOOTSEL SER E0C9125B0D9B) with the SAME
+  90,624-byte UF2 twice: volume vanishes (ROM consumed + reset) then
+  RPI-RP2 reappears within seconds -> app bounces back to BOOTSEL. The
+  other board reportedly runs a matching build from the same command
+  (flash probe earlier returned version 461c4e3 on SER A45B1C), so the
+  image is not universally bad. Suspects: USB/physical instability (two
+  hot-unplugs this session), board-specific QSPI, or clock option vs this
+  RP2040 part. Next: power-cycle both boards cold; retry once; if still
+  bouncing, bisect by rebuilding with bootloader=16k and comparing block
+  addresses.
+- PRODUCT GAP found by this event: flash_uf2 treats "volume disappeared"
+  as success; it must wait for the board to return as a RUNTIME device
+  (VID:PID 1d50:614e at the same LOC) - or report bounced-to-bootloader
+  honestly. Ticket for next run.
+- Service state right now: stack down; 142101 board present but firmware
+  silent; flashed board in BOOTSEL. Waiting on cold power-cycle by user.
