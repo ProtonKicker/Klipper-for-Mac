@@ -81,6 +81,7 @@ Continue the robustness-testing loop from the saved transcript:
 - [x] Made `status` report `running (untracked)` instead of `stopped` when this install's Moonraker/UI ports are still answering without a tracked state record, and added a regression for that CLI surface
 - [x] Fixed the remaining powerloss advisory seam so `status`, `doctor`, and `powerloss status` stop surfacing stale `LAST STOP WAS UNCLEAN` history while the current session is still live-but-untracked
 - [x] Added the same untracked-live listener fallback to the Swift stack reader so the GUI no longer treats an answering Moonraker/UI stack as fully stopped just because `state.json` disappeared
+- [x] Fixed the GUI serial-device control so it no longer snaps back to a blank `Select device...` placeholder after a successful write, shows the current/default device in the button label, and defaults a sole detected USB device without breaking multi-MCU row fan-out
 
 ## Landed Fixes
 
@@ -623,6 +624,14 @@ Continue the robustness-testing loop from the saved transcript:
   - `make qa-fast` -> PASS
   - push hook `scripts/qa/full.sh` -> `3133 passed, 30 deselected`
   - the Swift stack reader now treats this install's own listening Moonraker/UI ports as running evidence, keeping GUI status/polling/update gating aligned with the CLI's untracked-live behavior
+- after the GUI serial-picker/default-selection pass:
+  - `sh scripts/qa/swift_logic.sh` -> `swift logic checks passed`
+  - `sh scripts/qa/swift_future_tests.sh` -> PASS
+  - `make build-gui` -> PASS
+  - `make qa-fast` -> PASS (one run warned at 27s; immediate profile rerun below showed no persistent fast-tier regression)
+  - `make test-fast-profile` -> `161 passed in 13.40s`
+  - the single-board and per-MCU serial controls now use action menus that keep the current/default device visible instead of resetting to an empty placeholder
+  - per-MCU rows only default the sole detected USB device when there is only one pickable MCU row, so the GUI still respects multi-MCU fan-out instead of implying one cable can satisfy every row
 
 ## Live Tier Status
 

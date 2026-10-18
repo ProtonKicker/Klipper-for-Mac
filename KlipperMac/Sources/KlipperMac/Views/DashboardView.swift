@@ -269,28 +269,34 @@ struct DashboardView: View {
     /// every CLI that cannot answer `serial --json`. Single-board users with an
     /// installed build from before the contract see exactly this.
     private var serialPicker: some View {
-        Picker("Serial device", selection: $selectedSerial) {
-            Text("Select device…").tag("")
+        Menu {
             if model.serialPorts.isEmpty {
-                Text("No USB serial devices found").disabled(true).tag(" ")
+                Text("No USB serial devices found")
+            } else {
+                ForEach(model.serialPorts) { port in
+                    Button {
+                        selectedSerial = port.path
+                        Task { await model.setSerial(port.path) }
+                    } label: {
+                        Text("\(port.path)   \(port.label)")
+                    }
+                }
             }
-            ForEach(model.serialPorts) { port in
-                Text("\(port.path)   \(port.label)").tag(port.path)
-            }
+        } label: {
+            Text(singlePickerButtonText)
+                .foregroundStyle(singlePickerButtonIsPlaceholder ? .secondary
+                                 : .primary)
         }
-        .onChange(of: selectedSerial) { value in
-            if !value.isEmpty {
-                let path = value
-                selectedSerial = ""
-                Task { await model.setSerial(path) }
-            }
-        }
+        .disabled(model.busy || model.serialPorts.isEmpty)
     }
 
     /// One row per [mcu] section, plus the rule the rows exist to enforce.
     @ViewBuilder private func mcuRows(_ report: SerialReport) -> some View {
+        let singlePickableRow = report.mcus.filter { $0.offersPortPicker }.count == 1
         ForEach(report.mcus) { row in
-            McuSerialRow(row: row, ports: model.serialPorts)
+            McuSerialRow(row: row,
+                         ports: model.serialPorts,
+                         allowSinglePortDefault: singlePickableRow)
         }
         if !report.single {
             Text("Multiple MCUs: [mcu] keeps the clock and every other board "
@@ -299,6 +305,21 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var singlePickerButtonText: String {
+        if !selectedSerial.isEmpty {
+            return selectedSerial
+        }
+        if model.serialPorts.count == 1 {
+            return model.serialPorts[0].path
+        }
+        return model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
+    }
+
+    private var singlePickerButtonIsPlaceholder: Bool {
+        model.serialPorts.isEmpty || (selectedSerial.isEmpty
+                                      && model.serialPorts.count != 1)
     }
 
     // MARK: - LAN
@@ -350,8 +371,7 @@ private struct McuSerialRow: View {
     @EnvironmentObject private var model: AppModel
     let row: McuRow
     let ports: [SerialPort]
-    /// The picker is an action, not a setting: it answers "Select device…"
-    /// again as soon as the write is done, exactly like the single-board row.
+    let allowSinglePortDefault: Bool
     @State private var chosen = ""
 
     var body: some View {
@@ -409,26 +429,52 @@ private struct McuSerialRow: View {
     /// cannot address keeps its row — and loses its write button, because
     /// silently editing [mcu] instead would be the worse failure.
     private var portPicker: some View {
-        Picker("Serial device for \(row.displayName)", selection: $chosen) {
-            Text("Select device…").tag("")
+        Menu {
             if ports.isEmpty {
-                Text("No USB serial devices found").disabled(true).tag(" ")
+                Text("No USB serial devices found")
+            } else {
+                ForEach(ports) { port in
+                    Button {
+                        chosen = port.path
+                        Task { await model.setSerial(port.path, mcu: row.mcu) }
+                    } label: {
+                        if port.path == row.serial {
+                            Label("\(port.path)   \(port.label)",
+                                  systemImage: "checkmark")
+                        } else {
+                            Text("\(port.path)   \(port.label)")
+                        }
+                    }
+                }
             }
-            ForEach(ports) { port in
-                Text("\(port.path)   \(port.label)").tag(port.path)
-            }
+        } label: {
+            Text(portPickerButtonText)
+                .foregroundStyle(portPickerButtonIsPlaceholder ? .secondary
+                                 : .primary)
         }
-        .labelsHidden()
         .frame(maxWidth: 240)
-        .disabled(model.busy || !row.isAddressable)
+        .disabled(model.busy || !row.isAddressable || ports.isEmpty)
         .help(row.pickerHelpText)
-        .onChange(of: chosen) { value in
-            if !value.isEmpty {
-                let path = value
-                chosen = ""
-                Task { await model.setSerial(path, mcu: row.mcu) }
-            }
-        }
+        .onAppear { syncChosen() }
+        .onChange(of: row.serial) { _ in syncChosen() }
+        .onChange(of: ports) { _ in syncChosen() }
+    }
+
+    private var portPickerButtonText: String {
+        if !chosen.isEmpty { return chosen }
+        return row.pickerButtonText(in: ports,
+                                    allowSinglePortDefault: allowSinglePortDefault)
+    }
+
+    private var portPickerButtonIsPlaceholder: Bool {
+        chosen.isEmpty
+            && row.suggestedPort(in: ports,
+                                 allowSinglePortDefault: allowSinglePortDefault) == nil
+    }
+
+    private func syncChosen() {
+        chosen = row.suggestedPort(in: ports,
+                                   allowSinglePortDefault: allowSinglePortDefault)?.path ?? ""
     }
 
     private func pill(_ badge: RowBadgePresentation) -> some View {

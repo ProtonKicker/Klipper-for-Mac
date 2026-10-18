@@ -252,6 +252,28 @@ struct McuRow: Identifiable, Equatable {
             : "This section name is not one Klipper accepts, so nothing can be written to it — fix printer.cfg instead."
     }
 
+    func suggestedPort(in ports: [SerialPort],
+                       allowSinglePortDefault: Bool) -> SerialPort? {
+        guard offersPortPicker else { return nil }
+        if let serial,
+           let configured = ports.first(where: { $0.path == serial }) {
+            return configured
+        }
+        if allowSinglePortDefault, ports.count == 1 {
+            return ports[0]
+        }
+        return nil
+    }
+
+    func pickerButtonText(in ports: [SerialPort],
+                          allowSinglePortDefault: Bool) -> String {
+        if let port = suggestedPort(in: ports,
+                                    allowSinglePortDefault: allowSinglePortDefault) {
+            return port.path
+        }
+        return ports.isEmpty ? "No USB serial devices" : "Select device…"
+    }
+
     var footerPresentation: InlineWarningPresentation? {
         if !isAddressable {
             return InlineWarningPresentation(

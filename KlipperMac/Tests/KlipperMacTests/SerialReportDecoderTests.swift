@@ -123,4 +123,37 @@ final class SerialReportDecoderTests: XCTestCase {
                         tone: .warning,
                         opacity: 0))
     }
+
+    func testMcuRowPickerDefaultsToConfiguredOrSingleDetectedPort() {
+        let report = SerialReportDecoder.decode(SerialReportDecoder.contractFixture)
+        let rows = report?.mcus ?? []
+
+        let master = rows.first { $0.mcu == "mcu" }
+        let masterPorts = [
+            SerialPort(path: "/dev/cu.usbmodem142101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)"),
+            SerialPort(path: "/dev/cu.usbmodem14101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)")
+        ]
+        XCTAssertEqual(master?.suggestedPort(in: masterPorts,
+                                             allowSinglePortDefault: false)?.path,
+                       "/dev/cu.usbmodem14101")
+        XCTAssertEqual(master?.pickerButtonText(in: masterPorts,
+                                                allowSinglePortDefault: false),
+                       "/dev/cu.usbmodem14101")
+
+        let tool = rows.first { $0.mcu == "tool" }
+        let singlePort = [
+            SerialPort(path: "/dev/cu.usbmodem142101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)")
+        ]
+        XCTAssertNil(tool?.suggestedPort(in: singlePort,
+                                         allowSinglePortDefault: false))
+        XCTAssertEqual(tool?.suggestedPort(in: singlePort,
+                                           allowSinglePortDefault: true)?.path,
+                       "/dev/cu.usbmodem142101")
+        XCTAssertEqual(tool?.pickerButtonText(in: singlePort,
+                                              allowSinglePortDefault: true),
+                       "/dev/cu.usbmodem142101")
+    }
 }

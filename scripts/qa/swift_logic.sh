@@ -15,6 +15,7 @@ swiftc \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/AppFeedback.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/CameraFeedback.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/Environment.swift" \
+  "$ROOT/KlipperMac/Sources/KlipperMac/Core/SerialScanner.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/StackReader.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/McuSerial.swift" \
   "$ROOT/KlipperMac/Sources/KlipperMac/Core/Moonraker.swift" \

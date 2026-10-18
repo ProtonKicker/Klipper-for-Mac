@@ -208,6 +208,37 @@ enum SwiftLogicChecks {
                     tone: .warning,
                     opacity: 0),
                "missing identities should suppress the presence dot")
+
+        let masterPorts = [
+            SerialPort(path: "/dev/cu.usbmodem142101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)"),
+            SerialPort(path: "/dev/cu.usbmodem14101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)")
+        ]
+        expect(master?.suggestedPort(in: masterPorts,
+                                     allowSinglePortDefault: false)?.path
+               == "/dev/cu.usbmodem14101",
+               "configured rows should keep the configured port selected in the picker")
+        expect(master?.pickerButtonText(in: masterPorts,
+                                        allowSinglePortDefault: false)
+               == "/dev/cu.usbmodem14101",
+               "configured rows should show the configured port in the picker label")
+
+        let singlePort = [
+            SerialPort(path: "/dev/cu.usbmodem142101",
+                       label: "USB-CDC (STM32 / SKR / Pi Pico class boards)")
+        ]
+        expect(missing?.suggestedPort(in: singlePort,
+                                      allowSinglePortDefault: false) == nil,
+               "multi-MCU rows should not default to the only USB port unless they are the only pickable row")
+        expect(missing?.suggestedPort(in: singlePort,
+                                      allowSinglePortDefault: true)?.path
+               == "/dev/cu.usbmodem142101",
+               "single pickable rows should default to the only detected port")
+        expect(missing?.pickerButtonText(in: singlePort,
+                                         allowSinglePortDefault: true)
+               == "/dev/cu.usbmodem142101",
+               "single pickable rows should show the detected port in the picker label")
     }
 
     private static func testCameraFeedback() {
