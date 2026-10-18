@@ -9,6 +9,8 @@ struct CameraView: View {
     @State private var devicesLoaded = false
     @State private var prefsLoaded = false
     @State private var triedStarting = false
+    @State private var micOn = false
+    @State private var savedMicOn = false
 
     @State private var selectedDevice = ""
     @State private var savedDevice = ""
@@ -34,13 +36,14 @@ struct CameraView: View {
     var body: some View {
         Form {
             cameraSection
+            recordingSection
             previewSection
             snapshotSection
             settingsSection
             privacySection
         }
         .formStyle(.grouped)
-        .navigationTitle("Camera")
+        .navigationTitle("Recording")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -93,6 +96,49 @@ struct CameraView: View {
             }
 
             if !env.isCLIInstalled { installHint }
+        }
+    }
+
+    // MARK: - record video (with optional mic)
+
+    private var recordingSection: some View {
+        Section("Recording") {
+            Text("Save a video of your print to the Klipper data folder.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Button {
+                    Task {
+                        if model.camOnline == true {
+                            // Already recording/live: stop it.
+                            await model.runCam(["cam", "off"])
+                        } else {
+                            await model.startCamera()
+                        }
+                    }
+                } label: {
+                    Text(model.camOnline == true ? "Stop" : "Start recording")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.busy || !env.isCLIInstalled)
+                Spacer()
+            }
+
+            Toggle("Record audio (mic)", isOn: $micOn)
+                .disabled(!env.isCLIInstalled)
+                .onChange(of: micOn) { value in
+                    guard value != savedMicOn else { return }
+                    savedMicOn = value
+                    Task {
+                        await model.runCam(["cam", "config",
+                                            "--audio", value ? "on" : "off"])
+                    }
+                }
+
+            Text("macOS asks once for microphone permission the first time you enable audio.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -272,6 +318,9 @@ struct CameraView: View {
         }
         if let d = cam["device"] as? String, !d.isEmpty {
             selectedDevice = d; savedDevice = d
+        }
+        if let audio = cam["audio"] as? Bool {
+            micOn = audio; savedMicOn = audio
         }
     }
 

@@ -2,7 +2,7 @@ import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
     case printer = "Printer"
-    case camera = "Camera"
+    case camera = "Recording"
     case settings = "Settings"
 
     var id: String { rawValue }

@@ -87,6 +87,7 @@ enum McuConflict: String {
 /// mystery. `key` is decoded but not drawn: it is the same board the tail
 /// already names, and a row is not the place to dump a device path.
 struct McuIdentity: Equatable {
+    let name: String?
     let vidPid: String?
     let serial: String?
     let key: String?
@@ -517,12 +518,14 @@ extension McuIdentity {
             return t.isEmpty ? nil : t
         }
         let present = (dict["present"] as? Bool) ?? false
-        let id = McuIdentity(vidPid: text(dict["vid_pid"]),
+        let id = McuIdentity(name: text(dict["name"]),
+                             vidPid: text(dict["vid_pid"]),
                              serial: text(dict["serial"]),
                              key: text(dict["key"]),
                              present: present)
         // {} from a CLI that found nothing looks like a board with no name.
-        if id.vidPid == nil, id.serial == nil, id.key == nil, !id.present { return nil }
+        if id.name == nil, id.vidPid == nil, id.serial == nil,
+           id.key == nil, !id.present { return nil }
         self = id
     }
 }

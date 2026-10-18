@@ -35,6 +35,19 @@ final class AppModel: ObservableObject {
     /// "the installed CLI does not answer that contract yet" — every view that
     /// reads it must then show the old single-board picker, unchanged.
     @Published var mcuReport: SerialReport?
+    /// Map of `[mcu]` section → serial path the USER picked this session but the
+    /// CLI report has not yet caught up with. A pick writes printer.cfg and the
+    /// next `serial --json` lands a refresh tick later; this map is the bridge
+    /// that stops the button from reverting to "Select device…" in between.
+    /// Keyed by `mcu` (the McuRow identity, e.g. "mcu" or "tool"). The CLI's
+    /// report (`McuRow.serial`) is the authority once it arrives — this map is
+    /// only consulted when that is still nil/empty. It does NOT track the
+    /// configured serial; that stays in the report.
+    @Published var pendingSerials: [String: String] = [:]
+    /// Map of /dev/cu.* path → resolved product name (from the report identity
+    /// "name" field, falling back to the SerialScanner label). Lets the picker
+    /// say "BigTreeTech Octopus" instead of the board-agnostic "USB-CDC".
+    @Published var serialPortNames: [String: String] = [:]
     @Published var presetNames: [String] = []
     /// nil until the first check answers — the Camera pane reads that as "unknown".
     @Published var camOnline: Bool?
@@ -285,6 +298,8 @@ final class AppModel: ObservableObject {
                 if mcuReport != nil { mcuReport = nil }
             case .report(let report):
                 if report != mcuReport { mcuReport = report }
+                _syncNamesFromReport(report)
+                _reconcilePendingSerials(report)
             }
         }
         if let presets, presets != presetNames { presetNames = presets }
@@ -332,6 +347,27 @@ final class AppModel: ObservableObject {
         clearTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 9_000_000_000)
             if !Task.isCancelled { self?.notifier.message = nil }
+        }
+    }
+
+    /// Build serialPortNames from the report identity so picker buttons can
+    /// show the real product name ("BigTreeTech Octopus") instead of the
+    /// generic USB-CDC label.
+    private func _syncNamesFromReport(_ report: SerialReport) {
+        for mcu in report.mcus {
+            guard let serial = mcu.serial, serial.hasPrefix("/dev/") else { continue }
+            let name = mcu.identity?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let name, !name.isEmpty {
+                serialPortNames[serial] = name
+            }
+        }
+    }
+
+    /// Drop pending picks the report now confirms — the write landed.
+    private func _reconcilePendingSerials(_ report: SerialReport) {
+        let confirmed = Set(report.mcus.compactMap { $0.serial })
+        for (mcu, path) in pendingSerials {
+            if confirmed.contains(path) { pendingSerials[mcu] = nil }
         }
     }
 
@@ -419,11 +455,10 @@ final class AppModel: ObservableObject {
         var args = ["serial", "--set", path]
         let target = mcu?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let target, !target.isEmpty else {
+            pendingSerials[McuRow.masterName] = path
             _ = await cli(args, ok: "Serial device set")
             return
         }
-        // Belt and braces with the row's own refusal: a name the tool cannot
-        // address must never be quietly written to the timing master instead.
         guard SerialReportDecoder.isSafeArgument(target) else {
             say("Refusing to write a serial to [mcu \(target)] — that section "
                 + "name is not one the tool can address. Fix printer.cfg first.",
@@ -437,6 +472,7 @@ final class AppModel: ObservableObject {
                 error: true)
             return
         }
+        pendingSerials[target] = path
         args.append(target)
         let section = target == McuRow.masterName ? "[mcu]" : "[mcu \(target)]"
         _ = await cli(args, ok: "Serial device set for \(section)")

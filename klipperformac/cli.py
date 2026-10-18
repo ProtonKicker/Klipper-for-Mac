@@ -8,7 +8,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -344,7 +343,6 @@ def _cmd_up(args):
 
 
 def _wait_ready(timeout=35):
-    url = "http://localhost:{}/server/info".format(paths.MOONRAKER_PORT)
     deadline = time.time() + timeout
     while time.time() < deadline:
         info = (_moonraker_get("/server/info", 2) or {}).get("result")
@@ -2121,7 +2119,6 @@ def _auto_serial_single(cfg_path, text):
     """The original single-section path, kept for configs this parser does not
     read as MCU sections at all (no [mcu] header, a glued header, a vendor
     config that puts serial: somewhere else): behaviour must not regress."""
-    lines = []
     m = re.search(r"(?m)^\s*serial\s*:(?!\s*$)(.*)$", text)
     if m and re.search(r"/dev/(cu|tty|usbserial|usbmodem)\S*", m.group(1)):
         return ["Serial port already set in printer.cfg."], True
@@ -2468,7 +2465,7 @@ def cmd_cam(args):
             kw["audio"] = args.audio == "on"
         if kw:
             try:
-                merged = cam.save_prefs(**kw)
+                cam.save_prefs(**kw)
             except OSError as e:
                 _die("Could not write {} (your camera settings are "
                      "unchanged): {}".format(

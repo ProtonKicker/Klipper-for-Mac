@@ -70,14 +70,7 @@ ignore = []
 "klipperformac/installer.py" = ["B904"]      # 8x B904
 "klipperformac/paths.py" = ["B904"]          # 2x B904
 #
-# *** THESE TWO ARE FINDINGS, NOT STYLE -- see QA.md "Known baseline". ***
-# F401  cli.py:10 `import socket` is unused: harmless, delete it.
-# F841  cli.py:264 `url`, cli.py:735 `lines`, cli.py:1035 `merged` are assigned
-#       and never read. Each is either dead code or a value that was meant to be
-#       used -- a human must look at them before they are "fixed" by deletion.
-# They are quarantined here ONLY so the gate is green today; the moment they are
-# resolved, remove this line (the gate then enforces F401/F841 in cli.py).
-"klipperformac/cli.py" = ["F401", "F841"]
+# (F841 quarantine removed — see QA.md "Known baseline" for history.
 # ===========================================================================
 
 [tool.ruff.lint.pycodestyle]

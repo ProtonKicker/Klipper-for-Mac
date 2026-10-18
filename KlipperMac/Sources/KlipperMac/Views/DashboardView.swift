@@ -2,8 +2,38 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var selectedSerial = ""
     @State private var showLibrary = false
+
+    /// Resolved product name for a USB path: model-backed identity name wins,
+    /// falls back to the scanner's board-agnostic label, else the bare path.
+    private func portName(_ path: String) -> String {
+        if let n = model.serialPortNames[path], !n.isEmpty { return n }
+        if let port = model.serialPorts.first(where: { $0.path == path }) {
+            return port.label.isEmpty ? port.path : port.label
+        }
+        return path
+    }
+
+    /// The label a picker button should show for one MCU section. Source of
+    /// truth order: (1) configured serial from the CLI report, (2) the user's
+    /// still-unconfirmed pick waiting on the next poll, (3) a single attached
+    /// board's path as a default, (4) a placeholder. The tuple's Bool is true
+    /// when the label is a placeholder (so the view can dim it).
+    private func buttonText(forMmcu mcu: String,
+                            configured serial: String?,
+                            suggested: String?) -> (String, Bool) {
+        if let s = serial, !s.isEmpty { return (s, false) }
+        if serial == nil || serial!.isEmpty,
+           let p = model.pendingSerials[mcu], !p.isEmpty {
+            return (p, false)
+        }
+        if let s = suggested, !s.isEmpty { return (s, false) }
+        if model.serialPorts.count == 1 {
+            return (model.serialPorts[0].path, false)
+        }
+        let ph = model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
+        return (ph, true)
+    }
 
     private let stackButtonWidth: CGFloat = 92
 
@@ -265,38 +295,92 @@ struct DashboardView: View {
 
     // MARK: serial device, two ways
 
-    /// The pre-multi-MCU picker, kept verbatim: one "Serial device" row for
-    /// every CLI that cannot answer `serial --json`. Single-board users with an
-    /// installed build from before the contract see exactly this.
+    /// The single-board picker: one "Serial device" row that talks to the
+    /// non-multi-MCUIT CLI path. The button label is read from model state so
+    /// a pick survives the refresh that `setSerial` triggers — that refresh
+    /// otherwise reverts the button to "Select device…" for one poll tick.
     private var serialPicker: some View {
         Menu {
             if model.serialPorts.isEmpty {
                 Text("No USB serial devices found")
             } else {
                 ForEach(model.serialPorts) { port in
+                    let owner = claimants[port.path]
+                    let claimed = owner != nil
                     Button {
-                        selectedSerial = port.path
                         Task { await model.setSerial(port.path) }
                     } label: {
-                        Text("\(port.path)   \(port.label)")
+                        if claimed, let who = owner {
+                            Label("\(port.path)   ·   used by \(who)",
+                                  systemImage: "checkmark")
+                        } else {
+                            Text("\(port.path)   ·   \(portName(port.path))")
+                        }
                     }
                 }
             }
         } label: {
-            Text(singlePickerButtonText)
-                .foregroundStyle(singlePickerButtonIsPlaceholder ? .secondary
-                                 : .primary)
+            Text(serialPickerLabel)
+                .foregroundStyle(serialPlaceholder ? .secondary : .primary)
         }
         .disabled(model.busy || model.serialPorts.isEmpty)
     }
 
-    /// One row per [mcu] section, plus the rule the rows exist to enforce.
+    /// Map of configured serial path → owning section (or the last pending pick
+    /// if the report hasn't caught up yet).
+    private var claimants: [String: String] {
+        var map: [String: String] = []
+        if let report = mcuReport {
+            for mcu in report.mcus {
+                if let s = mcu.serial, s.hasPrefix("/dev/") { map[s] = mcu.section }
+            }
+        }
+        for (mcu, path) in pendingSerials {
+            if !path.isEmpty, mcu == McuRow.masterName { map[path] = "[mcu]" }
+        }
+        return map
+    }
+
+    private var serialPlaceholder: Bool { model.serialPorts.isEmpty || serialConfigured == nil }
+
+    /// The serial path that currently drives the board configured in printer.cfg,
+    /// or nil when none is set. Reads from the CLI report (the master mcu row's
+    /// serial), falls back to a pending pick.
+    private var serialConfigured: String? {
+        if let s = mcuReport?
+            .mcus.first(where: { $0.mcu == McuRow.masterName })?
+            .serial?.trimmingCharacters(in: .whitespacesAndNewlines),
+           s.hasPrefix("/dev/") {
+            return s
+        }
+        return pendingSerials[McuRow.masterName]
+    }
+
+    private var serialPickerLabel: String {
+        if let s = serialConfigured, !s.isEmpty { return s }
+        if model.serialPorts.count == 1 { return model.serialPorts[0].path }
+        return model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
+    }
     @ViewBuilder private func mcuRows(_ report: SerialReport) -> some View {
         let singlePickableRow = report.mcus.filter { $0.offersPortPicker }.count == 1
+        // Ports that belong to OTHER sections — showing these as live would let a
+        // user write the same /dev/cu to two [mcu] sections, which is exactly
+        // the conflict that produces the yellow "already claimed" banner. We
+        // dim them and tag them "used by [mcu X]" instead.
+        let claimants: [String: String] = {
+            var map: [String: String] = []
+            for mcu in report.mcus {
+                if let s = mcu.serial, s.hasPrefix("/dev/") {
+                    map[s] = mcu.section
+                }
+            }
+            return map
+        }()
         ForEach(report.mcus) { row in
             McuSerialRow(row: row,
                          ports: model.serialPorts,
-                         allowSinglePortDefault: singlePickableRow)
+                         allowSinglePortDefault: singlePickableRow,
+                         claimants: claimants)
         }
         if !report.single {
             Text("Multiple MCUs: [mcu] keeps the clock and every other board "
@@ -305,21 +389,6 @@ struct DashboardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var singlePickerButtonText: String {
-        if !selectedSerial.isEmpty {
-            return selectedSerial
-        }
-        if model.serialPorts.count == 1 {
-            return model.serialPorts[0].path
-        }
-        return model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
-    }
-
-    private var singlePickerButtonIsPlaceholder: Bool {
-        model.serialPorts.isEmpty || (selectedSerial.isEmpty
-                                      && model.serialPorts.count != 1)
     }
 
     // MARK: - LAN
@@ -372,7 +441,11 @@ private struct McuSerialRow: View {
     let row: McuRow
     let ports: [SerialPort]
     let allowSinglePortDefault: Bool
-    @State private var chosen = ""
+    /// Every serial path currently configured in printer.cfg and the [mcu]
+    /// section it belongs to. The picker uses it to grey out ports owned by
+    // OTHER sections — letting the user pick them is what triggers the yellow
+    // "already claimed" conflict.
+    let claimants: [String: String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -434,18 +507,22 @@ private struct McuSerialRow: View {
                 Text("No USB serial devices found")
             } else {
                 ForEach(ports) { port in
+                    let owner = claimants[port.path]
+                    let claimedByOther = owner != nil && owner != row.section
                     Button {
-                        let path = port.path
-                        chosen = path
-                        Task { await model.setSerial(path, mcu: row.mcu) }
+                        Task { await model.setSerial(port.path, mcu: row.mcu) }
                     } label: {
                         if port.path == row.serial {
-                            Label("\(port.path)   \(port.label)",
+                            Label("\(port.path)   \(portName(port.path))",
                                   systemImage: "checkmark")
+                        } else if claimedByOther, let who = owner {
+                            Text("\(port.path)   ·   used by \(who)")
+                                .foregroundStyle(.secondary)
                         } else {
-                            Text("\(port.path)   \(port.label)")
+                            Text("\(port.path)   ·   \(portName(port.path))")
                         }
                     }
+                    .disabled(claimedByOther)
                 }
             }
         } label: {
@@ -456,26 +533,36 @@ private struct McuSerialRow: View {
         .frame(maxWidth: 240)
         .disabled(model.busy || !row.isAddressable || ports.isEmpty)
         .help(row.pickerHelpText)
-        .onAppear { syncChosen() }
-        .onChange(of: row.serial) { _ in syncChosen() }
-        .onChange(of: ports) { _ in syncChosen() }
     }
 
+    /// Resolved product name for a USB path (identity name → scanner label → path).
+    private func portName(_ path: String) -> String {
+        if let n = model.serialPortNames[path], !n.isEmpty { return n }
+        if let port = ports.first(where: { $0.path == path }) {
+            return port.label.isEmpty ? port.path : port.label
+        }
+        return path
+    }
+
+    /// Button label for this section's picker. Source of truth order:
+    /// configured serial (from the report) → user's pending pick → suggested
+    /// fallback → single-port default → placeholder.
     private var portPickerButtonText: String {
-        if !chosen.isEmpty { return chosen }
-        return row.pickerButtonText(in: ports,
-                                    allowSinglePortDefault: allowSinglePortDefault)
+        if let s = row.serial, !s.isEmpty { return s }
+        if let p = model.pendingSerials[row.mcu], !p.isEmpty { return p }
+        if let s = row.suggestedPort(in: ports,
+                                     allowSinglePortDefault: allowSinglePortDefault)?.path,
+           !s.isEmpty { return s }
+        if ports.count == 1 { return ports[0].path }
+        return ports.isEmpty ? "No USB serial devices" : "Select device…"
     }
 
-    private var portPickerButtonIsPlaceholder: Bool {
-        chosen.isEmpty
-            && row.suggestedPort(in: ports,
-                                 allowSinglePortDefault: allowSinglePortDefault) == nil
-    }
-
-    private func syncChosen() {
-        chosen = row.suggestedPort(in: ports,
-                                   allowSinglePortDefault: allowSinglePortDefault)?.path ?? ""
+    private var portPlaceholder: Bool {
+        let configured = (row.serial?.isEmpty == false)
+        let pending = (model.pendingSerials[row.mcu]?.isEmpty == false)
+        let suggested = row.suggestedPort(in: ports,
+                                          allowSinglePortDefault: allowSinglePortDefault) != nil
+        return !configured && !pending && !suggested && ports.count != 1
     }
 
     private func pill(_ badge: RowBadgePresentation) -> some View {

@@ -723,7 +723,7 @@ Two SKR Picos now run ONE klipper instance over two USB CDC links:
 Remaining known tickets: flash_uf2 success criterion (runtime-return check),
 GUI dark-mode/perf verification round, dual-homing trsync caveat documented.
 
-## Deep audit 2026-10-17/18 (parse-the-app, linter, edge cases)
+## Deep audit 2026-10-17/18 (parse-the-app, linter, edge cases, SwiftUI fixes)
 
 Ran a full-codebase audit after picking up from Qoder/Trae. Read: tui.py,
 batteryguard.py, configgen.py, powerloss.py, install.sh, proxy.py, mcus.py,
@@ -750,3 +750,25 @@ Confirmed bugs/gaps:
 
 Output: rewrote `next_steps.md` with P0/P1/P2/P3 priorities, specific repros.
 All findings listed per-file in the new next_steps.md.
+
+## SwiftUI bug fixes + cleanup 2026-10-18 (GUI team + CatPaw)
+
+### Fixed (Swift)
+- **device picker revert bug**: `McuSerialRow.syncChosen()` refreshed `chosen = ""` on every poll tick, reverting a just-selected board to "Select device…". Now preserves in-flight picks until config settles.
+- **port conflict picker**: picker previously let user select a /dev/cu already owned by another `[mcu]`, triggering a yellow "already claimed" banner. Now dims and tags "used by [mcu X]" + disables the button.
+- **Camera tab → Recording**: tab label renamed (`Pane.camera = "Recording"`), added a Recording section with start/stop + "Record audio (mic)" toggle wired to `cam config --audio on|off`. Icons (FlatIconKind.camera) unchanged.
+
+### Fixed (Python / debt)
+- Deleted unused `import socket` from cli.py:10.
+- Fixed 3 F841 dead-code findings (url at cli.py:346, lines at cli.py:2123, merged at cli.py:2470).
+- Removed F401/F841 quarantine lines from pyproject.toml. ruff fully clean.
+
+### Delivered
+- next_steps.md rewritten as v2 with user feedback (P0 bugs, P1 parity, P2 tooling, P3 features).
+
+### Remaining P0 (carried)
+- flash_uf2 success criterion (runtime-return after BOOTSEL bounce).
+
+### Still deferred
+- TUI tests (no test file exists)
+- presets/quirks tests (installer, etc.)
