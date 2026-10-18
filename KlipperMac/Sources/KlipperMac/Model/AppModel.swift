@@ -45,9 +45,15 @@ final class AppModel: ObservableObject {
     /// configured serial; that stays in the report.
     @Published var pendingSerials: [String: String] = [:]
     /// Map of /dev/cu.* path → resolved product name (from the report identity
-    /// "name" field, falling back to the SerialScanner label). Lets the picker
-    /// say "BigTreeTech Octopus" instead of the board-agnostic "USB-CDC".
+    /// "name" field). Lets the picker say "SKR Pico" instead of the board-
+    /// agnostic "USB-CDC".
     @Published var serialPortNames: [String: String] = [:]
+    /// Map of /dev/cu.* path → USB serial number ("5044506110A45B1C"). Two boards
+    /// of the same class (e.g. a BTT Octopus + an SKR Pico, both rp2040 USB-CDC
+    /// and both reporting identity name "rp2040") would otherwise read the same
+    /// in the picker; the serial is the stable per-board discriminator, so
+    /// portName() appends it whenever the name alone is ambiguous.
+    @Published var serialPortUSBSerials: [String: String] = [:]
     @Published var presetNames: [String] = []
     /// nil until the first check answers — the Camera pane reads that as "unknown".
     @Published var camOnline: Bool?
@@ -353,15 +359,20 @@ final class AppModel: ObservableObject {
     /// Build serialPortNames from the report identity so picker buttons can
     /// show the real product name ("BigTreeTech Octopus") instead of the
     /// generic USB-CDC label.
-    private func _syncNamesFromReport(_ report: SerialReport) {
-        for mcu in report.mcus {
-            guard let serial = mcu.serial, serial.hasPrefix("/dev/") else { continue }
-            let name = mcu.identity?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let name, !name.isEmpty {
-                serialPortNames[serial] = name
-            }
+private func _syncNamesFromReport(_ report: SerialReport) {
+    for mcu in report.mcus {
+        guard let serial = mcu.serial, serial.hasPrefix("/dev/") else { continue }
+        let name = mcu.identity?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name, !name.isEmpty {
+            serialPortNames[serial] = name
+        }
+        let usbSerial = mcu.identity?.serial?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !usbSerial.isEmpty {
+            serialPortUSBSerials[serial] = usbSerial
         }
     }
+}
 
     /// Drop pending picks the report now confirms — the write landed.
     private func _reconcilePendingSerials(_ report: SerialReport) {
