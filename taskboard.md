@@ -630,6 +630,7 @@ Continue the robustness-testing loop from the saved transcript:
   - `make build-gui` -> PASS
   - `make qa-fast` -> PASS (one run warned at 27s; immediate profile rerun below showed no persistent fast-tier regression)
   - `make test-fast-profile` -> `161 passed in 13.40s`
+  - push hook `scripts/qa/full.sh` -> `3133 passed, 30 deselected`
   - the single-board and per-MCU serial controls now use action menus that keep the current/default device visible instead of resetting to an empty placeholder
   - per-MCU rows only default the sole detected USB device when there is only one pickable MCU row, so the GUI still respects multi-MCU fan-out instead of implying one cable can satisfy every row
 
