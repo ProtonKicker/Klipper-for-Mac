@@ -435,8 +435,9 @@ private struct McuSerialRow: View {
             } else {
                 ForEach(ports) { port in
                     Button {
-                        chosen = port.path
-                        Task { await model.setSerial(port.path, mcu: row.mcu) }
+                        let path = port.path
+                        chosen = path
+                        Task { await model.setSerial(path, mcu: row.mcu) }
                     } label: {
                         if port.path == row.serial {
                             Label("\(port.path)   \(port.label)",
