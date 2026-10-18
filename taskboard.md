@@ -707,3 +707,18 @@ Evidence:
   honestly. Ticket for next run.
 - Service state right now: stack down; 142101 board present but firmware
   silent; flashed board in BOOTSEL. Waiting on cold power-cycle by user.
+
+## Dual-MCU MILESTONE (2026-10-18 late)
+
+Two SKR Picos now run ONE klipper instance over two USB CDC links:
+- [mcu]      /dev/cu.usbmodem142101 (SER 5044506110A45B1C) firmware 461c4e3
+- [mcu tool] /dev/cu.usbmodem142301 (SER 454741505A89CADA) firmware 461c4e3
+  (the board flashed via `flash uf2` this session - the "bounce" was a dead
+  USB stack cured by the cold power-cycle; it boots the built firmware fine)
+- klippy state ready; 0x "Timer too close" in klippy.log (empirical macOS
+  host-scheduling validation with SecondarySync across two clocks)
+- doctor: per-MCU loaded/matches/provenance all [ok]; serial --json shows
+  both rows present/no conflict; preset 'bench-dual-live' captures it
+- flash probe + gcode G4 across both boards: ok
+Remaining known tickets: flash_uf2 success criterion (runtime-return check),
+GUI dark-mode/perf verification round, dual-homing trsync caveat documented.
