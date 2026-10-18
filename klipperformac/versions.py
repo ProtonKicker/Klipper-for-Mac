@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import time
 import urllib.request
 
 from . import paths
@@ -220,3 +221,54 @@ def check_updates():
         if latest and _sort_key(latest) > _sort_key(pins[comp]):
             out.append((comp, pins[comp], latest))
     return out, errors
+
+
+UPDATE_CACHE_NAME = "update-check.json"
+UPDATE_CACHE_TTL = 6 * 3600.0
+
+
+def _cache_path():
+    return paths.DATA / "cache" / UPDATE_CACHE_NAME
+
+
+def cached_check(ttl=UPDATE_CACHE_TTL, force=False):
+    """check_updates() behind a disk cache.
+
+    'status' (and anything that polls it) must never pay serial GitHub
+    round trips: the network check is for humans who asked with 'update'.
+    A fresh cache answers offline; a stale or missing one performs exactly
+    one live check and persists the result. When the live check itself
+    errors AND a cache of any age exists, the stale answer is returned with
+    the errors dropped - offline Macs still get their pins printed, and a
+    dead network never spams every status poll.
+    """
+    f = _cache_path()
+    now = time.time()
+    cached = None
+    try:
+        raw = json.loads(f.read_text())
+        if isinstance(raw, dict) and isinstance(raw.get("checked_at"),
+                                                 (int, float)):
+            cached = raw
+    except (OSError, ValueError):
+        cached = None
+    if (not force and cached is not None
+            and now - cached["checked_at"] < ttl):
+        return ([tuple(u) for u in cached.get("updates", [])],
+                list(cached.get("errors", [])))
+    updates, errors = check_updates()
+    if errors and cached is not None and not force:
+        # a dead network must not overwrite known facts: answer from the
+        # (stale) cache and leave it in place for the next retry.
+        return ([tuple(u) for u in cached.get("updates", [])],
+                list(cached.get("errors", [])))
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"checked_at": now,
+                                   "updates": [list(u) for u in updates],
+                                   "errors": list(errors)}))
+        tmp.replace(f)
+    except OSError:
+        pass  # a cache we cannot write is a slower status, never a crash
+    return updates, errors

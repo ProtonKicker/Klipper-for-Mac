@@ -558,7 +558,7 @@ def cmd_status(args):
         print("  batteryguard off  (laptop prints: klipperformac "
               "batteryguard on)")
     print(_status_powerloss_line())
-    updates, errors = versions.check_updates()
+    updates, errors = versions.cached_check()
     for e in errors:
         print("  [!] " + e)
     if updates:

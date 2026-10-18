@@ -670,3 +670,21 @@ Evidence:
 - never edit upstream checkouts
 - keep this file updated after each substantial run
 - record exact commands and outcomes when the live bench state changes
+
+## Qoder run 2026-10-18 (paths swallow fix, CI green, kill-suite PASS, status cache)
+
+- CI went GREEN (run 39085720088) after `paths.is_file/is_dir/path_exists`
+  (os.path-based) replaced raw pathlib calls in cam.helper_path,
+  relocate_data, and process._load. Root cause proven on the production
+  3.11 venv: Path.exists() raises errno 63/EACCES on Python <3.13.
+- Power-loss live kill suite PASSED end-to-end on the bench board:
+  journal survived both SIGKILLs, unclean/clean verdicts correct, stack
+  rebuilt, no orphans, klippy ready at the end (after re-syncing the
+  installed CLI, which had carried the pre-P500 dwell generator).
+- `status` no longer hits GitHub per call: versions.cached_check (6h TTL,
+  corrupt-safe, network errors never clobber known facts); 9 new tests;
+  measured status 3.4s -> 1.9s and offline-resilient. `update` stays live.
+- Two SKR Picos are now attached: 142101 SER=5044506110A45B1C (firmware
+  currently silent - flash probe times out) and 142301
+  SER=454741505A89CADA (live Klipper rp2040, answering identify).
+  [mcu] bound to the live one; dual-MCU bench test in progress.
