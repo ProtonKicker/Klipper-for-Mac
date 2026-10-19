@@ -518,10 +518,11 @@ private struct McuSerialRow: View {
                 Text("No USB serial devices found")
             } else {
                 ForEach(ports) { port in
-                    let owner = claimants[port.path]
+                    let path = port.path
+                    let owner = claimants[path]
                     let claimedByOther = owner != nil && owner != row.section
                     Button {
-                        Task { await model.setSerial(port.path, mcu: row.mcu) }
+                        Task { await model.setSerial(path, mcu: row.mcu) }
                     } label: {
                         if port.path == row.serial {
                             Label("\(port.path)   \(portName(port.path))",

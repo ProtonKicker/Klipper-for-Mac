@@ -518,7 +518,7 @@ extension McuIdentity {
             return t.isEmpty ? nil : t
         }
         let present = (dict["present"] as? Bool) ?? false
-        let id = McuIdentity(name: text(dict["name"]),
+        let id = McuIdentity(name: nil,
                              vidPid: text(dict["vid_pid"]),
                              serial: text(dict["serial"]),
                              key: text(dict["key"]),
