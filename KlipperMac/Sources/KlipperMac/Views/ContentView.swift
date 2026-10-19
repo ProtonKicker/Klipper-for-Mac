@@ -1,4 +1,46 @@
 import SwiftUI
+import AppKit
+
+struct KeyCaptureView: NSViewRepresentable {
+    let onKey: (String) -> Void
+
+    func makeNSView(context: Context) -> KeyCaptureNSView {
+        let view = KeyCaptureNSView()
+        view.onKey = onKey
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
+        nsView.onKey = onKey
+    }
+}
+
+final class KeyCaptureNSView: NSView {
+    var onKey: ((String) -> Void)?
+    private var monitor: Any?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil && monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let chars = event.charactersIgnoringModifiers,
+                      chars.count == 1, let self else { return event }
+                switch chars {
+                case "1", "2", "3": self.onKey?(chars); return nil
+                default: return event
+                }
+            }
+        }
+    }
+
+    deinit {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+}
 
 enum Pane: String, CaseIterable, Identifiable {
     case printer = "Printer"
@@ -58,6 +100,19 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: columnVisibility)
         .frame(minWidth: 820, minHeight: 560)
+        .overlay(
+            KeyCaptureView { key in
+                switch key {
+                case "1": pane = .printer
+                case "2": pane = .camera
+                case "3": pane = .settings
+                default: break
+                }
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .allowsHitTesting(false)
+        )
         .task {
             // First run only: land on Settings so the data folder, CLI and
             // printer config are where a new user starts. Later runs open on
