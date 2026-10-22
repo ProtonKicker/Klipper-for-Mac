@@ -381,8 +381,14 @@ struct DashboardView: View {
     }
 
     private var serialPickerLabel: String {
-        if let s = serialConfigured, !s.isEmpty { return s }
-        if model.serialPorts.count == 1 { return model.serialPorts[0].path }
+        if let s = serialConfigured, !s.isEmpty {
+            return("\(s)   ·   \(portName(s))")
+        }
+
+        if model.serialPorts.count == 1 {
+            let p = model.serialPorts[0]
+            return "\(p.path)   ·   \(portName(p.path))"
+        }
         return model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
     }
     @ViewBuilder private func mcuRows(_ report: SerialReport) -> some View {
@@ -559,7 +565,7 @@ private struct McuSerialRow: View {
             Text(portPickerButtonText)
                 .foregroundStyle(portPlaceholder ? .secondary : .primary)
         }
-        .frame(maxWidth: 240)
+        .frame(maxWidth: 320)
         .disabled(model.busy || !row.isAddressable || ports.isEmpty)
         .help(row.pickerHelpText)
     }
@@ -592,12 +598,21 @@ private struct McuSerialRow: View {
     /// configured serial (from the report) → user's pending pick → suggested
     /// fallback → single-port default → placeholder.
     private var portPickerButtonText: String {
-        if let s = row.serial, !s.isEmpty { return s }
-        if let p = model.pendingSerials[row.mcu], !p.isEmpty { return p }
+        if let s = row.serial, !s.isEmpty {
+            return "\(s)   ·   \(portName(s))"
+        }
+        if let p = model.pendingSerials[row.mcu], !p.isEmpty {
+            return "\(p)   ·   \(portName(p))"
+        }
         if let s = row.suggestedPort(in: ports,
                                      allowSinglePortDefault: allowSinglePortDefault)?.path,
-           !s.isEmpty { return s }
-        if ports.count == 1 { return ports[0].path }
+           !s.isEmpty {
+            return "\(s)   ·   \(portName(s))"
+        }
+        if ports.count == 1 {
+            let p = ports[0]
+            return "\(p.path)   ·   \(portName(p.path))"
+        }
         return ports.isEmpty ? "No USB serial devices" : "Select device…"
     }
 
