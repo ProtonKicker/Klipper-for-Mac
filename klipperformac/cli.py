@@ -1239,6 +1239,210 @@ def _mcu_table_lines(entries, ports):
     return lines
 
 
+def _sync_serials(cfg_path):
+    """Resolve USB [mcu*] sections' ports and fix up printer.cfg (lines, all_ok).
+
+    Two-pass strategy — identity first (exact board match), then fallback
+    (single-candidate guess for any section still on a stale port):
+
+      PASS 1 — IDENTITY: every section carrying a ``# klipperformac:identity
+      <key>`` marker has its board resolved through detect's IOKit layer,
+      which survives macOS renumbering the /dev/cu.* node on every replug.
+      When that board is present under a new path, the serial: line is
+      rewritten to the current one.
+
+      PASS 2 — FALLBACK: sections with NO identity marker whose configured
+      port is no longer attached get the same single-candidate guess
+      ``--auto`` has always allowed (one stale section + one unclaimed port
+      = unambiguous). Multiple candidates or no hardware left means "skip and
+      report".
+
+    Sections whose port is already correct are never touched. Sections
+    configured over CAN (canbus_uuid:) are identity-synced too — they have
+    no USB node to chase, so they pass through untouched.
+
+    All writes go through ``_write_mcu_serial`` (atomic, verified, one port
+    per board). Returns human-readable outcome lines and whether every USB
+    section ended up on a live port.
+    """
+    cfg_path = cfg_path or paths.PRINTER_CFG
+    if not cfg_path.exists():
+        return ["No printer.cfg yet. Run: klipperformac setup"], False
+    mod = _mcus_module()
+    list_fn = getattr(mod, "list_mcus", None) if mod else None
+    if not callable(list_fn):
+        return ["mcus module unavailable; nothing synced."], False
+    try:
+        current_text, encoding = paths.read_config(cfg_path)
+    except Exception as e:
+        return ["could not read {}: {}".format(cfg_path, e)], False
+    try:
+        entries = list_fn(current_text)
+    except Exception as e:
+        return ["could not parse MCU sections: {}".format(e)], False
+
+    ports = detect.scan()
+    present = {p["path"] for p in ports}
+    idents = _identity_map() if ports else {}
+
+    # Build {identity_key: {path, vid_pid, serial_no}} for the boards that are
+    # plugged in right now. detect.Identity()['key'] is
+    # 'usb:VID:PID:SERIAL' or 'loc:LOCATION'.
+    live_by_key = {}
+    for path, ident in idents.items():
+        key = str(ident.get("key") or "").lower()
+        if key:
+            live_by_key[key] = ident
+
+    claimed = {e["serial"] for e in entries
+               if e["serial"] and e["serial"].startswith("/dev/")}
+    lines = []
+    ok = True
+    used = set(claimed)
+
+    # --- PASS 1: identity-synced sections --------------------------------
+    for entry in entries:
+        name = entry["name"]
+        label = _mcu_section_label(name)
+        serial = entry["serial"]
+        # CAN sections are configured by UUID, not /dev/cu.* — skip.
+        if entry.get("canbus_uuid"):
+            continue
+        if not serial or not serial.startswith("/dev/"):
+            # No USB port to sync (CAN or unset); leave it alone.
+            if serial and not serial.startswith("/dev/"):
+                continue
+            ok = False
+            continue
+        marker = _section_identity_marker(current_text, name)
+        if serial in present:
+            # Already on a live port — nothing to do.
+            continue
+        if not marker:
+            # No identity binding: defer to pass 2 fallback.
+            continue
+        live = live_by_key.get(marker.lower())
+        if live is None:
+            lines.append("[!] {} bound to {} — board NOT attached, skipped."
+                         .format(label, marker))
+            ok = False
+            continue
+        new_path = live["path"]
+        if new_path in used:
+            lines.append("[!] {}: board {} already claimed by another section."
+                         .format(label, new_path))
+            ok = False
+            continue
+        wrote, why = _write_mcu_serial(cfg_path, new_path, name)
+        if wrote:
+            used.discard(serial)
+            used.add(new_path)
+            lines.append("Synced {}: {} → {} (identity {})".format(
+                label, serial, new_path, marker))
+            # Refresh cached text so pass 2 sees the update.
+            try:
+                current_text = paths.read_config_text(cfg_path)
+            except Exception:
+                pass
+        else:
+            lines.append("[!] {}: could NOT update to {}: {}".format(
+                label, new_path, why or "write refused"))
+            ok = False
+
+    # --- PASS 2: fallback for markerless, stale-port sections -----------
+    # Re-read entries so pass 1 writes are reflected.
+    try:
+        entries = list_fn(paths.read_config_text(cfg_path))
+    except Exception:
+        pass
+    stale = [e for e in entries
+             if e["serial"] and e["serial"].startswith("/dev/")
+             and e["serial"] not in present
+             and not e.get("canbus_uuid")]
+    if not stale:
+        if not lines:
+            return ["All MCU sections already on live ports — nothing to sync."], ok
+        return lines, ok
+
+    fresh_claimed = {e["serial"] for e in entries if e["serial"]
+                     and e["serial"].startswith("/dev/")}
+    used = set(fresh_claimed)
+    ports = detect.scan()
+    for entry in stale:
+        name = entry["name"]
+        label = _mcu_section_label(name)
+        # Has an identity marker but board not attached → already reported.
+        marker = _section_identity_marker(
+            paths.read_config_text(cfg_path) if cfg_path.exists() else "", name)
+        if marker:
+            continue
+        free = [p for p in ports if p["path"] not in used]
+        if len(free) == 1:
+            new_path = free[0]["path"]
+            wrote, why = _write_mcu_serial(cfg_path, new_path, name)
+            if wrote:
+                used.add(new_path)
+                lines.append("Synced {}: {} → {} (single candidate)".format(
+                    label, entry["serial"], new_path))
+            else:
+                lines.append("[!] {}: could NOT update to {}: {}".format(
+                    label, new_path, why or "write refused"))
+                ok = False
+        elif not free:
+            lines.append("[!] {}: no unclaimed board left for {}.".format(
+                label, entry["serial"]))
+            ok = False
+        else:
+            lines.append(
+                "[!] {}: {} is stale, {} candidates — pick manually: "
+                "klipperformac serial --set PATH {}".format(
+                    label, entry["serial"], len(free), name))
+            ok = False
+    return lines, ok
+
+
+def _section_identity_marker(cfg_text, mcu_name):
+    """The ``# klipperformac:identity <key>`` for ONE [mcu*] section, or None.
+
+    Walks printer.cfg text collecting sections by name, returns the first
+    identity marker seen inside the matching section. Cheap enough to call
+    per-section on a config that has at most a handful of MCUs.
+    """
+    mod = _mcus_module()
+    target = mcu_name
+    # Try mcus.header_for to canonicalise — fall back to a scan of any section
+    # whose text name matches after the four-character strip.
+    if mod is not None:
+        strip_fn = getattr(mod, "NAME_STRIP", 4)
+        prefix = getattr(mod, "SECONDARY_PREFIX", "mcu ")
+    else:
+        strip_fn = 4
+        prefix = "mcu "
+    in_target = False
+    for raw in cfg_text.split("\n"):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        # Very light header detection: does it look like a [<name>] line?
+        is_header = stripped.startswith("[") and stripped.endswith("]")
+        if is_header:
+            header_text = stripped[1:-1]
+            if header_text == "mcu":
+                in_target = (target == "mcu")
+            elif header_text.startswith(prefix):
+                derived = header_text[strip_fn:]
+                in_target = (derived == target)
+            else:
+                in_target = False
+            continue
+        if not in_target:
+            continue
+        m = _MCU_MARKER_RE.search(raw)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _mcu_section_serial(cfg_path, name):
     """The serial: a section holds in printer.cfg RIGHT NOW, or None.
 
@@ -1608,6 +1812,25 @@ def cmd_serial(args):
         else:
             _die("--auto: {} candidates found; pick one of the above: "
                  "klipperformac serial --set PATH".format(len(ports)))
+    if args.sync:
+        if not paths.PRINTER_CFG.exists():
+            _die("No printer.cfg yet. Run: klipperformac setup")
+        # Rescan so port identity reflects the devices that are plugged in
+        # RIGHT NOW (the listing above used the cached scan).
+        sync_ports = detect.scan()
+        sync_idents = _identity_map() if sync_ports else {}
+        # --sync reuses the read-only port listing that was just printed so
+        # the user sees what macOS offers before the sync runs.
+        synced, sync_ok = _sync_serials(paths.PRINTER_CFG)
+        for text in synced:
+            print(text)
+        if as_json:
+            print(_mcu_json_line(_mcu_entries(
+                cfg_path=paths.PRINTER_CFG, ports=sync_ports,
+                idents=sync_idents)))
+        if not sync_ok:
+            sys.exit(2)
+        return
     if not target:
         # Read-only: the listing (or the contract) is the whole answer, and a
         # malformed printer.cfg is a `conflict` on a row, never an exit 1.
@@ -3971,6 +4194,10 @@ def main(argv=None):
                    help="add an [mcu NAME] stub first, then --set its port: gives "
                         "a board a slot when the config did not have one yet "
                         "(still requires --set PATH)")
+    p.add_argument("--sync", action="store_true",
+                   help="resolve every USB [mcu*] section's port via the board's "
+                        "USB identity and update printer.cfg in place")
+
     p.add_argument("--json", action="store_true",
                    help="machine-readable: {\"mcus\": [...], \"single\": bool} "
                         "for every [mcu*] section with its port, USB identity "

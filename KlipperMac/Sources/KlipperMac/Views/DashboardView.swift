@@ -268,6 +268,24 @@ struct DashboardView: View {
                 // slot for this board is how you go from 2 MCUs to 3 (or N).
                 AddBoardRow()
 
+                // "Sync Serial": resolves every USB [mcu*] section's port via the
+                // board's USB identity (the same VID:PID + serial number macOS
+                // rewrites the /dev/cu.* node for on every replug) and rewrites
+                // printer.cfg in place. Triggered on demand — not automatic —
+                // so cable changes are still the user's call.
+                HStack {
+                    Button {
+                        Task { await model.syncSerial() }
+                    } label: {
+                        Label("Sync Serial", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(model.busy)
+                    Spacer()
+                    Text("Match printer.cfg to the board plugged in")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 LabeledContent("Current config") {
                     Button {
                         showLibrary = true
@@ -641,10 +659,14 @@ private struct AddBoardRow: View {
                 name = ""
                 prompt = true
             } label: {
-                Label("Add another board", systemImage: "plus")
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.body)
+                    Text("Add another board")
+                    Spacer()
+                }
             }
             .buttonStyle(.borderless)
-            .fixedSize()
         }
         .alert("Add another board", isPresented: $prompt) {
             TextField("Section name (e.g. tool, display)", text: $name)

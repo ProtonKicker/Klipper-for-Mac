@@ -482,6 +482,14 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         _ = await cliShort(["serial", "--add-mcu", trimmed],
                            ok: "Added [mcu \(trimmed)]")
     }
+    /// Resolves every USB [mcu*] section's port via USB identity matching
+    /// (`serial --sync`): boards plugged in under a new /dev/cu.* get their
+    /// serial: line rewritten, single-candidate fallbacks fill the rest. No
+    /// input required beyond this one tap.
+    func syncSerial() async {
+        _ = await cliShort(["serial", "--sync"],
+                           ok: "Serial ports synced")
+    }
     func setSerial(_ path: String, mcu: String? = nil) async {
         var args = ["serial", "--set", path]
         let target = mcu?.trimmingCharacters(in: .whitespacesAndNewlines)
