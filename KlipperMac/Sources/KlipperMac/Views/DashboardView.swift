@@ -37,6 +37,51 @@ struct DashboardView: View {
 
     private let stackButtonWidth: CGFloat = 92
 
+    /// Self-check verdict for the Sync Serial row: every USB MCU the config
+    /// claims is there, and its path points at the board it's meant to. nil
+    /// when everything matches; a string + tone when a board is missing, on
+    /// the wrong port, or shares a port with someone else — text lives beside
+    /// the button so the user sees *why* they need to sync.
+    private var syncCheckStatus: (text: String, isWarning: Bool)? {
+        guard let report = model.mcuReport else { return nil }
+        var missingBoard: String?
+        var mismatchPort: String?
+        var conflictText: String?
+        for row in report.mcus {
+            // Only USB-over-serial rows are the kind a re-plug can move: CAN
+            // rows carry their own uuid and never change path, so they are never
+            // "wrong".
+            guard row.serial?.hasPrefix("/dev/") == true else { continue }
+            if row.conflict == .missingPort {
+                missingBoard = row.displayName
+                break
+            }
+            if row.conflict == .duplicatePort {
+                conflictText = "port shared with another [mcu]"
+                break
+            }
+            if row.conflict == .badSectionName {
+                conflictText = "bad section name"
+                break
+            }
+            if let identity = row.identity, !identity.present {
+                // Configured path is there but no identity reply: either the
+                // board pulled out or it is on a different /dev/cu.* now.
+                mismatchPort = row.displayName
+            }
+        }
+        if let who = missingBoard {
+            return ("Board \(who) is not on its configured port — sync to fix", true)
+        }
+        if let msg = conflictText {
+            return ("Cannot sync: \(msg) — edit printer.cfg first", true)
+        }
+        if let who = mismatchPort {
+            return ("Board \(who) not detected at its configured port", true)
+        }
+        return nil
+    }
+
     var body: some View {
         Form {
             setupSection
@@ -273,17 +318,27 @@ struct DashboardView: View {
                 // rewrites the /dev/cu.* node for on every replug) and rewrites
                 // printer.cfg in place. Triggered on demand — not automatic —
                 // so cable changes are still the user's call.
-                HStack {
+                HStack(spacing: 8) {
                     Button {
                         Task { await model.syncSerial() }
                     } label: {
                         Label("Sync Serial", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(model.busy)
-                    Spacer()
-                    Text("Match printer.cfg to the board plugged in")
+                    if let status = syncCheckStatus {
+                        HStack(spacing: 4) {
+                            FlatIcon(kind: .warning, size: 14,
+                                     color: status.isWarning ? FlatPalette.amber : FlatPalette.green)
+                            Text(verbatim: status.text)
+                        }
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    } else {
+                        Text("Match printer.cfg to the board plugged in")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
                 }
 
                 LabeledContent("Current config") {
@@ -518,6 +573,25 @@ private struct McuSerialRow: View {
                     }
                 } else {
                     Text(verbatim: identity.text)
+                }
+                // Copy button: USB serial number as the stable per-board
+                // identity. The /dev/cu.* path changes every replug, but this
+                // serial id does not — so the user can paste it into
+                // printer.cfg as a comment or reference, and still recognise
+                // the same physical board later.
+                if let usbSerial = row.identity?.serial,
+                   !usbSerial.isEmpty,
+                   row.serial?.hasPrefix("/dev/") == true {
+                    Button {
+                        model.copyToPasteboard(usbSerial)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
+                          + "every replug — this ID stays with the board so you "
+                          + "can update printer.cfg by hand.")
                 }
                 if let footer = row.footerPresentation {
                     Text(footer.message)
