@@ -120,7 +120,8 @@ def _serial_stdout(offline, as_json=True, mcu=None, use_mcus=True):
         with contextlib.redirect_stdout(captured), \
                 contextlib.redirect_stderr(errors):
             cli.cmd_serial(argparse.Namespace(set=None, auto=False,
-                                               json=as_json, mcu=mcu))
+                                              json=as_json, mcu=mcu,
+                                              sync=False))
     finally:
         cli._mcus_module = real
     return captured.getvalue(), errors.getvalue()
@@ -172,7 +173,8 @@ def run_serial_set(offline_machine, tmp_path):
             with contextlib.redirect_stdout(captured), \
                     contextlib.redirect_stderr(errors):
                 cli.cmd_serial(argparse.Namespace(set=target, auto=False,
-                                                  json=as_json, mcu=mcu))
+                                                  json=as_json, mcu=mcu,
+                                                  sync=False))
         except SystemExit as exc:
             code = exc.code
         finally:

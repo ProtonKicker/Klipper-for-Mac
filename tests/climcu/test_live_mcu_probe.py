@@ -112,7 +112,7 @@ def test_the_contract_from_the_real_bench_is_parseable(real_stack, capsys):
     """`serial --json` on the real machine: exit 0, one JSON document, and the
     bench's SKR Pico present under whatever node macOS gave it today."""
     real_stack.cli.cmd_serial(real_stack.cli.argparse.Namespace(
-        set=None, auto=False, json=True, mcu=None))
+        set=None, auto=False, json=True, mcu=None, sync=False))
     import json
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {"mcus", "single"}

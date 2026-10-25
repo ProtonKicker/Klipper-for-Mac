@@ -28,7 +28,7 @@ TOOL_NODE = "/dev/cu.URT0"
 def serial_ns(**kw):
     """The Namespace argparse builds for `serial [--set PATH] [--auto] [--json]
     [MCUNAME]`, so a test can call the handler directly."""
-    base = dict(set=None, auto=False, json=False, mcu=None)
+    base = dict(set=None, auto=False, json=False, mcu=None, sync=False)
     base.update(kw)
     return argparse.Namespace(**base)
 
