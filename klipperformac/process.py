@@ -9,6 +9,7 @@ Modeled on the startup sequence of the `instances` app, adapted for macOS:
   * Children get their own sessions (start_new_session) so closing the
     terminal cannot kill a running print, and caffeinate guards sleep.
 """
+
 import json
 import os
 import re
@@ -17,15 +18,14 @@ import subprocess
 import time
 
 from . import paths
-from .compat import (build_env, ensure_runtime_shims, invalidate_stale_build,
-                     shim_env)
+from .compat import build_env, ensure_runtime_shims, invalidate_stale_build, shim_env
 
 SERVICES = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
 MARKERS = {
     "klipper": "klippy.py",
     "moonraker": "moonraker",
-    "web_mainsail": "klipperformac.proxy {} ".format(paths.WEB_PORT),
-    "web_fluidd": "klipperformac.proxy {} ".format(paths.FLUIDD_PORT),
+    "web_mainsail": f"klipperformac.proxy {paths.WEB_PORT} ",
+    "web_fluidd": f"klipperformac.proxy {paths.FLUIDD_PORT} ",
     "caffeinate": "caffeinate",
 }
 _STOP_ORDER = ("web_mainsail", "web_fluidd", "moonraker", "klipper", "caffeinate")
@@ -40,8 +40,8 @@ def _boot_time():
         return _boot_cache[1]
     try:
         out = subprocess.run(
-            ["sysctl", "-n", "kern.boottime"], capture_output=True,
-            check=True).stdout.decode()
+            ["sysctl", "-n", "kern.boottime"], capture_output=True, check=True
+        ).stdout.decode()
     except Exception:
         bt = None
     else:
@@ -90,8 +90,8 @@ def _live_cmds(pids):
         return {}
     try:
         out = subprocess.run(
-            ["ps", "-p", ",".join(pids), "-o", "pid=,state=,command="],
-            capture_output=True).stdout.decode()
+            ["ps", "-p", ",".join(pids), "-o", "pid=,state=,command="], capture_output=True
+        ).stdout.decode()
     except Exception:
         out = ""
     result = {}
@@ -109,14 +109,19 @@ def running():
         return None
     pids = {name: state.get(name) for name in SERVICES}
     live = _live_cmds(pids.values())
-    return {name: bool(pids.get(name)) and
-            MARKERS[name] in live.get(str(pids[name]), "")
-            for name in SERVICES}
+    return {
+        name: bool(pids.get(name)) and MARKERS[name] in live.get(str(pids[name]), "")
+        for name in SERVICES
+    }
 
 
 def _popen(cmd, **kw):
-    defaults = dict(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, start_new_session=True)
+    defaults = dict(
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
     defaults.update(kw)
     return subprocess.Popen(cmd, **defaults)
 
@@ -124,8 +129,7 @@ def _popen(cmd, **kw):
 def _scan_service_pids(with_caffeinate=False):
     """Pids of running klipperformac service processes, tracked or not."""
     try:
-        out = subprocess.run(["ps", "-eo", "pid=,command="],
-                             capture_output=True).stdout.decode()
+        out = subprocess.run(["ps", "-eo", "pid=,command="], capture_output=True).stdout.decode()
     except Exception:
         return []
     pids = []
@@ -187,37 +191,77 @@ def start():
     env = build_env()
 
     kproc = _popen(
-        [py, str(klipper_klippy / "klippy.py"),
-         "-a", str(paths.API_SOCKET), "-l", str(paths.KLIPPY_LOG),
-         str(paths.PRINTER_CFG)],
-        cwd=str(klipper_klippy), env=env,
+        [
+            py,
+            str(klipper_klippy / "klippy.py"),
+            "-a",
+            str(paths.API_SOCKET),
+            "-l",
+            str(paths.KLIPPY_LOG),
+            str(paths.PRINTER_CFG),
+        ],
+        cwd=str(klipper_klippy),
+        env=env,
     )
     mproc = _popen(
-        [py, "-m", "moonraker",
-         "-d", str(paths.DATA), "-c", str(paths.MOONRAKER_CONF),
-         "-l", str(paths.MOONRAKER_LOG)],
-        cwd=str(paths.MOONRAKER), env=shim_env(),
+        [
+            py,
+            "-m",
+            "moonraker",
+            "-d",
+            str(paths.DATA),
+            "-c",
+            str(paths.MOONRAKER_CONF),
+            "-l",
+            str(paths.MOONRAKER_LOG),
+        ],
+        cwd=str(paths.MOONRAKER),
+        env=shim_env(),
     )
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     web_env = dict(os.environ)
     web_env["PYTHONPATH"] = repo_root + (
-        os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else "")
+        os.pathsep + web_env["PYTHONPATH"] if web_env.get("PYTHONPATH") else ""
+    )
     bind = "0.0.0.0" if paths.lan_enabled() else "127.0.0.1"
 
     wproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.WEB_PORT),
-         str(paths.WEB_MAINSAIL), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
+        [
+            py,
+            "-m",
+            "klipperformac.proxy",
+            str(paths.WEB_PORT),
+            str(paths.WEB_MAINSAIL),
+            str(paths.MOONRAKER_PORT),
+            bind,
+        ],
+        cwd=repo_root,
+        env=web_env,
     )
     fproc = _popen(
-        [py, "-m", "klipperformac.proxy", str(paths.FLUIDD_PORT),
-         str(paths.WEB_FLUIDD), str(paths.MOONRAKER_PORT), bind],
-        cwd=repo_root, env=web_env,
+        [
+            py,
+            "-m",
+            "klipperformac.proxy",
+            str(paths.FLUIDD_PORT),
+            str(paths.WEB_FLUIDD),
+            str(paths.MOONRAKER_PORT),
+            bind,
+        ],
+        cwd=repo_root,
+        env=web_env,
     )
     cproc = _popen(["caffeinate", "-dis"])
 
-    _save({"klipper": kproc, "moonraker": mproc, "web_mainsail": wproc,
-           "web_fluidd": fproc, "caffeinate": cproc})
+    _save(
+        {
+            "klipper": kproc,
+            "moonraker": mproc,
+            "web_mainsail": wproc,
+            "web_fluidd": fproc,
+            "caffeinate": cproc,
+        }
+    )
     return True
 
 
@@ -257,8 +301,10 @@ def stop(timeout=6.0):
     if still:
         for n in _STOP_ORDER:
             if n in still:
-                print("[!] {} (pid {}) refused to die; leaving state file for "
-                      "inspection: {}".format(n, dict(pids).get(n), paths.STATE))
+                print(
+                    f"[!] {n} (pid {dict(pids).get(n)}) refused to die; leaving state file for "
+                    f"inspection: {paths.STATE}"
+                )
         return False
     _clear()
     return True

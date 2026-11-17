@@ -4,8 +4,9 @@
 Terminal-adaptive styling only: default colors, bold, standout — nothing
 that assumes a dark or light palette.
 """
-import curses
+
 import contextlib
+import curses
 import io
 import json
 import os
@@ -18,13 +19,18 @@ import webbrowser
 
 from . import configgen, detect, paths, process, versions
 from .cli import relocate_data
-from .installer import (checkout, create_venv, fetch_fluidd, fetch_mainsail,
-                        install_requirements, test_chelper_build)
+from .installer import (
+    checkout,
+    create_venv,
+    fetch_fluidd,
+    fetch_mainsail,
+    install_requirements,
+    test_chelper_build,
+)
 
 
 def moonraker_objects():
-    url = "http://localhost:{}/printer/objects/query?print_stats".format(
-        paths.MOONRAKER_PORT)
+    url = f"http://localhost:{paths.MOONRAKER_PORT}/printer/objects/query?print_stats"
     try:
         with urllib.request.urlopen(url, timeout=2) as r:
             return json.loads(r.read().decode())["result"]["status"]
@@ -39,7 +45,7 @@ def _add_keys(std, y, text):
     for m in re.finditer(r"\[[a-zA-Z]\]", text):
         try:
             if m.start() > i:
-                std.addstr(y, x, text[i:m.start()])
+                std.addstr(y, x, text[i : m.start()])
                 x += m.start() - i
             std.addstr(y, x, m.group(0), curses.A_BOLD)
             x += 3
@@ -64,7 +70,7 @@ def catalog_templates():
     return sorted(cdir.rglob("*.cfg"))
 
 
-class App(object):
+class App:
     def __init__(self):
         self._message = ""
         self._msg_at = 0.0
@@ -92,14 +98,12 @@ class App(object):
     def do(self, action, arg=None):
         try:
             if action == "start":
-                self.message = ("starting..." if process.start()
-                                else "already running")
+                self.message = "starting..." if process.start() else "already running"
             elif action == "stop":
                 self.message = "stopped" if process.stop() else "was not running"
             elif action == "kill_all":
                 killed = process.kill_all()
-                self.message = ("killed {} process(es)".format(len(killed))
-                                if killed else "nothing to kill")
+                self.message = f"killed {len(killed)} process(es)" if killed else "nothing to kill"
             elif action == "restart":
                 process.stop()
                 process.start()
@@ -117,8 +121,9 @@ class App(object):
                 settings["lan"] = not paths.lan_enabled()
                 paths.save_settings(settings)
                 configgen.apply_lan(settings["lan"])
-                self.message = ("LAN {} — [r] restart to apply".format(
-                    "on" if settings["lan"] else "off"))
+                self.message = "LAN {} — [r] restart to apply".format(
+                    "on" if settings["lan"] else "off"
+                )
             elif action == "serial":
                 ports = detect.scan()
                 if not ports:
@@ -133,15 +138,15 @@ class App(object):
                 self.items = user_presets()
                 self.mode = "presets"
                 self.sel = 0
-                self.footnote = ("[enter] use   [t] templates   "
-                                 "[s] save current   [type] filter   [esc] back")
+                self.footnote = (
+                    "[enter] use   [t] templates   [s] save current   [type] filter   [esc] back"
+                )
             elif action == "templates":
                 self.filter = ""
                 self.items = [str(p) for p in catalog_templates()]
                 self.mode = "templates"
                 self.sel = 0
-                self.footnote = ("[enter] import as preset   [type] filter   "
-                                 "[esc] back")
+                self.footnote = "[enter] import as preset   [type] filter   [esc] back"
             elif action == "save_preset":
                 self.save_name = ""
                 self.mode = "name"
@@ -153,8 +158,9 @@ class App(object):
             elif action == "logs":
                 log = paths.KLIPPY_LOG if arg == "klipper" else paths.MOONRAKER_LOG
                 if log.exists():
-                    tail = subprocess.run(["tail", "-n", "18", str(log)],
-                                          capture_output=True).stdout.decode()
+                    tail = subprocess.run(
+                        ["tail", "-n", "18", str(log)], capture_output=True
+                    ).stdout.decode()
                     self.items = tail.splitlines()
                     self.mode = "logs"
                     self.footnote = "[esc] back"
@@ -165,8 +171,7 @@ class App(object):
                 if errors:
                     self.message = "; ".join(errors)[:60]
                 elif updates:
-                    self.items = ["{}: {} -> {}".format(c, a, b)
-                                  for c, a, b in updates]
+                    self.items = [f"{c}: {a} -> {b}" for c, a, b in updates]
                     self.mode = "updates"
                     self.footnote = "[a] apply"
                 else:
@@ -183,8 +188,7 @@ class App(object):
                 else:
                     for comp in ("klipper", "moonraker"):
                         force = pins[comp] in ("master", "main")
-                        pins[comp + "_sha"] = checkout(comp, pins[comp],
-                                                       force=force)
+                        pins[comp + "_sha"] = checkout(comp, pins[comp], force=force)
                     create_venv()
                     install_requirements()
                     fetch_mainsail(pins["mainsail"])
@@ -218,7 +222,7 @@ class App(object):
             # curses.wrapper and kill the app (looks like a terminal restart).
             if 0 <= y < h and 0 <= x < w:
                 try:
-                    std.addstr(y, x, text[:max(0, w - x - 1)], attr)
+                    std.addstr(y, x, text[: max(0, w - x - 1)], attr)
                 except curses.error:
                     pass
 
@@ -241,34 +245,45 @@ class App(object):
             printer = ps.get("state", "?")
             if printer.lower() in ("error", "startup", "paused"):
                 printer += " - " + (msg[0] if msg else "")
-            row(3, "printer", "{}{}".format(
-                printer, (" | file: " + ps["filename"]) if ps.get("filename")
-                else ""))
+            row(
+                3,
+                "printer",
+                "{}{}".format(
+                    printer, (" | file: " + ps["filename"]) if ps.get("filename") else ""
+                ),
+            )
         else:
             row(3, "printer", "(moonraker not answering)")
         pins = versions.load_pins()
-        row(7, "versions", "klipper {}   moonraker {}   ui {}".format(
-            pins.get("klipper_sha", "")[:7] or pins["klipper"],
-            pins["moonraker"], pins.get("ui", "fluidd")))
+        row(
+            7,
+            "versions",
+            "klipper {}   moonraker {}   ui {}".format(
+                pins.get("klipper_sha", "")[:7] or pins["klipper"],
+                pins["moonraker"],
+                pins.get("ui", "fluidd"),
+            ),
+        )
         row(8, "data", str(paths.DATA))
         ui = pins.get("ui", "fluidd")
         api_host = "localhost"
         if paths.lan_enabled():
             ip = detect.lan_ip()
             if ip:
-                lan_line = ("open  {} http://{}:{}   [a] close"
-                            .format(ui, ip, paths.ui_port(ui)))
+                lan_line = f"open  {ui} http://{ip}:{paths.ui_port(ui)}   [a] close"
                 api_host = ip
             else:
-                lan_line = ("open, but this Mac has no network address"
-                            "   [a] close")
+                lan_line = "open, but this Mac has no network address   [a] close"
         else:
             lan_line = "closed (this Mac only)   [a] open to local network"
         row(10, "lan", lan_line)
-        row(11, "api", "http://{}:{}".format(api_host, paths.MOONRAKER_PORT))
+        row(11, "api", f"http://{api_host}:{paths.MOONRAKER_PORT}")
         y = 13
         if self.mode == "main":
-            col = lambda s: s.ljust(24)
+
+            def col(s):
+                return s.ljust(24)
+
             lines = [
                 col("[s] start") + col("[o] open dashboard") + "[w] switch UI",
                 col("[x] stop") + col("[r] restart") + col("[q] quit cli") + "[k] kill all & exit",
@@ -279,26 +294,24 @@ class App(object):
             ]
             for line in lines:
                 if line:
-                    _add_keys(std, y, line[:w - 3])
+                    _add_keys(std, y, line[: w - 3])
                 y += 1
         else:
             label = self.mode
             vis = self.visible()
-            head = "── {} ({}) ──".format(label, len(vis))
+            head = f"── {label} ({len(vis)}) ──"
             if self.filter:
-                head += "  filter: {}".format(self.filter)
+                head += f"  filter: {self.filter}"
             if self.mode == "name":
-                head = "── save preset: {}_".format(self.save_name)
+                head = f"── save preset: {self.save_name}_"
             if self.mode == "data":
                 head = "── move data folder ──"
             safe(y, 2, head, curses.A_BOLD)
             y += 1
             if self.mode == "data":
-                safe(y, 2, "current: {}".format(paths.DATA))
-                safe(y + 1, 2, "new: {}_".format(self.data_input),
-                     curses.A_BOLD)
-                safe(y + 2, 2, "type a path — [enter] moves everything, "
-                               "[esc] cancels")
+                safe(y, 2, f"current: {paths.DATA}")
+                safe(y + 1, 2, f"new: {self.data_input}_", curses.A_BOLD)
+                safe(y + 2, 2, "type a path — [enter] moves everything, [esc] cancels")
             elif self.mode == "name":
                 pass
             else:
@@ -306,9 +319,8 @@ class App(object):
                 if height > 0:
                     if self.sel >= len(vis):
                         self.sel = max(0, len(vis) - 1)
-                    start = max(0,
-                                min(self.sel - height // 2, len(vis) - height))
-                    for i, item in enumerate(vis[start:start + height]):
+                    start = max(0, min(self.sel - height // 2, len(vis) - height))
+                    for i, item in enumerate(vis[start : start + height]):
                         attr = curses.A_REVERSE if start + i == self.sel else 0
                         text = os.path.basename(item)
                         if self.mode == "serial":
@@ -324,12 +336,20 @@ class App(object):
     # ---- input ---------------------------------------------------------
     def key(self, ch):
         if self.mode == "main":
-            table = {"s": "start", "x": "stop",
-                     "r": "restart", "o": "open",
-                     "w": "toggle_ui", "d": "serial", "p": "presets",
-                     "f": "data", "a": "toggle_lan",
-                     "l": ("logs", "klipper"), "m": ("logs", "moonraker"),
-                     "u": "update"}
+            table = {
+                "s": "start",
+                "x": "stop",
+                "r": "restart",
+                "o": "open",
+                "w": "toggle_ui",
+                "d": "serial",
+                "p": "presets",
+                "f": "data",
+                "a": "toggle_lan",
+                "l": ("logs", "klipper"),
+                "m": ("logs", "moonraker"),
+                "u": "update",
+            }
             c = chr(ch) if ch > 0 else ""
             if c == "k":
                 self.do("kill_all")
@@ -389,7 +409,7 @@ class App(object):
             name = self.save_name.strip().replace(" ", "-")
             if name and paths.PRINTER_CFG.exists():
                 shutil.copy2(paths.PRINTER_CFG, paths.PRESETS / (name + ".cfg"))
-                self.message = "saved preset '{}'".format(name)
+                self.message = f"saved preset '{name}'"
             else:
                 self.message = "nothing to save"
             self.do("back")
@@ -414,9 +434,8 @@ class App(object):
                     buf = io.StringIO()
                     with contextlib.redirect_stdout(buf):
                         result = relocate_data(path)
-                    extras = [l for l in buf.getvalue().splitlines() if l.strip()]
-                    self.message = result + (("  |  " + "; ".join(extras))
-                                             if extras else "")
+                    extras = [line for line in buf.getvalue().splitlines() if line.strip()]
+                    self.message = result + (("  |  " + "; ".join(extras)) if extras else "")
                 except Exception as e:
                     self.message = "error: " + str(e)[:70]
             self.do("back")
@@ -452,7 +471,7 @@ class App(object):
         if paths.PRINTER_CFG.exists():
             shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
         shutil.copy2(src, paths.PRINTER_CFG)
-        self.message = "preset '{}' applied — [r] restart to load".format(name)
+        self.message = f"preset '{name}' applied — [r] restart to load"
         self.do("back")
 
 
@@ -483,8 +502,9 @@ def run(std):
 
 def main():
     if not (os.isatty(0) and os.isatty(1)):
-        raise SystemExit("Interactive dashboard needs a terminal; "
-                         "use klipperformac <command> (see -h).")
+        raise SystemExit(
+            "Interactive dashboard needs a terminal; use klipperformac <command> (see -h)."
+        )
     if paths.VENV_PY.exists():
         process.start()  # no-op if the stack is already up
     curses.wrapper(run)

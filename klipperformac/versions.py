@@ -1,4 +1,5 @@
 """Version pins for upstream components and update checks (GitHub tags)."""
+
 import json
 import urllib.request
 
@@ -75,8 +76,7 @@ def latest_tag(component):
 
 
 def remote_master_sha():
-    data = _get_json(
-        "https://api.github.com/repos/{}/commits?per_page=1".format(REPOS["klipper"]))
+    data = _get_json("https://api.github.com/repos/{}/commits?per_page=1".format(REPOS["klipper"]))
     return data[0]["sha"]
 
 
@@ -90,8 +90,7 @@ def check_updates():
             remote = remote_master_sha()
         except Exception as e:
             remote = None
-            errors.append("klipper update check failed: {}".format(
-                str(e)[:80]))
+            errors.append(f"klipper update check failed: {str(e)[:80]}")
         if remote and remote != local_sha:
             out.append(("klipper", local_sha[:7], remote[:7] + " (master)"))
     for comp in ("moonraker", "mainsail", "fluidd"):
@@ -99,7 +98,7 @@ def check_updates():
             latest = latest_tag(comp)
         except Exception as e:
             latest = None
-            errors.append("{} update check failed: {}".format(comp, str(e)[:60]))
+            errors.append(f"{comp} update check failed: {str(e)[:60]}")
         if latest and _sort_key(latest) > _sort_key(pins[comp]):
             out.append((comp, pins[comp], latest))
     return out, errors

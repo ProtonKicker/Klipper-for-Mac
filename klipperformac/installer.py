@@ -6,6 +6,7 @@ files live outside them (refs.d/), build artifacts are added to
 .git/info/exclude, and setup/doctor verify `git status --porcelain` is
 empty for every checkout.
 """
+
 import json
 import os
 import re
@@ -29,8 +30,13 @@ URLS = {
 DESTS = {"klipper": paths.KLIPPER, "moonraker": paths.MOONRAKER}
 REFS = paths.APP_HOME / "refs.d"
 
-GIT_EXCLUDE = ("c_helper.so", "c_helper.so.dSYM", "_temp_c_helper.so*",
-               "klippy.log", "__pycache__/")
+GIT_EXCLUDE = (
+    "c_helper.so",
+    "c_helper.so.dSYM",
+    "_temp_c_helper.so*",
+    "klippy.log",
+    "__pycache__/",
+)
 
 
 def _run(cmd, **kw):
@@ -42,12 +48,14 @@ def check_prereqs(strict=True):
     for tool in ("git", "gcc"):
         if shutil.which(tool) is None:
             problems.append(
-                "'{}' not found. Install Xcode Command Line Tools: "
-                "xcode-select --install".format(tool))
+                f"'{tool}' not found. Install Xcode Command Line Tools: xcode-select --install"
+            )
     if find_python() is None:
         problems.append(
             "No Python >= {} found. Try: brew install python@3.12".format(
-                ".".join(map(str, MIN_PY))))
+                ".".join(map(str, MIN_PY))
+            )
+        )
     if problems and strict:
         raise SystemExit("Klipper for Mac setup requires:\n  - " + "\n  - ".join(problems))
     return problems
@@ -55,15 +63,23 @@ def check_prereqs(strict=True):
 
 def find_python():
     env = os.environ.get("KLIPPERFORMAC_PYTHON")
-    candidates = ([env] if env else []) + [
-        c for c in PY_CANDIDATES if shutil.which(c)]
+    candidates = ([env] if env else []) + [c for c in PY_CANDIDATES if shutil.which(c)]
     for c in candidates:
         try:
-            out = _run([c, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-                       capture_output=True).stdout.decode().strip()
+            out = (
+                _run(
+                    [c, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                    capture_output=True,
+                )
+                .stdout.decode()
+                .strip()
+            )
             if tuple(int(x) for x in out.split(".")) >= MIN_PY:
-                return _run([c, "-c", "import sys; print(sys.executable)"],
-                            capture_output=True).stdout.decode().strip()
+                return (
+                    _run([c, "-c", "import sys; print(sys.executable)"], capture_output=True)
+                    .stdout.decode()
+                    .strip()
+                )
         except Exception:
             continue
     return None
@@ -76,8 +92,11 @@ def _ref_marker(component):
 
 def _head_sha(dest):
     try:
-        return _run(["git", "-C", str(dest), "rev-parse", "HEAD"],
-                    capture_output=True).stdout.decode().strip()
+        return (
+            _run(["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True)
+            .stdout.decode()
+            .strip()
+        )
     except Exception:
         return ""
 
@@ -100,11 +119,10 @@ def _exclude_build_artifacts(dest):
 def checkout(component, ref, force=False):
     dest = DESTS[component]
     marker = _ref_marker(component)
-    if not force and marker.exists() and marker.read_text().strip() == ref \
-            and dest.exists():
+    if not force and marker.exists() and marker.read_text().strip() == ref and dest.exists():
         return _head_sha(dest)
     if dest.is_symlink():
-        raise SystemExit("Refusing to replace symlink at {}".format(dest))
+        raise SystemExit(f"Refusing to replace symlink at {dest}")
     if dest.exists():
         shutil.rmtree(dest)
     url = URLS[component]
@@ -112,13 +130,14 @@ def checkout(component, ref, force=False):
         # git clone --branch rejects raw SHAs; shallow-fetch the exact commit.
         _run(["git", "init", "--quiet", str(dest)], check=True)
         _run(["git", "-C", str(dest), "remote", "add", "origin", url], check=True)
-        _run(["git", "-C", str(dest), "fetch", "--quiet", "--depth", "1",
-              "origin", ref], check=True)
-        _run(["git", "-C", str(dest), "checkout", "--quiet", "--detach",
-              "FETCH_HEAD"], check=True)
+        _run(
+            ["git", "-C", str(dest), "fetch", "--quiet", "--depth", "1", "origin", ref], check=True
+        )
+        _run(["git", "-C", str(dest), "checkout", "--quiet", "--detach", "FETCH_HEAD"], check=True)
     else:
-        _run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref,
-              url, str(dest)], check=True)
+        _run(
+            ["git", "clone", "--quiet", "--depth", "1", "--branch", ref, url, str(dest)], check=True
+        )
     _exclude_build_artifacts(dest)
     marker.write_text(ref + "\n")
     return _head_sha(dest)
@@ -132,8 +151,11 @@ def verify_pristine(component=None):
         dest = DESTS.get(comp)
         if not dest or not (dest / ".git").exists():
             continue
-        out = _run(["git", "-C", str(dest), "status", "--porcelain"],
-                   capture_output=True).stdout.decode().strip()
+        out = (
+            _run(["git", "-C", str(dest), "status", "--porcelain"], capture_output=True)
+            .stdout.decode()
+            .strip()
+        )
         if out:
             bad.append((comp, out))
     return bad
@@ -161,12 +183,22 @@ def install_requirements():
         for rel in cands:
             req = DESTS[comp] / rel
             if req.exists():
-                _run([str(paths.VENV_PY), "-m", "pip", "install",
-                      "--quiet", "--upgrade", "-r", str(req)],
-                     check=True)
+                _run(
+                    [
+                        str(paths.VENV_PY),
+                        "-m",
+                        "pip",
+                        "install",
+                        "--quiet",
+                        "--upgrade",
+                        "-r",
+                        str(req),
+                    ],
+                    check=True,
+                )
                 break
         else:
-            raise SystemExit("No requirements file found in {} checkout".format(comp))
+            raise SystemExit(f"No requirements file found in {comp} checkout")
 
 
 def test_libsodium():
@@ -175,13 +207,13 @@ def test_libsodium():
     if res.returncode != 0:
         raise RuntimeError(
             "libsodium missing — Moonraker will not start.\n"
-            "Install it with:  brew install libsodium")
+            "Install it with:  brew install libsodium"
+        )
 
 
 def _download(url, dest_path, timeout=60, max_bytes=200 * 1024 * 1024):
     req = urllib.request.Request(url, headers={"User-Agent": "klipperformac"})
-    with urllib.request.urlopen(req, timeout=timeout) as r, \
-            open(dest_path, "wb") as f:
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest_path, "wb") as f:
         read = 0
         while True:
             chunk = r.read(65536)
@@ -208,8 +240,7 @@ def fetch_webui(component, tag, dest):
     if marker.exists() and marker.read_text().strip() == tag and dest.exists():
         return
     asset_name = component + ".zip"
-    url = "https://github.com/{}/releases/download/{}/{}".format(
-        REPOS[component], tag, asset_name)
+    url = f"https://github.com/{REPOS[component]}/releases/download/{tag}/{asset_name}"
     zip_path = Path(tempfile.mkstemp(suffix=".zip")[1])
     try:
         _download(url, zip_path)
@@ -255,8 +286,7 @@ def _patch_ui_config(component, dest):
         data["hostname"] = None
         data["port"] = None
     elif component == "fluidd":
-        data["socket_url"] = "ws://localhost:{}/websocket".format(
-            paths.FLUIDD_PORT)
+        data["socket_url"] = f"ws://localhost:{paths.FLUIDD_PORT}/websocket"
     cfg.write_text(json.dumps(data, indent=2) + "\n")
 
 
@@ -275,13 +305,13 @@ def test_chelper_build():
         "import sys; sys.path.insert(0, {klippy!r}); "
         "import chelper; chelper.get_ffi(); print('c_helper built and loaded')"
     ).format(klippy=str(paths.KLIPPER / "klippy"))
-    res = _run([str(paths.VENV_PY), "-c", script], env=build_env(),
-               capture_output=True)
+    res = _run([str(paths.VENV_PY), "-c", script], env=build_env(), capture_output=True)
     if res.returncode != 0:
         detail = res.stderr.decode()[-1500:]
         raise RuntimeError(
             "c_helper.so build FAILED with upstream Klipper + Klipper for Mac "
-            "compat shims.\n" + detail)
+            "compat shims.\n" + detail
+        )
 
 
 def setup(verbose=True):
@@ -296,7 +326,7 @@ def setup(verbose=True):
         sha = checkout(comp, pins[comp])
         pins[comp + "_sha"] = sha
         if verbose:
-            print("  {} @ {} ({})".format(comp, pins[comp], sha))
+            print(f"  {comp} @ {pins[comp]} ({sha})")
     save_pins(pins)
     create_venv()
     install_requirements()
@@ -304,21 +334,22 @@ def setup(verbose=True):
     fetch_mainsail(pins["mainsail"])
     fetch_fluidd(pins["fluidd"])
     if verbose:
-        print("  mainsail @ {}  fluidd @ {}".format(
-            pins["mainsail"], pins["fluidd"]))
+        print("  mainsail @ {}  fluidd @ {}".format(pins["mainsail"], pins["fluidd"]))
     created = configgen.ensure_configs()
     for c in created:
         if verbose:
-            print("  created {}".format(c))
+            print(f"  created {c}")
     test_chelper_build()
     bad = verify_pristine()
     if bad:
         for comp, out in bad:
-            print("[!] {} checkout is not pristine:\n{}".format(comp, out))
+            print(f"[!] {comp} checkout is not pristine:\n{out}")
     elif verbose:
         print("  upstream checkouts verified pristine (git status clean)")
     if verbose:
-        print("\nAll components fetched from upstream and verified to build on "
-              "this Mac.\nNext: connect your printer board, run `klipperformac "
-              "serial`, then `klipperformac up`.")
+        print(
+            "\nAll components fetched from upstream and verified to build on "
+            "this Mac.\nNext: connect your printer board, run `klipperformac "
+            "serial`, then `klipperformac up`."
+        )
     return pins

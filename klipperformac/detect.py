@@ -1,4 +1,5 @@
 """USB serial device discovery on macOS (stdlib only, no pyserial)."""
+
 import glob
 import re
 
@@ -31,6 +32,7 @@ def lan_ip():
     """This Mac's primary LAN IPv4 (UDP connect picks the routed interface;
     no packets are actually sent). None when offline."""
     import socket
+
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("10.255.255.255", 1))
@@ -65,7 +67,7 @@ def write_serial(cfg_path, device_path):
             in_mcu = stripped == "[mcu]"
             has_mcu = has_mcu or in_mcu
         if in_mcu and re.match(r"serial\s*:", stripped):
-            line = "serial: {}\n".format(device_path)
+            line = f"serial: {device_path}\n"
             in_mcu = False
             replaced = True
         out.append(line)
@@ -77,7 +79,7 @@ def write_serial(cfg_path, device_path):
         for line in out:
             out2.append(line)
             if not inserted and line.strip() == "[mcu]":
-                out2.append("serial: {}\n".format(device_path))
+                out2.append(f"serial: {device_path}\n")
                 inserted = True
         out = out2
     cfg_path.write_text("".join(out))

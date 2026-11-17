@@ -1,4 +1,5 @@
 """Generates the initial user-editable configs under the data folder."""
+
 import re
 
 from . import paths
@@ -71,18 +72,16 @@ def apply_lan(enabled):
         return False
     text = paths.MOONRAKER_CONF.read_text()
     want_host = "0.0.0.0" if enabled else "127.0.0.1"
-    updated = re.sub(r"(?m)^host: \S+.*$", "host: " + want_host,
-                     text, count=1)
+    updated = re.sub(r"(?m)^host: \S+.*$", "host: " + want_host, text, count=1)
 
     def _repl(m):
-        items = [l for l in m.group(0).splitlines()[1:] if l.strip()]
-        keep = [l for l in items if l.strip() not in LAN_CIDRS]
+        items = [line for line in m.group(0).splitlines()[1:] if line.strip()]
+        keep = [line for line in items if line.strip() not in LAN_CIDRS]
         if enabled:
             keep += ["    " + c for c in LAN_CIDRS]
         return "trusted_clients:\n" + "\n".join(keep) + "\n"
 
-    updated = re.sub(r"trusted_clients:\n(?:[ \t]+\S[^\n]*\n)*", _repl,
-                     updated, count=1)
+    updated = re.sub(r"trusted_clients:\n(?:[ \t]+\S[^\n]*\n)*", _repl, updated, count=1)
     if updated != text:
         paths.MOONRAKER_CONF.write_text(updated)
         return True
@@ -91,16 +90,17 @@ def apply_lan(enabled):
 
 def starter_cfg_text():
     import time
+
     src = paths.KLIPPER / "config" / STARTER_EXAMPLE
     if not src.exists():
         return None
-    text = re.sub(r"serial: [^\n]*",
-                  "serial: /dev/REPLACE_WITH_YOUR_PRINTER",
-                  src.read_text(), count=1)
-    extras = "" if "[virtual_sdcard]" in text else EXTRAS.format(
-        gcodes_dir=str(paths.DATA / "gcodes"))
-    return HEADER.format(example=STARTER_EXAMPLE,
-                         date=time.strftime("%Y-%m-%d")) + text + extras
+    text = re.sub(
+        r"serial: [^\n]*", "serial: /dev/REPLACE_WITH_YOUR_PRINTER", src.read_text(), count=1
+    )
+    extras = (
+        "" if "[virtual_sdcard]" in text else EXTRAS.format(gcodes_dir=str(paths.DATA / "gcodes"))
+    )
+    return HEADER.format(example=STARTER_EXAMPLE, date=time.strftime("%Y-%m-%d")) + text + extras
 
 
 def sync_virtual_sdcard():
@@ -112,9 +112,8 @@ def sync_virtual_sdcard():
         return False
     desired = str(paths.DATA / "gcodes")
     updated = re.sub(
-        r"(\[virtual_sdcard\]\s*\n\s*path:\s*)[^\n]*",
-        lambda m: m.group(1) + desired,
-        text, count=1)
+        r"(\[virtual_sdcard\]\s*\n\s*path:\s*)[^\n]*", lambda m: m.group(1) + desired, text, count=1
+    )
     if updated != text:
         paths.PRINTER_CFG.write_text(updated)
         return True
@@ -127,10 +126,7 @@ def sync_moonraker_conf():
         return False
     text = paths.MOONRAKER_CONF.read_text()
     desired = str(paths.API_SOCKET)
-    updated, n = re.subn(
-        r"(klippy_uds_address:\s*)[^\n]*",
-        lambda m: m.group(1) + desired,
-        text)
+    updated, n = re.subn(r"(klippy_uds_address:\s*)[^\n]*", lambda m: m.group(1) + desired, text)
     if n and updated != text:
         paths.MOONRAKER_CONF.write_text(updated)
         return True
@@ -153,7 +149,8 @@ def ensure_configs():
         if text is None:
             raise SystemExit(
                 "No starter example found in the Klipper checkout. Run "
-                "'klipperformac setup' first, then 'klipperformac setup' again.")
+                "'klipperformac setup' first, then 'klipperformac setup' again."
+            )
         paths.PRINTER_CFG.write_text(text)
         created.append(paths.PRINTER_CFG)
     if not paths.MOONRAKER_CONF.exists():

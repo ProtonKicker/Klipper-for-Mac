@@ -1,0 +1,4 @@
+# Dev/CI dependencies for Klipper-for-Mac (CLI tests + linters).
+# Install with: pip install -r requirements-dev.txt
+ruff==0.17.1
+pytest==8.3.5
