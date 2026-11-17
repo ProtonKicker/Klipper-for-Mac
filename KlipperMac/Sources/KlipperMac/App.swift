@@ -1,24 +1,94 @@
+import AppKit
 import SwiftUI
 
+/// AppKit entry point: the SwiftUI `App` lifecycle (WindowGroup, commands,
+/// Settings scene) requires macOS 11+, so the app hosts its SwiftUI views in
+/// an NSHostingView — the one lifecycle that works on macOS 10.15 through
+/// current releases with a single binary.
 @main
-struct KlipperForMacApp: App {
-    @StateObject private var model = AppModel()
+struct KlipperForMacMain {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        buildMenu()
+        app.run()
+    }
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
+    private static func buildMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        appMenuItem.submenu = NSMenu()
+        let appName = ProcessInfo.processInfo.processName
+        appMenuItem.submenu?.items = [
+            NSMenuItem(title: "About \(appName)",
+                       action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                       keyEquivalent: ""),
+            .separator(),
+            NSMenuItem(title: "Hide \(appName)",
+                       action: #selector(NSApplication.hide(_:)),
+                       keyEquivalent: "h"),
+            .separator(),
+            NSMenuItem(title: "Quit \(appName)",
+                       action: #selector(NSApplication.terminate(_:)),
+                       keyEquivalent: "q"),
+        ]
+        mainMenu.addItem(appMenuItem)
+
+        let windowMenuItem = NSMenuItem()
+        windowMenuItem.submenu = NSMenu()
+        windowMenuItem.submenu?.items = [
+            NSMenuItem(title: "Minimize",
+                       action: #selector(NSWindow.performMiniaturize(_:)),
+                       keyEquivalent: "m"),
+            NSMenuItem(title: "Close Window",
+                       action: #selector(NSWindow.performClose(_:)),
+                       keyEquivalent: "w"),
+        ]
+        mainMenu.addItem(windowMenuItem)
+        NSApp.mainMenu = mainMenu
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var window: NSWindow?
+    private var model: AppModel?
+
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        // Delegate callbacks are non-isolated but always run on the main
+        // thread. Hop onto the main actor once to build the model + window.
+        Task { @MainActor in
+            let model = AppModel()
+            self.model = model
+
+            let root = ContentView()
                 .environmentObject(model)
-                .task { await model.bootstrap() }
+
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 880, height: 620),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Klipper for Mac"
+            window.contentView = NSHostingView(rootView: root)
+            window.setContentSize(NSSize(width: 880, height: 620))
+            window.center()
+            window.setFrameAutosaveName("KlipperMainWindow")
+            window.makeKeyAndOrderFront(nil)
+            self.window = window
+
+            NSApp.activate(ignoringOtherApps: true)
+
+            // Kick off the first poll + liveness observers once the view tree exists.
+            await model.bootstrap()
         }
-        .defaultSize(width: 880, height: 620)
-        .commands {
-            CommandGroup(replacing: .help) {
-                Button("Klipper for Mac on GitHub") {
-                    if let url = URL(string: "https://github.com/ProtonKicker/Klipper-for-Mac") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-            }
-        }
+    }
+
+    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 }

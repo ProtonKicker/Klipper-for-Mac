@@ -7,33 +7,17 @@ struct LogView: View {
     @State private var reading = false
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(text.isEmpty ? "(no log yet)" : text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                    Color.clear.frame(height: 1).id("end")
-                }
-                .padding(6)
-            }
-            .frame(height: 220)
-            .background(Color(nsColor: .textBackgroundColor))
+        LogTextView(text: text, follow: follow)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
             )
+            .frame(height: 220)
             .onAppear { reload() }
-            .onChange(of: url) { _ in reload() }
-            .onChange(of: text) { _ in
-                if follow { proxy.scrollTo("end", anchor: .bottom) }
-            }
             .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
                 if follow { reload() }
             }
-        }
     }
 
     private func reload() {
@@ -44,11 +28,13 @@ struct LogView: View {
             var tail = ""
             if let h = try? FileHandle(forReadingFrom: url) {
                 defer { try? h.close() }
-                let size = (try? h.seekToEnd()) ?? 0
+                // Old synchronous APIs: the throwing seekToEnd()/readToEnd()
+                // variants need macOS 10.15.4, we floor at 10.15.0.
+                let size: UInt64 = h.seekToEndOfFile()
                 let window: UInt64 = 65_536
                 let start = size > window ? size - window : 0
                 try? h.seek(toOffset: start)
-                let data = (try? h.readToEnd()) ?? Data()
+                let data = h.readDataToEndOfFile()
                 var s = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
                 if start > 0, let nl = s.firstIndex(of: "\n") {
                     s = String(s[s.index(after: nl)...])

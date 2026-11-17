@@ -14,7 +14,10 @@ FLAGS="-parse-as-library -O -sdk $SDK"
 mkdir -p dist
 
 build_arch() {
-    xcrun swiftc $FLAGS -target "$1-apple-macos13.0" $SRCS -o "dist/KlipperMac-$1"
+    # macOS 10.15 (Catalina) is the floor: the SDK's availability hints make
+    # swiftc reject any API newer than 10.15 at this target, keeping the GUI
+    # backwards-compatible by construction.
+    xcrun swiftc $FLAGS -warnings-as-errors -target "$1-apple-macos10.15" $SRCS -o "dist/KlipperMac-$1"
 }
 
 echo "==> compiling"
