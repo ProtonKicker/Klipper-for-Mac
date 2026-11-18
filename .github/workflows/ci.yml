@@ -8,7 +8,7 @@ on:
 jobs:
   lint:
     name: Python lint + format (ruff)
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,7 +20,7 @@ jobs:
 
   test:
     name: CLI test suite (pytest)
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,9 +31,9 @@ jobs:
 
   build-gui:
     name: GUI universal build @ macOS 10.15 floor
-    # macos-14 (arm) has a guaranteed-modern Xcode; the script cross-compiles
+    # macos-15 (arm) has a guaranteed-modern Xcode; the script cross-compiles
     # both slices, so the Intel-10.15 floor is still produced and verified.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Build universal app
