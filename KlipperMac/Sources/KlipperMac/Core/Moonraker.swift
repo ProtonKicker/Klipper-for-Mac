@@ -24,11 +24,22 @@ struct PrinterStatus: Equatable {
 }
 
 enum Moonraker {
+    /// URLSession's async `data(for:)` requires macOS 12+; the completion
+    /// handler + continuation form works back to our 10.15 floor.
+    private static func data(for request: URLRequest) async -> Data? {
+        await withCheckedContinuation { cont in
+            let task = URLSession.shared.dataTask(with: request) { data, _, error in
+                cont.resume(returning: error == nil ? data : nil)
+            }
+            task.resume()
+        }
+    }
+
     static func getJSON(_ path: String, port: Int, timeout: TimeInterval = 2) async -> [String: Any]? {
         guard let url = URL(string: "http://localhost:\(port)\(path)") else { return nil }
         var req = URLRequest(url: url)
         req.timeoutInterval = timeout
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
+        guard let data = await data(for: req),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               obj["error"] == nil
         else { return nil }
@@ -41,7 +52,7 @@ enum Moonraker {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.timeoutInterval = 4
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
+        guard let data = await data(for: req),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
         return obj["error"] == nil

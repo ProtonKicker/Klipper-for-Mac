@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 10.15-support]
+  pull_request:
+
+jobs:
+  lint:
+    name: Python lint + format (ruff)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check klipperformac bin scripts tests
+      - run: ruff format --check klipperformac bin scripts tests --quiet
+
+  test:
+    name: CLI test suite (pytest)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest
+
+  build-gui:
+    name: GUI universal build @ macOS 10.15 floor
+    # macos-15 (arm) has a guaranteed-modern Xcode; the script cross-compiles
+    # both slices, so the Intel-10.15 floor is still produced and verified.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal app
+        run: ./KlipperMac/build-app.sh
+      - name: Verify x86_64 slice floors at macOS 10.15
+        run: |
+          MINOS=$(vtool -show-build "KlipperMac/dist/Klipper for Mac.app/Contents/MacOS/KlipperMac" | awk '/minos/{print $2}' | head -1)
+          echo "x86_64 slice minos: $MINOS"
+          test "$MINOS" = "10.15"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Klipper-for-Mac-universal.app
+          path: KlipperMac/dist/Klipper for Mac.app

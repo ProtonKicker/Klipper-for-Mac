@@ -7,20 +7,24 @@ struct SettingsView: View {
     private var env: KEnvironment { model.env }
 
     var body: some View {
-        Form {
-            aboutSection
-            componentsSection
-            dataSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Card { aboutSection }
+                Card { componentsSection }
+                Card { dataSection }
+            }
+            .padding(16)
+            .frame(maxWidth: 640, alignment: .leading)
         }
-        .formStyle(.grouped)
-        .navigationTitle("Settings")
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - about
 
     private var aboutSection: some View {
-        Section("About") {
-            LabeledContent("App version", value: appVersion)
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("About")
+            FieldRow(label: "App version", value: appVersion)
             Button {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             } label: {
@@ -32,21 +36,26 @@ struct SettingsView: View {
     // MARK: - components
 
     private var componentsSection: some View {
-        Section("Components") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Components")
             if env.installed {
                 let pins = env.pins
-                LabeledContent("Klipper", value: pinText(pins, "klipper"))
-                LabeledContent("Moonraker", value: pinText(pins, "moonraker"))
-                LabeledContent("Mainsail", value: pinText(pins, "mainsail"))
-                LabeledContent("Fluidd", value: pinText(pins, "fluidd"))
+                FieldRow(label: "Klipper", value: pinText(pins, "klipper"))
+                FieldRow(label: "Moonraker", value: pinText(pins, "moonraker"))
+                FieldRow(label: "Mainsail", value: pinText(pins, "mainsail"))
+                FieldRow(label: "Fluidd", value: pinText(pins, "fluidd"))
+            } else {
+                Text("Not installed yet — run Setup first.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
             }
-            HStack {
+            HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }
                     .disabled(model.busy)
                 Button("Update") { Task { await model.applyUpdates() } }
                     .disabled(model.busy || model.snapshot.anyUp || !env.installed)
                 if model.busy && !model.showSheet {
-                    ProgressView().controlSize(.small)
+                    ActivityIndicator()
                 }
                 Spacer()
             }
@@ -54,8 +63,7 @@ struct SettingsView: View {
                 ForEach(Array(model.updateLines.enumerated()), id: \.offset) { _, line in
                     Text(line)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                        .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
@@ -80,11 +88,11 @@ struct SettingsView: View {
     // MARK: - data folder
 
     private var dataSection: some View {
-        Section("Data folder") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Data folder")
             Text(env.data.path)
                 .font(.system(size: 11, design: .monospaced))
-                .textSelection(.enabled)
-            HStack {
+            HStack(spacing: 8) {
                 Button("Change…") { chooseDataFolder() }
                     .disabled(model.snapshot.anyUp)
                 Button("Show in Finder") { model.reveal(env.data) }
@@ -93,9 +101,13 @@ struct SettingsView: View {
             if model.snapshot.anyUp {
                 Text("Stop the stack before moving the data folder.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.headline)
     }
 
     private func chooseDataFolder() {
@@ -111,4 +123,3 @@ struct SettingsView: View {
         }
     }
 }
-

@@ -21,46 +21,72 @@ enum Pane: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
-    @AppStorage("didOpenOnce") private var didOpenOnce = false
-    @State private var pane: Pane? = .printer
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var pane: Pane = .printer
+    // SwiftUI @AppStorage needs macOS 11+; a UserDefaults-backed @State is
+    // equivalent and works on 10.15.
+    @State private var didOpenOnce = UserDefaults.standard.bool(forKey: "didOpenOnce")
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(selection: $pane) {
-                ForEach(Pane.allCases) { p in
-                    Label {
-                        Text(p.rawValue)
-                    } icon: {
-                        FlatIcon(kind: p.icon, size: 16, color: p.tint)
-                    }
-                    .tag(p)
-                }
-            }
-            // Fixed width: during expand the list and detail keep the same
-            // layout every frame, matching the slide used on collapse.
-            .navigationSplitViewColumnWidth(170)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                MessageBanner(notifier: model.notifier)
-            }
-        } detail: {
-            switch pane ?? .printer {
-            case .printer:
-                DashboardView()
-            case .settings:
-                SettingsView()
-            }
+        HSplitView {
+            sidebar
+            detail(for: pane)
         }
-        .animation(.easeInOut(duration: 0.22), value: columnVisibility)
         .frame(minWidth: 820, minHeight: 560)
-        .task {
+        .sheet(isPresented: $model.showSheet) {
+            SetupSheet(title: model.sheetTitle, lines: model.sheetLines,
+                       running: model.sheetRunning,
+                       onClose: { model.showSheet = false })
+        }
+        .onAppear {
             // First run only: land on Settings so the data folder, CLI and
             // printer config are where a new user starts. Later runs open on
             // the Printer pane.
             if !didOpenOnce {
+                UserDefaults.standard.set(true, forKey: "didOpenOnce")
                 didOpenOnce = true
                 pane = .settings
             }
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 4) {
+            ForEach(Pane.allCases) { p in
+                Button {
+                    pane = p
+                } label: {
+                    HStack(spacing: 8) {
+                        FlatIcon(kind: p.icon, size: 16, color: p.tint)
+                        Text(p.rawValue)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(pane == p
+                                  ? Color.accentColor.opacity(0.15)
+                                  : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+            MessageBanner(notifier: model.notifier)
+        }
+        .padding(6)
+        .frame(minWidth: 150, idealWidth: 180, maxWidth: 220)
+        .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func detail(for pane: Pane) -> some View {
+        switch pane {
+        case .printer:
+            DashboardView()
+        case .settings:
+            SettingsView()
         }
     }
 }

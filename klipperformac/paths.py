@@ -90,8 +90,7 @@ if not os.environ.get("KLIPPERFORMAC_HOME"):
                     except (OSError, UnicodeDecodeError):
                         continue
                     if ".maklipper" in _t:
-                        _f.write_text(
-                            _t.replace(".maklipper", ".klipperformac"))
+                        _f.write_text(_t.replace(".maklipper", ".klipperformac"))
         except OSError:
             pass
 
@@ -110,13 +109,14 @@ def ui_port(ui):
 
 
 def ui_url(ui):
-    return "http://localhost:{}".format(ui_port(ui))
+    return f"http://localhost:{ui_port(ui)}"
 
 
 def web_url():
     ui = "fluidd"
     try:
         import json
+
         if LOCKFILE.exists():
             ui = json.loads(LOCKFILE.read_text()).get("ui") or "fluidd"
     except Exception:

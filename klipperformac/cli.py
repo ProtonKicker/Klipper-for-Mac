@@ -1,5 +1,6 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
 logs | serial | update | open | doctor | uninstall."""
+
 import argparse
 import os
 import shutil
@@ -27,13 +28,12 @@ def _lan_urls(indent="  "):
         return []
     ip = detect.lan_ip()
     if not ip:
-        return [indent + "LAN:       enabled, but this Mac has no network "
-                        "address right now"]
-    return [indent + "LAN UI:    http://{}:{}  (mainsail)   "
-                     "http://{}:{}  (fluidd)".format(ip, paths.WEB_PORT,
-                                                     ip, paths.FLUIDD_PORT),
-            indent + "LAN API:   http://{}:{}  (Orca on other devices)"
-            .format(ip, paths.MOONRAKER_PORT)]
+        return [indent + "LAN:       enabled, but this Mac has no network address right now"]
+    return [
+        indent + f"LAN UI:    http://{ip}:{paths.WEB_PORT}  (mainsail)   "
+        f"http://{ip}:{paths.FLUIDD_PORT}  (fluidd)",
+        indent + f"LAN API:   http://{ip}:{paths.MOONRAKER_PORT}  (Orca on other devices)",
+    ]
 
 
 def cmd_up(args):
@@ -49,7 +49,7 @@ def cmd_up(args):
         print("Klipper stack starting:")
         print("  Mainsail:  " + paths.ui_url("mainsail"))
         print("  Fluidd:    " + paths.ui_url("fluidd"))
-        print("  Moonraker: http://localhost:{}".format(paths.MOONRAKER_PORT))
+        print(f"  Moonraker: http://localhost:{paths.MOONRAKER_PORT}")
         for line in _lan_urls():
             print(line)
         print("  Logs: klipperformac logs   Stop: klipperformac down")
@@ -62,7 +62,8 @@ def _wait_ready(timeout=20):
     import json as _json
     import time
     import urllib.request
-    url = "http://localhost:{}/server/info".format(paths.MOONRAKER_PORT)
+
+    url = f"http://localhost:{paths.MOONRAKER_PORT}/server/info"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -70,12 +71,11 @@ def _wait_ready(timeout=20):
                 info = _json.loads(r.read().decode()).get("result", {})
             state = info.get("klippy_state", "?")
             conn = "connected" if info.get("klippy_connected") else "not yet"
-            print("  ready: moonraker up, klippy {} (state: {})".format(conn, state))
+            print(f"  ready: moonraker up, klippy {conn} (state: {state})")
             return
         except Exception:
             time.sleep(0.7)
-    print("[!] Moonraker did not answer within {}s — check: klipperformac logs"
-          .format(timeout))
+    print(f"[!] Moonraker did not answer within {timeout}s — check: klipperformac logs")
 
 
 def cmd_down(args):
@@ -93,9 +93,9 @@ def cmd_killall(args):
     if not killed:
         print("Nothing to kill.")
         return
-    print("Killed {} process(es):".format(len(killed)))
+    print(f"Killed {len(killed)} process(es):")
     for name, pid in killed:
-        print("  {:<12} pid {}".format(name, pid))
+        print(f"  {name:<12} pid {pid}")
 
 
 def cmd_restart(args):
@@ -115,17 +115,19 @@ def cmd_status(args):
         if name in ("caffeinate",):
             continue
         print("  {:<12} {}".format(name, "up" if state.get(name) else "DOWN"))
-    print("  url          {}".format(paths.web_url()))
+    print(f"  url          {paths.web_url()}")
     for line in _lan_urls():
         print(line)
-    print("  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
-        pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]))
+    print(
+        "  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
+            pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]
+        )
+    )
     updates, errors = versions.check_updates()
     for e in errors:
         print("  [!] " + e)
     if updates:
-        print("  updates available: " + ", ".join(
-            "{} {}->{}".format(c, cur, new) for c, cur, new in updates))
+        print("  updates available: " + ", ".join(f"{c} {cur}->{new}" for c, cur, new in updates))
 
 
 def cmd_lan(args):
@@ -135,9 +137,13 @@ def cmd_lan(args):
         settings["lan"] = enabled
         paths.save_settings(settings)
         changed = configgen.apply_lan(enabled)
-        print("LAN access {}.".format("OPEN — other devices can reach the "
-                                      "printer" if enabled
-                                      else "closed (this Mac only)"))
+        print(
+            "LAN access {}.".format(
+                "OPEN — other devices can reach the printer"
+                if enabled
+                else "closed (this Mac only)"
+            )
+        )
         if process.running() is not None:
             if enabled or changed:
                 print("Apply now with: klipperformac restart")
@@ -149,8 +155,7 @@ def cmd_lan(args):
         for line in ip_urls:
             print("  " + line)
     elif not paths.lan_enabled():
-        print("Only this Mac can reach the stack (localhost). Turn on with: "
-              "klipperformac lan on")
+        print("Only this Mac can reach the stack (localhost). Turn on with: klipperformac lan on")
 
 
 def cmd_logs(args):
@@ -176,11 +181,12 @@ def cmd_serial(args):
         if len(ports) == 1:
             target = ports[0]["path"]
         else:
-            print("\n--auto: {} candidates found; pass --set explicitly".format(
-                len(ports)))
+            print(f"\n--auto: {len(ports)} candidates found; pass --set explicitly")
     if not target:
-        print("\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
-              "(or --auto for the first above)")
+        print(
+            "\nTo use one: klipperformac serial --set /dev/cu.usbserial-XXXX "
+            "(or --auto for the first above)"
+        )
         return
     if not paths.PRINTER_CFG.exists():
         _die("No printer.cfg yet. Run: klipperformac setup")
@@ -198,9 +204,9 @@ def relocate_data(new):
     old = paths.DATA
     resolved_old = old.resolve() if old.exists() else old
     if new == resolved_old:
-        return "Data folder already set to: {}".format(new)
+        return f"Data folder already set to: {new}"
     if new == Path.home() or new.parent == new:
-        return "Refusing to use {} as the data folder.".format(new)
+        return f"Refusing to use {new} as the data folder."
     was_running = process.running() is not None
     if was_running:
         process.stop()
@@ -210,8 +216,7 @@ def relocate_data(new):
         for p in sorted(old.iterdir()):
             dest = new / p.name
             if dest.exists():
-                print("[!] " + str(dest) + " already exists — left "
-                      + str(p) + " in place")
+                print("[!] " + str(dest) + " already exists — left " + str(p) + " in place")
                 continue
             shutil.move(str(p), str(dest))
             moved += 1
@@ -224,15 +229,15 @@ def relocate_data(new):
     if was_running:
         process.start()
     return "Data folder: {} (moved {} item(s), stack {})".format(
-        new, moved, "restarted" if was_running else "stopped")
+        new, moved, "restarted" if was_running else "stopped"
+    )
 
 
 def cmd_data(args):
     if not args.set:
         print("Data folder: " + str(paths.DATA))
         if paths.DATA.exists():
-            entries = sorted(p.name for p in paths.DATA.iterdir()
-                             if not p.name.startswith("."))
+            entries = sorted(p.name for p in paths.DATA.iterdir() if not p.name.startswith("."))
             print("  contents: " + (", ".join(entries) if entries else "(empty)"))
         return
     print(relocate_data(args.set))
@@ -256,10 +261,10 @@ def cmd_update(args):
     if args.apply:
         for comp, cur, new in updates:
             if comp == "klipper" and pins[comp] == "master":
-                print("  {:<10} master {} -> {}".format(comp, cur, new))
+                print(f"  {comp:<10} master {cur} -> {new}")
                 continue  # branch-tracked; re-clone records the new SHA
             pins[comp] = new
-            print("  {:<10} {} -> {}".format(comp, cur, new))
+            print(f"  {comp:<10} {cur} -> {new}")
         if not updates:
             print("Already at newest upstream tags.")
         _reprovision(pins)
@@ -269,7 +274,7 @@ def cmd_update(args):
         return
     print("Updates available (apply with: klipperformac update --apply):")
     for comp, cur, new in updates:
-        print("  {:<10} {} -> {}".format(comp, cur, new))
+        print(f"  {comp:<10} {cur} -> {new}")
 
 
 def _reprovision(pins):
@@ -280,7 +285,7 @@ def _reprovision(pins):
         force = pins[comp] in ("master", "main")
         sha = installer.checkout(comp, pins[comp], force=force)
         pins[comp + "_sha"] = sha
-        print("  {} @ {} ({})".format(comp, pins[comp], sha))
+        print(f"  {comp} @ {pins[comp]} ({sha})")
     installer.create_venv()
     installer.install_requirements()
     installer.fetch_mainsail(pins["mainsail"])
@@ -300,8 +305,7 @@ def cmd_ui(args):
         if args.name not in ("mainsail", "fluidd"):
             _die("UI is 'mainsail' or 'fluidd'")
         if not (paths.WEB / args.name / "index.html").exists():
-            print("[!] {} not downloaded yet — run: klipperformac setup".format(
-                args.name))
+            print(f"[!] {args.name} not downloaded yet — run: klipperformac setup")
         pins["ui"] = args.name
         versions.save_pins(pins)
         print("Default UI: " + args.name)
@@ -313,25 +317,24 @@ def cmd_ui(args):
 
 def cmd_presets(args):
     import shutil
+
     paths.PRESETS.mkdir(parents=True, exist_ok=True)
     if args.save:
         if not paths.PRINTER_CFG.exists():
             _die("No printer.cfg to save")
         dst = paths.PRESETS / (args.save + ".cfg")
         shutil.copy2(paths.PRINTER_CFG, dst)
-        print("Saved preset '{}' -> {}".format(args.save, dst))
+        print(f"Saved preset '{args.save}' -> {dst}")
         return
     if args.use:
         src = paths.PRESETS / (args.use + ".cfg")
         if not src.exists():
             avail = [p.stem for p in paths.PRESETS.glob("*.cfg")]
-            _die("No preset '{}'. Available: {}".format(
-                args.use, ", ".join(avail) or "none"))
+            _die("No preset '{}'. Available: {}".format(args.use, ", ".join(avail) or "none"))
         if paths.PRINTER_CFG.exists():
             shutil.copy2(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak")
         shutil.copy2(src, paths.PRINTER_CFG)
-        print("Preset '{}' applied (previous config kept as printer.cfg.bak)."
-              .format(args.use))
+        print(f"Preset '{args.use}' applied (previous config kept as printer.cfg.bak).")
         if process.running() is not None:
             print("Restart to load it: klipperformac restart")
         return
@@ -342,7 +345,7 @@ def cmd_presets(args):
         name = args.import_name or os.path.splitext(os.path.basename(src))[0]
         dst = paths.PRESETS / (name + ".cfg")
         shutil.copy2(src, dst)
-        print("Imported {} as preset '{}'".format(src, name))
+        print(f"Imported {src} as preset '{name}'")
         return
     presets = sorted(paths.PRESETS.glob("*.cfg"))
     if not presets:
@@ -353,7 +356,7 @@ def cmd_presets(args):
     current = paths.PRINTER_CFG.read_text() if paths.PRINTER_CFG.exists() else ""
     for p in presets:
         mark = "*" if p.read_text() == current else " "
-        print("  {} {}".format(mark, p.stem))
+        print(f"  {mark} {p.stem}")
     print("(current marked *)")
 
 
@@ -361,11 +364,12 @@ def _klippy_console(cmd, timeout=6):
     """Send a Klipper console command (STATUS, RESTART, HELP, ...) over the
     host console PTY that klippy exposes as /tmp/printer. G-code via UIs
     goes through Moonraker instead."""
-    import select
     import os as _os
+    import select
+
     pty_path = os.environ.get("KLIPPERFORMAC_CONSOLE", "/tmp/printer")
     if not _os.path.exists(pty_path):
-        _die("No Klipper console at {} (is the stack up?)".format(pty_path))
+        _die(f"No Klipper console at {pty_path} (is the stack up?)")
     fd = _os.open(pty_path, _os.O_RDWR | _os.O_NONBLOCK)
     lines = []
     try:
@@ -399,9 +403,10 @@ def _klippy_console(cmd, timeout=6):
 
 def cmd_gcode(args):
     import json as _json
-    from urllib.parse import quote
     import urllib.request
-    base = "http://localhost:{}".format(paths.MOONRAKER_PORT)
+    from urllib.parse import quote
+
+    base = f"http://localhost:{paths.MOONRAKER_PORT}"
     if args.status:
         url = base + "/printer/objects/query?print_stats&toolhead&heater_bed&extruder"
         try:
@@ -412,8 +417,13 @@ def cmd_gcode(args):
         print(_json.dumps(_json.loads(out), indent=2)[:1500])
         return
     script = " ".join(args.script)
-    if script.strip().upper() in ("STATUS", "RESTART", "FIRMWARE_RESTART", "HELP",
-                                  "QUERY_ENDSTOPS"):
+    if script.strip().upper() in (
+        "STATUS",
+        "RESTART",
+        "FIRMWARE_RESTART",
+        "HELP",
+        "QUERY_ENDSTOPS",
+    ):
         _klippy_console(script)
         return
     url = base + "/printer/gcode/script?script=" + quote(script, safe="")
@@ -430,12 +440,12 @@ def cmd_selftest(args):
     env = dict(os.environ)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = repo_root
-    subprocess.call([str(paths.VENV_PY), "-m", "klipperformac.tests.selftest"],
-                    env=env)
+    subprocess.call([str(paths.VENV_PY), "-m", "klipperformac.tests.selftest"], env=env)
 
 
 def cmd_tui(args):
     from . import tui
+
     tui.main()
 
 
@@ -461,7 +471,7 @@ def cmd_doctor(args):
         bad = installer.verify_pristine()
         if bad:
             for comp, out in bad:
-                print("[!] {} checkout modified (not pristine):\n{}".format(comp, out))
+                print(f"[!] {comp} checkout modified (not pristine):\n{out}")
             ok = False
         else:
             print("[ok] upstream checkouts pristine")
@@ -469,13 +479,14 @@ def cmd_doctor(args):
         print("[!] Not set up (run klipperformac setup)")
         ok = False
     try:
-        batt = subprocess.run(["pmset", "-g", "batt"],
-                              capture_output=True).stdout.decode()
+        batt = subprocess.run(["pmset", "-g", "batt"], capture_output=True).stdout.decode()
     except Exception:
         batt = ""
     if "Battery" in batt and "AC" not in batt:
-        print("[!] Running on battery: system sleep on battery cannot be fully "
-              "prevented; prints may die if the lid closes or battery empties.")
+        print(
+            "[!] Running on battery: system sleep on battery cannot be fully "
+            "prevented; prints may die if the lid closes or battery empties."
+        )
     state = process.running()
     if state:
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
@@ -489,7 +500,7 @@ def cmd_uninstall(args):
     user data folder unless --data/--keep-data says otherwise."""
     killed = process.kill_all()
     if killed:
-        print("Stopped {} process(es).".format(len(killed)))
+        print(f"Stopped {len(killed)} process(es).")
 
     src_root = paths.APP_HOME / "src"
     links = [Path.home() / ".local" / "bin" / "klipperformac"]
@@ -523,9 +534,10 @@ def cmd_uninstall(args):
     elif args.data:
         remove_data = True
     elif sys.stdin.isatty():
-        remove_data = input(
-            "\nDelete the data folder too? {} [y/N] ".format(data)
-        ).strip().lower() in ("y", "yes")
+        remove_data = input(f"\nDelete the data folder too? {data} [y/N] ").strip().lower() in (
+            "y",
+            "yes",
+        )
     else:
         remove_data = False
     if remove_data:
@@ -535,21 +547,24 @@ def cmd_uninstall(args):
             shutil.rmtree(data)
             print("Removed data folder: " + str(data))
     else:
-        print("Kept data folder: {} (delete it yourself if you want)".format(data))
-    print("Uninstalled. Reload your shell or open a new terminal to clear the "
-          "command from PATH cache: hash -r")
+        print(f"Kept data folder: {data} (delete it yourself if you want)")
+    print(
+        "Uninstalled. Reload your shell or open a new terminal to clear the "
+        "command from PATH cache: hash -r"
+    )
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
         from . import tui
+
         tui.main()
         return
     ap = argparse.ArgumentParser(
         prog="klipperformac",
         description="Klipper on macOS: pristine upstream, one command. "
-                    "Run with no arguments for the interactive dashboard.",
+        "Run with no arguments for the interactive dashboard.",
     )
     sub = ap.add_subparsers(dest="cmd")
     sub.required = True
@@ -558,15 +573,15 @@ def main(argv=None):
     p = sub.add_parser("up", help="start klipper + moonraker + mainsail")
     p.add_argument("--open", action="store_true", help="open browser")
     sub.add_parser("down", help="stop everything")
-    sub.add_parser("killall", help="force kill everything, incl. stray "
-                                   "leftovers a plain down would miss")
+    sub.add_parser(
+        "killall", help="force kill everything, incl. stray leftovers a plain down would miss"
+    )
     sub.add_parser("restart", help="stop then start")
     sub.add_parser("status", help="show state, pins, available updates")
     p = sub.add_parser("lan", help="open/close the stack to your local network")
     p.add_argument("state", nargs="?", choices=("on", "off"))
     p = sub.add_parser("logs", help="view logs")
-    p.add_argument("service", choices=("klipper", "moonraker"), default="klipper",
-                   nargs="?")
+    p.add_argument("service", choices=("klipper", "moonraker"), default="klipper", nargs="?")
     p.add_argument("-n", "--lines", type=int, default=40)
     p.add_argument("-f", "--follow", action="store_true")
     p = sub.add_parser("serial", help="list USB printer ports / set [mcu] serial")
@@ -581,8 +596,7 @@ def main(argv=None):
     p = sub.add_parser("ui", help="open or switch web UI (mainsail|fluidd)")
     p.add_argument("name", nargs="?", choices=("mainsail", "fluidd"))
     p.add_argument("--no-open", action="store_true")
-    p = sub.add_parser("presets",
-                       help="list / save / use / import printer.cfg presets")
+    p = sub.add_parser("presets", help="list / save / use / import printer.cfg presets")
     p.add_argument("--save", metavar="NAME")
     p.add_argument("--use", metavar="NAME")
     p.add_argument("--import", dest="import_", metavar="PATH")
@@ -593,22 +607,30 @@ def main(argv=None):
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
     sub.add_parser("tui", help="interactive dashboard (default with no args)")
-    p = sub.add_parser("uninstall", help="remove the app; asks before deleting "
-                                         "the data folder")
-    p.add_argument("--data", action="store_true",
-                   help="also delete the data folder without asking")
-    p.add_argument("--keep-data", action="store_true",
-                   help="never delete the data folder")
+    p = sub.add_parser("uninstall", help="remove the app; asks before deleting the data folder")
+    p.add_argument("--data", action="store_true", help="also delete the data folder without asking")
+    p.add_argument("--keep-data", action="store_true", help="never delete the data folder")
 
     args = ap.parse_args(argv)
     handlers = {
-        "setup": cmd_setup, "up": cmd_up, "down": cmd_down,
-        "killall": cmd_killall, "restart": cmd_restart,
-        "status": cmd_status, "logs": cmd_logs, "serial": cmd_serial,
+        "setup": cmd_setup,
+        "up": cmd_up,
+        "down": cmd_down,
+        "killall": cmd_killall,
+        "restart": cmd_restart,
+        "status": cmd_status,
+        "logs": cmd_logs,
+        "serial": cmd_serial,
         "lan": cmd_lan,
         "data": cmd_data,
-        "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
-        "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
-        "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
+        "update": cmd_update,
+        "open": cmd_open,
+        "doctor": cmd_doctor,
+        "ui": cmd_ui,
+        "presets": cmd_presets,
+        "gcode": cmd_gcode,
+        "selftest": cmd_selftest,
+        "tui": cmd_tui,
+        "uninstall": cmd_uninstall,
     }
     handlers[args.cmd](args)

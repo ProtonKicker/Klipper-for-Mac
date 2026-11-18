@@ -8,66 +8,71 @@ struct DashboardView: View {
     private let stackButtonWidth: CGFloat = 92
 
     var body: some View {
-        Form {
-            setupSection
-            stackSection
-            printerSection
-            printerConfigSection
-            lanSection
-        }
-        .formStyle(.grouped)
-        .navigationTitle("Printer")
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await model.refresh(reloadEnv: true) }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if !model.env.installed {
+                    Card { setupSection }
                 }
-                .help("Refresh")
+                Card { stackSection }
+                if model.printer != nil {
+                    Card { printerSection }
+                }
+                if model.env.installed {
+                    Card { printerConfigSection }
+                }
+                Card { lanSection }
             }
+            .padding(16)
+            .frame(maxWidth: 760, alignment: .leading)
         }
-        .sheet(isPresented: $model.showSheet) {
-            SetupSheet(title: model.sheetTitle, lines: model.sheetLines,
-                       running: model.sheetRunning)
-        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - first run (stack never set up)
 
-    @ViewBuilder private var setupSection: some View {
-        if !model.env.installed {
-            Section("Setup") {
-                Label {
-                    Text("Klipper stack is not installed on this Mac")
-                } icon: {
-                    FlatIcon(kind: .warning, size: 16, color: FlatPalette.amber)
-                }
-                Text("Installs pristine Klipper, Moonraker, Mainsail and Fluidd from GitHub. Takes a few minutes and needs internet.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button {
-                    Task { await model.runSetup() }
-                } label: {
-                    Label {
-                        Text(model.busy ? "Working…" : "Install stack")
-                    } icon: {
-                        FlatIcon(kind: .download, size: 14, color: FlatPalette.blue)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.busy)
+    private var setupSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Setup")
+            HStack(spacing: 8) {
+                FlatIcon(kind: .warning, size: 16, color: FlatPalette.amber)
+                Text("Klipper stack is not installed on this Mac")
             }
+            Text("Installs pristine Klipper, Moonraker, Mainsail and Fluidd from GitHub. Takes a few minutes and needs internet.")
+                .font(.callout)
+                .foregroundColor(.secondary)
+            Button {
+                Task { await model.runSetup() }
+            } label: {
+                HStack(spacing: 6) {
+                    FlatIcon(kind: .download, size: 14, color: FlatPalette.blue)
+                    Text(model.busy ? "Working…" : "Install stack")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.busy)
         }
     }
 
     // MARK: - stack controls
 
     private var stackSection: some View {
-        Section("Stack") {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionHeader("Stack")
+                Spacer()
+                Button {
+                    Task { await model.refresh(reloadEnv: true) }
+                } label: {
+                    // Image(systemName:) needs macOS 11+; the stack has its own
+                    // FlatIcons, so the refresh glyph is just a typed character.
+                    Text("↻").font(.system(size: 15, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .helpIfAvailable("Refresh")
+            }
             HStack(spacing: 12) {
                 StatusBadge(overall: model.snapshot.overall)
-                if model.busy { ProgressView().controlSize(.small) }
+                if model.busy { ActivityIndicator() }
                 Spacer()
             }
             HStack(spacing: 8) {
@@ -76,7 +81,7 @@ struct DashboardView: View {
                 } label: {
                     Text("Start").frame(width: stackButtonWidth)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .disabled(model.busy || model.snapshot.anyUp || !model.env.installed)
 
                 Button {
@@ -97,25 +102,28 @@ struct DashboardView: View {
                     Task { await model.killAll() }
                 } label: {
                     Text("Kill all").frame(width: stackButtonWidth)
+                        .foregroundColor(FlatPalette.red)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(FlatPalette.red)
+                .buttonStyle(.bordered)
                 .disabled(model.busy || !model.snapshot.tracked)
                 Spacer()
             }
 
             if model.snapshot.tracked { serviceRow }
 
-            Picker("Default interface", selection: $model.uiName) {
+            Picker("Default interface", selection: Binding(
+                get: { model.uiName },
+                set: { name in
+                    model.uiName = name
+                    if name != model.env.uiName {
+                        Task { await model.switchUI(name) }
+                    }
+                }
+            )) {
                 Text("Fluidd").tag("fluidd")
                 Text("Mainsail").tag("mainsail")
             }
             .pickerStyle(.segmented)
-            .onChange(of: model.uiName) { name in
-                if name != model.env.uiName {
-                    Task { await model.switchUI(name) }
-                }
-            }
 
             BrowserLink(label: model.uiName == "mainsail" ? "Mainsail" : "Fluidd",
                         url: model.env.uiURL(model.uiName))
@@ -151,31 +159,31 @@ struct DashboardView: View {
 
     // MARK: - live printer status
 
-    @ViewBuilder private var printerSection: some View {
-        if let p = model.printer {
-            Section("Printer") {
-                LabeledContent("Klipper",
-                               value: p.connected ? "connected (\(p.klippyState))"
-                                                  : "not connected (\(p.klippyState))")
+    private var printerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Printer")
+            if let p = model.printer {
+                FieldRow(label: "Klipper",
+                         value: p.connected ? "connected (\(p.klippyState))"
+                                            : "not connected (\(p.klippyState))")
                 if let st = p.printState {
-                    LabeledContent("State", value: st.capitalized)
+                    FieldRow(label: "State", value: st.capitalized)
                 }
                 if let file = p.filename, !file.isEmpty {
-                    LabeledContent("File", value: file)
+                    FieldRow(label: "File", value: file)
                     if let prog = p.progress {
                         VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: min(max(prog, 0), 1))
+                            ProgressBar(value: min(max(prog, 0), 1))
                             Text("\(Int((prog * 100).rounded()))%")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
                 if let m = p.message, !m.isEmpty {
                     Text(m)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                        .foregroundColor(.secondary)
                 }
                 if p.printState == "printing" || p.printState == "paused" {
                     HStack {
@@ -185,9 +193,7 @@ struct DashboardView: View {
                         if p.printState == "paused" {
                             Button("Resume") { Task { await model.resumePrint() } }
                         }
-                        Button("Cancel print", role: .destructive) {
-                            Task { await model.cancelPrint() }
-                        }
+                        Button("Cancel print") { Task { await model.cancelPrint() } }
                     }
                 }
             }
@@ -196,53 +202,55 @@ struct DashboardView: View {
 
     // MARK: - printer config (serial board + preset)
 
-    @ViewBuilder private var printerConfigSection: some View {
-        if model.env.installed {
-            Section("Printer config") {
-                Picker("Serial device", selection: $selectedSerial) {
-                    Text("Select device…").tag("")
-                    if model.serialPorts.isEmpty {
-                        Text("No USB serial devices found").disabled(true).tag(" ")
-                    }
-                    ForEach(model.serialPorts) { port in
-                        Text("\(port.path)   \(port.label)").tag(port.path)
-                    }
-                }
-                .onChange(of: selectedSerial) { value in
+    private var printerConfigSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Printer config")
+            Picker("Serial device", selection: Binding(
+                get: { selectedSerial },
+                set: { value in
                     if !value.isEmpty {
                         let path = value
                         selectedSerial = ""
                         Task { await model.setSerial(path) }
                     }
                 }
-
-                Picker("Preset config", selection: $selectedPreset) {
-                    Text("Select config…").tag("")
-                    ForEach(model.presetNames, id: \.self) { name in
-                        Text(name).tag(name)
-                    }
+            )) {
+                Text("Select device…").tag("")
+                if model.serialPorts.isEmpty {
+                    Text("No USB serial devices found").disabled(true).tag(" ")
                 }
-                .disabled(model.presetNames.isEmpty)
-                .onChange(of: selectedPreset) { value in
+                ForEach(model.serialPorts) { port in
+                    Text("\(port.path)   \(port.label)").tag(port.path)
+                }
+            }
+
+            Picker("Preset config", selection: Binding(
+                get: { selectedPreset },
+                set: { value in
                     if !value.isEmpty {
                         let name = value
                         selectedPreset = ""
                         Task { await model.usePreset(name) }
                     }
                 }
+            )) {
+                Text("Select config…").tag("")
+                ForEach(model.presetNames, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .disabled(model.presetNames.isEmpty)
 
-                Text("Both write to printer.cfg — restart the stack to apply.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Text("Both write to printer.cfg — restart the stack to apply.")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
-                if !model.env.printerConfigured {
-                    Label {
-                        Text("No printer.cfg yet — add one to \(model.env.config.path), or apply a preset above.")
-                    } icon: {
-                        FlatIcon(kind: .info, size: 14, color: FlatPalette.amber)
-                    }
+            if !model.env.printerConfigured {
+                HStack(spacing: 6) {
+                    FlatIcon(kind: .info, size: 14, color: FlatPalette.amber)
+                    Text("No printer.cfg yet — add one to \(model.env.config.path), or apply a preset above.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -251,7 +259,8 @@ struct DashboardView: View {
     // MARK: - LAN
 
     private var lanSection: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("LAN access")
             Toggle("Reachable from other devices on your network", isOn: Binding(
                 get: { model.env.lanEnabled },
                 set: { on in Task { await model.setLAN(on) } }
@@ -264,24 +273,44 @@ struct DashboardView: View {
                                 url: "http://\(ip):\(model.env.moonrakerPort)")
                     Text("Restart the stack to apply.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                 } else {
                     Text("Enabled — but this Mac has no network address right now.")
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                 }
             } else {
                 Text("Only this Mac can reach the stack (localhost).")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
                 if model.snapshot.anyUp {
                     Text("Restart the stack to apply.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                 }
             }
-        } header: {
-            Text("LAN access")
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.headline)
+    }
+}
+
+/// macOS 10.15 has no `ProgressView(value:)`; a tiny NSViewRepresentable
+/// wrapper renders the same determinate bar.
+struct ProgressBar: NSViewRepresentable {
+    let value: Double
+
+    func makeNSView(context: Context) -> NSProgressIndicator {
+        let bar = NSProgressIndicator()
+        bar.style = .bar
+        bar.minValue = 0
+        bar.maxValue = 1
+        return bar
+    }
+
+    func updateNSView(_ bar: NSProgressIndicator, context: Context) {
+        bar.doubleValue = min(max(value, 0), 1)
     }
 }

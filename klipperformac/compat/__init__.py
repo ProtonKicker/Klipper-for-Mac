@@ -11,12 +11,13 @@ Moonraker's PATH emulates `ip -json -det address` from `ifconfig`.
 
 Upstream Klipper/Moonraker checkouts are never edited by any of this.
 """
+
 import os
 import stat
 import subprocess
 from pathlib import Path
 
-INCLUDE = str((Path(__file__).resolve().parent / "include"))
+INCLUDE = str(Path(__file__).resolve().parent / "include")
 
 SITECUSTOMIZE_SRC = '''\
 """klipperformac runtime shim (auto-imported by the venv's Python).
@@ -114,8 +115,7 @@ def invalidate_stale_build(klipper_dir):
     so = Path(klipper_dir) / "klippy" / "chelper" / "c_helper.so"
     if not so.exists():
         return False
-    newest = max(
-        (f.stat().st_mtime for f in Path(INCLUDE).rglob("*.h")), default=0)
+    newest = max((f.stat().st_mtime for f in Path(INCLUDE).rglob("*.h")), default=0)
     if newest > so.stat().st_mtime:
         so.unlink()
         return True
@@ -129,8 +129,7 @@ def _write_if_changed(path, content, executable=False):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
         if executable:
-            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP |
-                       stat.S_IXOTH)
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         return True
     except OSError:
         return False
@@ -140,29 +139,38 @@ def ensure_runtime_shims(venv_python):
     """Idempotent: sitecustomize in the venv + `ip` shim in APP_HOME/shims.
     Returns True when anything changed (caller may want a restart)."""
     from .. import paths
+
     changed = _write_if_changed(
-        Path(paths.APP_HOME) / SHIMS_DIR_NAME / "ip", IP_SHIM_SRC,
-        executable=True)
+        Path(paths.APP_HOME) / SHIMS_DIR_NAME / "ip", IP_SHIM_SRC, executable=True
+    )
     try:
-        purelib = subprocess.run(
-            [str(venv_python), "-c",
-             "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
-            capture_output=True, check=True).stdout.decode().strip()
+        purelib = (
+            subprocess.run(
+                [
+                    str(venv_python),
+                    "-c",
+                    "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+                ],
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
     except (OSError, subprocess.CalledProcessError):
         return changed
     if purelib:
         sitecustomize = Path(purelib) / "sitecustomize.py"
-        if sitecustomize.exists() and \
-                "klipperformac" not in sitecustomize.read_text():
+        if sitecustomize.exists() and "klipperformac" not in sitecustomize.read_text():
             pass  # user-provided sitecustomize: do not clobber
         else:
-            changed = _write_if_changed(sitecustomize,
-                                        SITECUSTOMIZE_SRC) or changed
+            changed = _write_if_changed(sitecustomize, SITECUSTOMIZE_SRC) or changed
     return changed
 
 
 def shim_env(base=None):
     from .. import paths
+
     env = dict(os.environ if base is None else base)
     shims = str(paths.APP_HOME / SHIMS_DIR_NAME)
     env["PATH"] = shims + os.pathsep + env.get("PATH", os.defpath)

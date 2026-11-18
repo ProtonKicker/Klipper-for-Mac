@@ -44,12 +44,14 @@ final class AppModel: ObservableObject {
         if !observingActive {
             observingActive = true
             let center = NotificationCenter.default
-            center.addObserver(forName: NSApplication.didResignActiveNotification,
+            // Legacy names: the macOS-14-style NSApplication.didResignActive…
+            // constants are unavailable at our macOS 10.15 deployment target.
+            center.addObserver(forName: Notification.Name("NSApplicationDidResignActiveNotification"),
                                object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
                 Task { @MainActor in self.stopPolling() }
             }
-            center.addObserver(forName: NSApplication.didBecomeActiveNotification,
+            center.addObserver(forName: Notification.Name("NSApplicationDidBecomeActiveNotification"),
                                object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
                 Task { @MainActor in

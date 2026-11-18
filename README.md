@@ -23,8 +23,9 @@ klipperformac up             # start everything, keep the Mac awake
 Fluidd dashboard: **http://localhost:8081** (Mainsail :8080). Bare
 `klipperformac` opens the interactive TUI.
 
-Requirements: Xcode Command Line Tools (`xcode-select --install`),
-Python ≥ 3.10, libsodium (`brew install python@3.12 libsodium`).
+Requirements: **macOS 10.15 (Catalina) or newer** (Intel; Apple Silicon needs
+11+), Xcode Command Line Tools (`xcode-select --install`), Python ≥ 3.10
+(python.org installer works on 10.15), libsodium (`brew install python@3.12 libsodium`).
 
 `printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
 with your printer's real config (`klipperformac presets` can import one).
@@ -32,6 +33,9 @@ with your printer's real config (`klipperformac presets` can import one).
 ## GUI app
 
 A native SwiftUI app wrapping the same CLI — same data folder, same running
+stack. The universal build targets **macOS 10.15+ (Intel)** and 11+ (Apple
+Silicon); the GUI only speaks to the already-installed
+[CLI](https://github.com/ProtonKicker/Klipper-for-Mac/releases) — no bundled
 stack. Install the CLI first, then get the GUI from
 [Releases](https://github.com/ProtonKicker/Klipper-for-Mac/releases): unzip
 `Klipper-for-Mac.zip` and drag **Klipper for Mac.app** into Applications,
@@ -40,8 +44,10 @@ Chrome-style. It's ad-hoc signed (notarization planned), so right-click →
 downloads or builds the GUI — they're fully separate.
 
 Building from source (full clone needed): `KlipperMac/build-app.sh`, Command
-Line Tools only; `KLIPPERFORMAC_ZIP=1` also emits the zip. A prebuilt zip is
-committed at `KlipperMac/dist/` as a fallback.
+Line Tools only; `KLIPPERFORMAC_ZIP=1` also emits the zip. It compiles a
+universal binary against the macOS 10.15 SDK target — the compiler rejects any
+API newer than 10.15 (`-warnings-as-errors`), so the minimum OS is enforced by
+construction. A prebuilt zip is committed at `KlipperMac/dist/` as a fallback.
 
 ![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
 
@@ -111,6 +117,23 @@ The one rule: **the Mac must stay awake while printing** — `up` runs
 - `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
 - No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
 - `.app` GUI is ad-hoc signed; right-click → Open on first launch.
+
+## For developers
+
+The same checks CI runs locally:
+
+```sh
+make lint       # ruff check + format (klipperformac, bin, scripts, tests)
+make test       # pytest — offline CLI unit/integration suite
+make build      # universal GUI build, macOS 10.15 floor (swiftc
+                #   -warnings-as-errors rejects newer APIs by construction)
+make zip        # build + emit dist/Klipper-for-Mac.zip
+make smoke      # import + CLI sanity
+```
+
+`pyproject.toml` pins the ruff/pytest behavior; `requirements-dev.txt` pins the
+tool versions. The pytest suite is fully offline (no network, no printer
+hardware) and fast — everything touches a throwaway `KLIPPERFORMAC_HOME`.
 
 ## License
 

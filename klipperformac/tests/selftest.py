@@ -3,6 +3,7 @@
 Run with the klipperformac venv python (has tornado):
   ~/.klipperformac/venv/bin/python -m klipperformac.tests.selftest
 """
+
 import asyncio
 import json
 import sys
@@ -10,7 +11,7 @@ import urllib.request
 
 from .. import paths
 
-WS_URL = "ws://localhost:{}/websocket".format(paths.MOONRAKER_PORT)
+WS_URL = f"ws://localhost:{paths.MOONRAKER_PORT}/websocket"
 ORIGIN = paths.web_url()
 
 
@@ -24,7 +25,7 @@ def check_static():
 
 def check_rest(port=None):
     port = port or paths.MOONRAKER_PORT
-    url = "http://localhost:{}/server/info".format(port)
+    url = f"http://localhost:{port}/server/info"
     with urllib.request.urlopen(url, timeout=8) as r:
         data = json.loads(r.read().decode())
     if not data.get("result", {}).get("klippy_connected"):
@@ -38,12 +39,14 @@ check_rest_via = check_rest
 async def check_ws(url=None):
     from tornado.httpclient import HTTPRequest
     from tornado.websocket import websocket_connect
+
     req = HTTPRequest(url or WS_URL, headers={"Origin": ORIGIN})
     conn = await websocket_connect(req)
     try:
         for method, ident in (("printer.info", 1), ("server.info", 2)):
-            await conn.write_message(json.dumps(
-                {"jsonrpc": "2.0", "method": method, "params": {}, "id": ident}))
+            await conn.write_message(
+                json.dumps({"jsonrpc": "2.0", "method": method, "params": {}, "id": ident})
+            )
             msg = json.loads(await asyncio.wait_for(conn.read_message(), 8))
             if "result" not in msg:
                 raise AssertionError(method + " -> " + json.dumps(msg)[:200])
@@ -56,12 +59,12 @@ def main():
     results = []
     try:
         status, n = check_static()
-        results.append(("mainsail static {} ({} bytes)".format(status, n), True))
+        results.append((f"mainsail static {status} ({n} bytes)", True))
     except Exception as e:
         results.append(("mainsail static: " + str(e)[:100], False))
     try:
         status = check_rest()
-        results.append(("moonraker REST {} klippy_connected".format(status), True))
+        results.append((f"moonraker REST {status} klippy_connected", True))
     except Exception as e:
         results.append(("moonraker REST: " + str(e)[:100], False))
     try:
@@ -71,12 +74,13 @@ def main():
         results.append(("websocket JSON-RPC: " + str(e)[:120], False))
     try:
         status = check_rest_via(paths.WEB_PORT)
-        results.append(("mainsail proxy REST {} (browser path)".format(status), True))
+        results.append((f"mainsail proxy REST {status} (browser path)", True))
     except Exception as e:
         results.append(("mainsail proxy REST: " + str(e)[:100], False))
     try:
         asyncio.new_event_loop().run_until_complete(
-            check_ws("ws://localhost:{}/websocket".format(paths.WEB_PORT)))
+            check_ws(f"ws://localhost:{paths.WEB_PORT}/websocket")
+        )
         results.append(("mainsail proxy websocket (browser path)", True))
     except Exception as e:
         results.append(("mainsail proxy websocket: " + str(e)[:120], False))

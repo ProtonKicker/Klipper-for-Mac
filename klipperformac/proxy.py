@@ -6,6 +6,7 @@ separate port breaks it (the "initializing" hang). This serves the UI's
 static files AND relays Moonraker API paths + /websocket on the same port,
 the same job nginx does in a standard Klipper install — stdlib only.
 """
+
 import http.client
 import select
 import socket
@@ -14,13 +15,30 @@ import sys
 from http.server import SimpleHTTPRequestHandler
 
 API_PREFIXES = (
-    "server", "printer", "access", "machine", "job_queue", "history",
-    "update", "data_store", "webcam", "extensions", "api", "websocket",
+    "server",
+    "printer",
+    "access",
+    "machine",
+    "job_queue",
+    "history",
+    "update",
+    "data_store",
+    "webcam",
+    "extensions",
+    "api",
+    "websocket",
     "moonraker",
 )
-HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate",
-              "proxy-authorization", "te", "trailer", "transfer-encoding",
-              "upgrade"}
+HOP_BY_HOP = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 class UIPandler(SimpleHTTPRequestHandler):
@@ -36,10 +54,10 @@ class UIPandler(SimpleHTTPRequestHandler):
 
     def _proxy(self, extra_body=None):
         try:
-            conn = http.client.HTTPConnection("127.0.0.1", self.upstream_port,
-                                              timeout=15)
-            headers = {k: v for k, v in self.headers.items()
-                       if k.lower() not in ("host", "connection")}
+            conn = http.client.HTTPConnection("127.0.0.1", self.upstream_port, timeout=15)
+            headers = {
+                k: v for k, v in self.headers.items() if k.lower() not in ("host", "connection")
+            }
             body = extra_body if extra_body is not None else self._body()
             conn.request(self.command, self.path, body, headers)
             resp = conn.getresponse()
@@ -53,18 +71,17 @@ class UIPandler(SimpleHTTPRequestHandler):
             self.wfile.write(data)
             conn.close()
         except Exception as e:
-            self.send_error(502, "proxy error: {}".format(e))
+            self.send_error(502, f"proxy error: {e}")
 
     def _proxy_ws(self):
         try:
-            up = socket.create_connection(("127.0.0.1", self.upstream_port),
-                                          timeout=15)
+            up = socket.create_connection(("127.0.0.1", self.upstream_port), timeout=15)
         except OSError:
             self.send_error(502, "websocket upstream unavailable")
             return
-        head = "{} {} {}\r\n".format(self.command, self.path, self.request_version)
+        head = f"{self.command} {self.path} {self.request_version}\r\n"
         for k, v in self.headers.items():
-            head += "{}: {}\r\n".format(k, v)
+            head += f"{k}: {v}\r\n"
         head += "\r\n"
         up.sendall(head.encode())
         self.close_connection = True
@@ -137,7 +154,10 @@ def main(argv):
     port, directory, upstream = int(argv[1]), argv[2], int(argv[3])
     bind = argv[4] if len(argv) > 4 else "127.0.0.1"
     UIPandler.upstream_port = upstream
-    handler = lambda *a, **kw: UIPandler(*a, directory=directory, **kw)
+
+    def handler(*args, **kwargs):
+        return UIPandler(*args, directory=directory, **kwargs)
+
     with Server((bind, port), handler) as httpd:
         httpd.serve_forever()
 
