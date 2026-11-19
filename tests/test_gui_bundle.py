@@ -151,6 +151,8 @@ def test_camera_helper_is_bundled_and_not_installed_globally():
     source = (ROOT / "KlipperMac" / "build-app.sh").read_text()
     assert 'install_cam "$APP/Contents/Resources/KlipperCam"' in source
     assert 'install_cam "$HOME/.klipperformac/bin/KlipperCam"' not in source
+    assert "swift build -c release --product KlipperCam" not in source
+    assert "if build_cam_arch arm64 && build_cam_arch x86_64" in source
 
 
 @pytest.mark.skipif(not os.environ.get("KLIPPERFORMAC_TEST_APP"), reason="no built app under test")

@@ -33,20 +33,17 @@ build_cam_arch() {
 }
 
 build_cam() {
-    # SwiftPM needs a full Xcode install; Command Line Tools alone cannot run
-    # it, so fall back to the swiftc path above.
-    if swift build -c release --product KlipperCam >/dev/null 2>&1; then
-        echo "    via swift build"
-        cp .build/release/KlipperCam dist/KlipperCam-universal
-        return 0
-    fi
-    echo "    via swiftc (no Xcode toolchain for SwiftPM)"
+    # Always compile both slices directly: SwiftPM produces only the host
+    # architecture, which would strand the camera feature on the other CPU.
+    echo "    via swiftc (universal, no SwiftPM toolchain required)"
     if build_cam_arch arm64 && build_cam_arch x86_64; then
         lipo -create dist/KlipperCam-arm64 dist/KlipperCam-x86_64 \
             -output dist/KlipperCam-universal
     else
-        build_cam_arch "$(uname -m)"
-        cp "dist/KlipperCam-$(uname -m)" dist/KlipperCam-universal
+        echo "    universal camera helper build failed; keeping host architecture"
+        HOST=$(uname -m)
+        build_cam_arch "$HOST"
+        cp "dist/KlipperCam-$HOST" dist/KlipperCam-universal
     fi
     rm -f dist/KlipperCam-arm64 dist/KlipperCam-x86_64
 }
