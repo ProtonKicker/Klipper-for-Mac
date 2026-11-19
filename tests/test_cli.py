@@ -82,10 +82,38 @@ def test_ui_sets_pin(stack, capsys):
 def test_presets_save_use_flow(stack, capsys):
     stack.paths.CONFIG.mkdir(parents=True, exist_ok=True)
     stack.paths.PRINTER_CFG.write_text("[mcu]\nserial: /a\n")
-    cli.cmd_presets(_args(save="bench", use=None, import_=None, import_name=None))
+    cli.cmd_presets(
+        _args(
+            save="bench",
+            use=None,
+            import_=None,
+            import_name=None,
+            library=None,
+            use_library=None,
+            history=None,
+            restore=None,
+            snapshot=None,
+            status=None,
+            auto_serial=None,
+        )
+    )
     assert (stack.paths.PRESETS / "bench.cfg").exists()
 
-    cli.cmd_presets(_args(save=None, use="bench", import_=None, import_name=None))
+    cli.cmd_presets(
+        _args(
+            save=None,
+            use="bench",
+            import_=None,
+            import_name=None,
+            library=None,
+            use_library=None,
+            history=None,
+            restore=None,
+            snapshot=None,
+            status=None,
+            auto_serial=None,
+        )
+    )
     assert stack.paths.CONFIG.joinpath("printer.cfg.bak").exists()
     out = capsys.readouterr().out
     assert "applied" in out
@@ -93,7 +121,21 @@ def test_presets_save_use_flow(stack, capsys):
 
 def test_presets_use_missing_dies(stack):
     with pytest.raises(SystemExit):
-        cli.cmd_presets(_args(save=None, use="nope", import_=None, import_name=None))
+        cli.cmd_presets(
+            _args(
+                save=None,
+                use="nope",
+                import_=None,
+                import_name=None,
+                library=None,
+                use_library=None,
+                history=None,
+                restore=None,
+                snapshot=None,
+                status=None,
+                auto_serial=None,
+            )
+        )
 
 
 def test_lan_toggle_persists_and_restart_hint(stack, capsys):

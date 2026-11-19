@@ -57,5 +57,9 @@ def test_sort_key_variants(stack):
     v = stack.versions
     assert v._sort_key("v1.2.3") == (1, 2, 3)
     assert v._sort_key("2") == (2, 0, 0)
-    assert v._sort_key("v1.2.3-rc1") == (1, 2, 0)  # non-numeric suffix -> 0
+    assert v._sort_key("v1.2.3-rc1") == (
+        -1,
+        -1,
+        -1,
+    )  # non-numeric prerelease segment -> malformed/ineligible
     assert v._sort_key("v1.10") > v._sort_key("v1.9.9")

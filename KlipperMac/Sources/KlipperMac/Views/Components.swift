@@ -17,6 +17,26 @@ struct ActivityIndicator: NSViewRepresentable {
     func updateNSView(_ nsView: NSProgressIndicator, context: Context) {}
 }
 
+/// Determinate progress bar (0...1), 10.15-safe stand-in for `ProgressView(value:)`.
+struct CompatProgressBar: NSViewRepresentable {
+    let value: Double
+
+    func makeNSView(context: Context) -> NSProgressIndicator {
+        let view = NSProgressIndicator()
+        view.isIndeterminate = false
+        view.style = .bar
+        view.minValue = 0
+        view.maxValue = 1
+        view.doubleValue = value
+        return view
+    }
+
+    func updateNSView(_ nsView: NSProgressIndicator, context: Context) {
+        nsView.isIndeterminate = false
+        nsView.doubleValue = min(max(value, 0), 1)
+    }
+}
+
 /// Monospaced, selectable, auto-scrolling log text. SwiftUI's
 /// ScrollViewReader requires macOS 11+, so streaming/scrollback panes reuse a
 /// plain NSTextView (available since 10.13) instead.
@@ -59,6 +79,34 @@ struct LogTextView: NSViewRepresentable {
     }
 }
 
+/// Selectable single-line/multi-line text stand-in for `.textSelection(.enabled)`.
+struct SelectableText: NSViewRepresentable {
+    let text: String
+    var monospaced: Bool = false
+    var fontSize: CGFloat = 11
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.isSelectable = true
+        field.isEditable = false
+        field.drawsBackground = false
+        field.isBezeled = false
+        field.lineBreakMode = .byCharWrapping
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text { nsView.stringValue = text }
+        nsView.font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
+    }
+}
+
 /// `Color(nsColor:)` / `.help` need macOS 11/12+; this keeps tooltips on
 /// modern macOS and degrades silently on 10.15.
 extension View {
@@ -70,6 +118,27 @@ extension View {
             self
         }
     }
+
+    /// 10.15-safe stand-in for bordered/prominent button styling used in a few places.
+    func compatBorderedProminent(tint: Color = .accentColor) -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(tint.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(tint.opacity(0.45), lineWidth: 1))
+    }
+
+    func compatBordered() -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 1))
+    }
+}
+
+func compatNSColor(_ color: NSColor) -> Color {
+    Color(color)
 }
 
 /// Notion-style card section used by Settings and Dashboard.
@@ -99,10 +168,27 @@ struct FieldRow: View {
     let value: String
 
     var body: some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
             Text(label).foregroundColor(.primary)
             Spacer()
-            Text(value).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+            Text(value)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+    }
+}
+
+/// Label + custom trailing content (10.15-safe `LabeledContent` replacement).
+struct LabeledRow<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label).foregroundColor(.primary)
+            Spacer()
+            content()
         }
     }
 }
@@ -111,18 +197,28 @@ struct FieldRow: View {
 
 struct StatusBadge: View {
     let overall: StackSnapshot.Overall
+    private var presentation: StatusBadgePresentation {
+        AppFeedback.statusBadgePresentation(overall: overall)
+    }
+
+    private var color: Color {
+        switch presentation.tone {
+        case .positive:
+            return .green
+        case .warning:
+            return .orange
+        case .neutral:
+            return .secondary
+        }
+    }
 
     var body: some View {
-        let color: Color = overall == .running ? .green
-            : (overall == .notResponding ? .orange : .secondary)
-        let text = overall == .running ? "Running"
-            : (overall == .notResponding ? "Not responding" : "Stopped")
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
-            Text(text)
-                .font(.callout.weight(.medium))
+            Text(presentation.text)
+                .font(.system(size: NSFont.systemFontSize, weight: .medium))
         }
         .foregroundColor(.primary)
         .fixedSize()
@@ -132,13 +228,25 @@ struct StatusBadge: View {
 struct MessageBanner: View {
     @ObservedObject var notifier: Notifier
 
+    private var banner: BannerPresentation? {
+        AppFeedback.bannerPresentation(message: notifier.message,
+                                       isError: notifier.isError)
+    }
+
+    private var iconColor: Color {
+        banner?.tone == .warning ? FlatPalette.amber : FlatPalette.green
+    }
+
+    private var iconKind: FlatIconKind {
+        banner?.tone == .warning ? .warning : .check
+    }
+
     var body: some View {
-        if let m = notifier.message {
+        if let banner {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    FlatIcon(kind: notifier.isError ? .warning : .check, size: 14,
-                             color: notifier.isError ? FlatPalette.amber : FlatPalette.green)
-                    Text(notifier.isError ? "Problem" : "Done")
+                    FlatIcon(kind: iconKind, size: 14, color: iconColor)
+                    Text(banner.title)
                         .font(.caption.bold())
                     Spacer()
                     Button {
@@ -148,7 +256,7 @@ struct MessageBanner: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(m)
+                Text(banner.message)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(6)
@@ -157,11 +265,11 @@ struct MessageBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.primary.opacity(0.06))
+                    .fill(compatNSColor(.controlBackgroundColor))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
             )
             .padding(8)
         }
