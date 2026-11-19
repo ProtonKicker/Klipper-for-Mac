@@ -67,21 +67,44 @@ struct SettingsView: View {
             }
             HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }
-                    .disabled(model.busy)
+                    .disabled(model.busy || model.componentTaskRunning)
                 Button("Update") { Task { await model.applyUpdates() } }
-                    .disabled(model.busy || model.snapshot.anyUp || !env.installed)
-                if model.busy && !model.showSheet {
-                    ActivityIndicator()
-                }
+                    .disabled(model.busy || model.componentTaskRunning || model.snapshot.anyUp || !env.installed)
+                if model.componentTaskRunning { ActivityIndicator() }
                 Spacer()
             }
-            if !model.updateLines.isEmpty {
-                ForEach(model.updateLines.indices, id: \.self) { index in
-                    Text(model.updateLines[index])
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            if model.snapshot.anyUp && env.installed {
+                Text("Stop the Klipper stack before applying component updates.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if model.componentTaskRunning || !model.componentLog.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.componentTaskRunning {
+                        Text(model.componentTaskTitle.isEmpty ? "Working…" : model.componentTaskTitle)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    LogTextView(text: model.componentLog.joined(separator: "\n"),
+                                follow: model.componentTaskRunning)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 200)
+                        .background(compatNSColor(.textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        )
+                    if !model.componentTaskRunning && !model.componentLog.isEmpty {
+                        HStack {
+                            Spacer()
+                            Button("Clear") { model.componentLog = [] }
+                                .buttonStyle(.plain)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

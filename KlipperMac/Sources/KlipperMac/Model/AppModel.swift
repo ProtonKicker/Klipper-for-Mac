@@ -70,7 +70,10 @@ final class AppModel: ObservableObject {
     @Published var sheetLines: [String] = []
     @Published var sheetRunning = false
 
-    @Published var updateLines: [String] = []
+    // Component updates (inline in Settings > Components)
+    @Published var componentLog: [String] = []
+    @Published var componentTaskRunning = false
+    @Published var componentTaskTitle = ""
 
     // in-app app update (GitHub releases)
     @Published var appUpdateStatus = ""
@@ -93,6 +96,8 @@ final class AppModel: ObservableObject {
     private var cfgWatch: DispatchSourceFileSystemObject?
     private var pendingSheetLines: [String] = []
     private var sheetFlushTask: Task<Void, Never>?
+    private var pendingComponentLines: [String] = []
+    private var componentFlushTask: Task<Void, Never>?
 
     private enum CLITimeout {
         static let control: TimeInterval = 20
@@ -664,9 +669,11 @@ private func _syncNamesFromReport(_ report: SerialReport) {
     }
 
     func checkUpdates() async {
-        busy = true
-        updateLines = ["Checking upstream tags…"]
-        defer { busy = false }
+        guard !componentTaskRunning else { return }
+        componentTaskRunning = true
+        componentTaskTitle = "Checking for component updates"
+        componentLog = ["Checking upstream tags…"]
+        defer { componentTaskRunning = false }
         do {
             let r = try await CLIRunner.shared.run(["update"],
                                                    timeout: Self.timeout(for: ["update"]))
@@ -674,26 +681,71 @@ private func _syncNamesFromReport(_ report: SerialReport) {
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-            updateLines = lines.isEmpty ? ["All components at newest pinned tags."] : lines
+            componentLog = lines.isEmpty ? ["All components at newest pinned tags."] : lines
         } catch {
-            updateLines = [Self.cliErrorMessage(error, notFound: "Klipper CLI not found.")]
+            componentLog = [Self.cliErrorMessage(error, notFound: "Klipper CLI not found.")]
         }
     }
 
     func applyUpdates() async {
-        if snapshot.anyUp {
-            say("Stop the stack before applying updates.", error: true)
+        let stackRunning = StackReader.readSync(env: env).anyUp || snapshot.anyUp
+        if stackRunning {
+            componentLog = ["Stop the Klipper stack before applying component updates."]
             return
         }
-        await stream(["update", "--apply"], title: "Applying updates")
+        guard !componentTaskRunning else { return }
+        await streamComponents(["update", "--apply"], title: "Applying component updates")
         await refresh()
     }
 
-    // MARK: - streaming long jobs (setup / updates)
+    // MARK: - streaming long jobs (setup / component updates)
 
     func runSetup() async {
         await stream(["setup"], title: "Installing Klipper stack")
         await refresh()
+    }
+
+    private func streamComponents(_ args: [String], title: String) async {
+        componentTaskTitle = title
+        componentLog = []
+        pendingComponentLines = []
+        componentTaskRunning = true
+        busy = true
+        defer {
+            flushPendingComponentLines()
+            busy = false
+            componentTaskRunning = false
+        }
+        do {
+            let code = try await CLIRunner.shared.stream(args,
+                                                         timeout: Self.timeout(for: args)) { lines in
+                Task { @MainActor in self.enqueueComponentLines(lines) }
+            }
+            if code != 0 {
+                componentLog.append("—— finished with exit \(code) ——"
+                    + (code == 126 ? " (this build's Python is too old; setup needs 3.10+)" : ""))
+            }
+        } catch {
+            componentLog.append("error: " + error.localizedDescription)
+        }
+    }
+
+    private func enqueueComponentLines(_ lines: [String]) {
+        pendingComponentLines.append(contentsOf: lines)
+        guard componentFlushTask == nil else { return }
+        componentFlushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard !Task.isCancelled else { return }
+            flushPendingComponentLines()
+        }
+    }
+
+    private func flushPendingComponentLines() {
+        componentFlushTask?.cancel()
+        componentFlushTask = nil
+        guard !pendingComponentLines.isEmpty else { return }
+        componentLog.append(contentsOf: pendingComponentLines)
+        pendingComponentLines.removeAll(keepingCapacity: true)
     }
 
     private func stream(_ args: [String], title: String) async {
