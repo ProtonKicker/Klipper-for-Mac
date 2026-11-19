@@ -14,9 +14,24 @@ struct SetupSheet: View {
                 Spacer()
                 if running { ActivityIndicator() }
             }
-            LogTextView(text: lines.joined(separator: "\n"), follow: true)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines.indices, id: \.self) { index in
+                            Text(lines[index])
+                                .font(.system(size: 11, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        Color.clear.frame(height: 1).id("end")
+                    }
+                    .padding(6)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack {
                 Spacer()
                 Button(running ? "Running…" : "Done", action: onClose)

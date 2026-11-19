@@ -33,8 +33,11 @@ def _clean_env():
 def test_bundled_launcher_uses_adjacent_runtime(tmp_path):
     """The launcher resolves its runtime beside itself, never from PATH."""
     assert LAUNCHER_SOURCE.is_file(), "GUI bundle needs a bundled CLI launcher"
-    cli = tmp_path / "CLI"
+    cli = tmp_path / "Contents" / "Resources" / "CLI"
     (cli / "bin").mkdir(parents=True)
+    helper = cli.parent / "KlipperCam"
+    helper.write_text("#!/bin/sh\\nexit 0\\n")
+    helper.chmod(0o755)
     launcher = cli / "bin" / "klipperformac"
     shutil.copy2(LAUNCHER_SOURCE, launcher)
     launcher.chmod(0o755)
@@ -47,6 +50,7 @@ def test_bundled_launcher_uses_adjacent_runtime(tmp_path):
         'printf "ARGS=%s\\n" "$*"\n'
         'printf "PYTHONPATH=%s\\n" "$PYTHONPATH"\n'
         'printf "PY=%s\\n" "$0"\n'
+        'printf "CAM=%s\\n" "$KLIPPERFORMAC_CAM_BIN"\n'
     )
     fake_python.chmod(0o755)
 
@@ -62,6 +66,7 @@ def test_bundled_launcher_uses_adjacent_runtime(tmp_path):
     assert "ARGS=-m klipperformac --help" in proc.stdout
     assert f"PYTHONPATH={cli / 'lib'}" in proc.stdout
     assert str(fake_python) in proc.stdout
+    assert f"CAM={helper}" in proc.stdout
 
     shutil.rmtree(cli / "runtimes" / HOST_ARCH)
     missing = subprocess.run(
@@ -128,6 +133,24 @@ def test_gui_prefers_bundle_over_path():
     resolver = source.split("static func resolveCLI", 1)[1].split("// MARK: - public", 1)[0]
     assert "resourceURL" in resolver
     assert 'environment["PATH"]' not in resolver
+
+
+def test_agent_experiment_has_printer_recording_settings_panes():
+    """The merged experimental app exposes all three requested panes."""
+    source = (
+        ROOT / "KlipperMac" / "Sources" / "KlipperMac" / "Views" / "ContentView.swift"
+    ).read_text()
+    assert 'case camera = "Recording"' in source
+    assert "CameraView()" in source
+    assert 'case printer = "Printer"' in source
+    assert 'case settings = "Settings"' in source
+
+
+def test_camera_helper_is_bundled_and_not_installed_globally():
+    """Release build ships the helper in Resources without modifying HOME."""
+    source = (ROOT / "KlipperMac" / "build-app.sh").read_text()
+    assert 'install_cam "$APP/Contents/Resources/KlipperCam"' in source
+    assert 'install_cam "$HOME/.klipperformac/bin/KlipperCam"' not in source
 
 
 @pytest.mark.skipif(not os.environ.get("KLIPPERFORMAC_TEST_APP"), reason="no built app under test")

@@ -18,7 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "KlipperMac" / "dist" / "Klipper for Mac.app"
 ZIP = ROOT / "KlipperMac" / "dist" / "Klipper-for-Mac.zip"
-EXPECTED_FLOORS = {"x86_64": "10.15", "arm64": "11.0"}
+EXPECTED_RUNTIME_FLOORS = {"x86_64": "10.15", "arm64": "11.0"}
+# The merged experimental GUI uses SwiftUI APIs that need macOS 13, so its
+# universal slices are both built at 13.0; the bundled CLI runtimes keep the
+# older 10.15/11.0 floors.
+EXPECTED_GUI_FLOORS = {"x86_64": "13.0", "arm64": "13.0"}
 
 
 def check(ok, message):
@@ -89,7 +93,7 @@ def verify_app(app):
     ):
         check((cli / rel).is_file(), f"bundled CLI file: {rel}")
 
-    for arch, floor in EXPECTED_FLOORS.items():
+    for arch, floor in EXPECTED_RUNTIME_FLOORS.items():
         root = cli / "runtimes" / arch
         python = root / "bin" / "python3.12"
         check(python.is_file(), f"{arch}: bundled python3.12")
@@ -126,7 +130,7 @@ def verify_app(app):
                     f"{arch}: {label} links only system libraries {external}",
                 )
 
-    # GUI stays universal with the original deployment floors.
+    # GUI stays universal with the merged experimental app's deployment floor.
     gui = app / "Contents" / "MacOS" / "KlipperMac"
     check(gui.is_file(), "universal GUI binary exists")
     if shutil.which("lipo"):
@@ -136,8 +140,11 @@ def verify_app(app):
         info = run(["file", str(gui)]).stdout.strip()
         check("universal" in info, f"file(1) reports {info}")
     check(
-        sorted(minos(gui)) == ["10.15", "11.0"], f"GUI slices keep floors 10.15/11.0: {minos(gui)}"
+        sorted(minos(gui)) == sorted(set(EXPECTED_GUI_FLOORS.values())),
+        f"GUI slices keep floors {sorted(set(EXPECTED_GUI_FLOORS.values()))}: {minos(gui)}",
     )
+    camera_helper = app / "Contents" / "Resources" / "KlipperCam"
+    check(camera_helper.is_file(), "bundled KlipperCam camera helper exists")
 
     if shutil.which("codesign"):
         signed = run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])
@@ -226,7 +233,7 @@ def verify_zip(zip_path, app_name):
             # Utility / ditto / unzip do. Mirror that only for the fallback.
             if not shutil.which("ditto"):
                 launcher.chmod(0o755)
-                for arch in EXPECTED_FLOORS:
+                for arch in EXPECTED_RUNTIME_FLOORS:
                     (
                         extracted
                         / "Contents"

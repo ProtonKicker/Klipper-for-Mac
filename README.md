@@ -16,9 +16,9 @@ Download `Klipper-for-Mac.zip` from
 drag **Klipper for Mac.app** into Applications, and launch it. The ZIP contains
 a working `klipperformac` CLI **and its own Python 3.12 runtime** for both
 architectures — no separate CLI installer, no separate Python, no Homebrew
-Python, and no `scripts/install.sh` are needed. The universal GUI still targets
-**macOS 10.15+ (Intel)** and **11+ (Apple Silicon)**; the bundled Intel runtime
-targets 10.15 and the Apple Silicon runtime targets 11.0.
+Python, and no `scripts/install.sh` are needed. The universal GUI targets
+**macOS 13+** (Ventura or newer); the bundled CLI runtimes keep older floors
+(**10.15+ Intel / 11+ Apple Silicon**).
 
 In the app choose **Printer → Setup → Install stack**. That first-time step
 still requires these *system* prerequisites (the app shows a checklist and
@@ -96,7 +96,7 @@ off at the café.
 
 | command | what it does |
 |---|---|
-| `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify |
+| `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify (`--with-shaper` builds the Python 3.14 shaper venv too) |
 | `up` / `down` / `restart` | start/stop the stack (`caffeinate` keeps Mac awake) |
 | `killall` | force-kill the stack plus stray leftovers |
 | `status` | service state, pinned versions, available updates |
@@ -104,20 +104,28 @@ off at the café.
 | `serial` | list USB serials; `--auto`/`--set PATH` writes `[mcu] serial:` into printer.cfg |
 | `data` | show data folder; `--set PATH` moves everything there |
 | `presets` | config presets (`--save/--use/--import`, auto-backup) |
+| `backup create/list/verify/restore/prune` | archive the whole data folder to `data/backups/`, verify an archive actually restores, restore it, keep the newest 10 |
 | `ui [fluidd\|mainsail]` | switch the default dashboard and open it |
 | `gcode …` / `--status` | send G-code / query printer state |
+| `cam on/off/status/list/snapshot/build/config` | Mac or iPhone camera streamed to the dashboard (localhost-only) |
 | `logs [klipper\|moonraker] [-f]` | tail logs |
 | `update [--apply]` | check upstream; re-fetch pinned tags and rebuild (never automatic) |
 | `doctor` / `selftest` | environment / end-to-end link checks |
+| `timing [--json]` | read-only scheduling + power telemetry: what macOS is giving klippy right now (safe mid-print; `doctor` prints the short form) |
 | `uninstall` | remove everything; asks before deleting the data folder (`--data`/`--keep-data`) |
 
 ## Where things live
 
-- `~/Documents/Klipper for Mac/` — **your files**: configs, presets, g-codes,
-  logs, web UIs (`klipperformac data --set PATH` to move it).
-- `~/.klipperformac/` — app internals (checkouts, venv); deleting it
-  factory-resets while your data survives. `uninstall` removes both, asking
-  first about the data folder.
+- `~/.klipperformac/data/` — **your files**: configs, presets, g-codes,
+  logs, web UIs (`klipperformac data --set PATH` to move it). Newer installs
+  keep Documents out of the loop entirely, so macOS never asks the app for
+  folder permission. Existing installs that already have
+  `~/Documents/Klipper for Mac` keep using it — nothing is moved on you
+  without you asking.
+- `~/.klipperformac/` — app internals (checkouts, venvs, camera helper, data).
+  `klipperformac uninstall` removes it all, asking first about the data
+  folder — and when you say keep, it moves the data folder out safely
+  beforehand.
 
 ## How it works
 
@@ -129,31 +137,47 @@ tolerates hundreds of ms of host latency; macOS delivers sub-millisecond.
 The one rule: **the Mac must stay awake while printing** — `up` runs
 `caffeinate` for you; keep it on AC.
 
+## macOS hardware limits
+
+CAN bus at runtime, host GPIO/I2C/SPI, and Linux-style real-time priorities
+are **not possible on macOS** — verified against the pinned upstream sources,
+with the exact code paths and the working alternatives (USB-CDC firmware
+flashing, second USB MCU, network-pluggable power/sensor devices) documented
+in [docs/macos-hardware-limits.md](docs/macos-hardware-limits.md).
+
 ## Limitations
 
 - Not supported by the Klipper project ("possible but unsupported"); Klipper
   bugs still go upstream.
-- `SHAPER_CALIBRATE` needs Python 3.14: `KLIPPERFORMAC_PYTHON=…3.14 klipperformac setup`.
-- No CAN bus, host GPIO, KlipperScreen, or webcam in v1.
+- No CAN bus, host GPIO, or KlipperScreen equivalent yet. (True Mac-native
+  GPIO is impossible — no pin headers exposed to software; the standard Klipper
+  answer applies: any $5 Arduino/STM32 flashed as an extra `[mcu]` works.)
 - `.app` GUI is ad-hoc signed; right-click → Open on first launch.
 
-## For developers
+## Input-shaper calibration (SHAPER_CALIBRATE)
 
-The same checks CI runs locally:
+Klipper computes shaper fits with numpy **inside** the klippy process, so that
+one process needs a Python that has numpy. Klipper for Mac builds a dedicated
+Python 3.14 venv (`~/.klipperformac/venv-shaper`) automatically when your
+`printer.cfg` mentions `[input_shaper]` / `[resonance_tester]` — no env vars,
+no manual steps. `klipperformac setup --with-shaper` forces it;
+`klipperformac status` and `doctor` show which interpreter klippy will run on.
+Moonraker always stays on the main venv, and upstream files are still pristine.
+
+## Webcam (Mac or iPhone camera)
 
 ```sh
-make lint       # ruff check + format (klipperformac, bin, scripts, tests)
-make test       # pytest — offline CLI unit/integration suite
-make build      # universal GUI build, macOS 10.15 floor (swiftc
-                #   -warnings-as-errors rejects newer APIs by construction)
-make zip        # build + emit dist/Klipper-for-Mac.zip
-make verify     # build + verify app, ZIP, both runtimes, CLI --help
-make smoke      # import + CLI sanity
+klipperformac cam build     # one time: compiles the Swift camera helper
+klipperformac cam on        # AVFoundation -> MJPEG at localhost:8082
+klipperformac cam off       # off = nothing streams (privacy by default)
 ```
 
-`pyproject.toml` pins the ruff/pytest behavior; `requirements-dev.txt` pins the
-tool versions. The pytest suite is fully offline (no network, no printer
-hardware) and fast — everything touches a throwaway `KLIPPERFORMAC_HOME`.
+Mainsail/Fluidd pick the camera up via Moonraker's standard `[webcam]` config
+(no Moonraker edits). Supports built-in FaceTime cameras, USB UVC webcams, and
+iPhone Continuity Camera. `klipperformac cam snapshot` grabs one frame (saved
+to the data folder, great for timelapses); the `.app` has a Camera pane with a
+live preview. The stream binds to localhost only — other devices can't watch
+unless you deliberately turn LAN access on.
 
 ## License
 

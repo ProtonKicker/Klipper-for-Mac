@@ -15,6 +15,9 @@ while [ -L "$SELF" ]; do
 done
 BIN=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd -P)
 CLI=$(CDPATH= cd -- "$BIN/.." && pwd -P)
+RESOURCES=$(CDPATH= cd -- "$CLI/.." && pwd -P)
+KLIPPERFORMAC_CAM_BIN="$RESOURCES/KlipperCam"
+export KLIPPERFORMAC_CAM_BIN
 
 ARCH=$(uname -m)
 case "$ARCH" in

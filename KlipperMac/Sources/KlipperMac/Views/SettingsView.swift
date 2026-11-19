@@ -40,14 +40,10 @@ struct SettingsView: View {
             sectionHeader("Components")
             if env.installed {
                 let pins = env.pins
-                FieldRow(label: "Klipper", value: pinText(pins, "klipper"))
-                FieldRow(label: "Moonraker", value: pinText(pins, "moonraker"))
-                FieldRow(label: "Mainsail", value: pinText(pins, "mainsail"))
-                FieldRow(label: "Fluidd", value: pinText(pins, "fluidd"))
-            } else {
-                Text("Not installed yet — run Setup first.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+                LabeledContent("Klipper", value: SettingsPresentation.pinText(pins, component: "klipper"))
+                LabeledContent("Moonraker", value: SettingsPresentation.pinText(pins, component: "moonraker"))
+                LabeledContent("Mainsail", value: SettingsPresentation.pinText(pins, component: "mainsail"))
+                LabeledContent("Fluidd", value: SettingsPresentation.pinText(pins, component: "fluidd"))
             }
             HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }
@@ -60,8 +56,8 @@ struct SettingsView: View {
                 Spacer()
             }
             if !model.updateLines.isEmpty {
-                ForEach(Array(model.updateLines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
+                ForEach(model.updateLines.indices, id: \.self) { index in
+                    Text(model.updateLines[index])
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,15 +70,6 @@ struct SettingsView: View {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         return "\(v) (\(b))"
-    }
-
-    private func pinText(_ pins: [String: String], _ comp: String) -> String {
-        let pin = pins[comp] ?? "?"
-        let isSHA = pin.count == 40 && pin.allSatisfy { $0.isHexDigit }
-        if let sha = pins[comp + "_sha"], !sha.isEmpty {
-            return (isSHA ? String(sha.prefix(7)) : pin) + "  \u{00B7}  " + String(sha.prefix(7))
-        }
-        return isSHA ? String(pin.prefix(7)) + " (commit)" : pin
     }
 
     // MARK: - data folder

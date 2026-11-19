@@ -1,65 +1,53 @@
-name: CI
+name: ci
 
 on:
   push:
-    branches: [main, 10.15-support]
   pull_request:
 
 jobs:
-  lint:
-    name: Python lint + format (ruff)
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
-      - run: ruff check klipperformac bin scripts tests
-      - run: ruff format --check klipperformac bin scripts tests --quiet
+  qa-and-build:
+    runs-on: macos-latest
 
-  test:
-    name: CLI test suite (pytest)
-    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
-      - run: python -m pytest
 
-  build-gui:
-    name: GUI + bundled CLI package @ macOS 10.15 floor
-    # macos-15 (arm) has a guaranteed-modern Xcode; the script cross-compiles
-    # both slices, so the Intel-10.15 floor is still produced and verified.
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
-      - uses: astral-sh/setup-uv@v5
+
+      - name: Install shellcheck
+        run: brew install shellcheck
+
+      - name: Create QA venv
+        run: python3 -m venv .venv-test
+
+      - name: Install QA dependencies
+        run: .venv-test/bin/python -m pip install -U pip && .venv-test/bin/python -m pip install -r requirements-dev.txt
+
+      - name: Install uv (for bundled CPython runtimes)
+        uses: astral-sh/setup-uv@v5
+
       - name: Fetch relocatable CPython runtimes
         run: ./scripts/fetch-python-runtimes.sh
+
       - name: Packaging contract tests
-        run: python -m pytest tests/test_gui_bundle.py -q
-      - name: Build universal app + release ZIP
-        run: KLIPPERFORMAC_ZIP=1 ./KlipperMac/build-app.sh
-      - name: Verify slice floors (Intel 10.15 / Apple Silicon 11.0)
-        run: |
-          # Assert both minimum OS versions explicitly.
-          MINOS=$(vtool -show-build "KlipperMac/dist/Klipper for Mac.app/Contents/MacOS/KlipperMac" | awk '/minos/{print $2}' | sort -u)
-          echo "universal slices minos: $MINOS"
-          printf '%s\n' "$MINOS" | grep -qx '10.15'
-          printf '%s\n' "$MINOS" | grep -qx '11.0'
-      - name: Verify bundled CLI, archive and clean-PATH --help
-        run: python scripts/verify_bundle.py "KlipperMac/dist/Klipper for Mac.app"
+        run: .venv-test/bin/python -m pytest tests/test_gui_bundle.py -q
+
+      - name: Run offline QA gate
+        run: QA_REQUIRE_SHELLCHECK=1 sh scripts/qa/full.sh
+
+      - name: Build macOS app + release ZIP
+        working-directory: KlipperMac
+        run: KLIPPERFORMAC_ZIP=1 ./build-app.sh
+
+      - name: Verify bundled CLI, camera helper, archive and clean-PATH --help
+        run: .venv-test/bin/python scripts/verify_bundle.py "KlipperMac/dist/Klipper for Mac.app"
+
       - uses: actions/upload-artifact@v4
         with:
           name: Klipper-for-Mac-universal.app
           path: KlipperMac/dist/Klipper for Mac.app
+
       - uses: actions/upload-artifact@v4
         with:
           name: Klipper-for-Mac.zip

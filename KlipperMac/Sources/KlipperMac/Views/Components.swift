@@ -111,17 +111,27 @@ struct FieldRow: View {
 
 struct StatusBadge: View {
     let overall: StackSnapshot.Overall
+    private var presentation: StatusBadgePresentation {
+        AppFeedback.statusBadgePresentation(overall: overall)
+    }
+
+    private var color: Color {
+        switch presentation.tone {
+        case .positive:
+            return .green
+        case .warning:
+            return .orange
+        case .neutral:
+            return .secondary
+        }
+    }
 
     var body: some View {
-        let color: Color = overall == .running ? .green
-            : (overall == .notResponding ? .orange : .secondary)
-        let text = overall == .running ? "Running"
-            : (overall == .notResponding ? "Not responding" : "Stopped")
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
-            Text(text)
+            Text(presentation.text)
                 .font(.callout.weight(.medium))
         }
         .foregroundColor(.primary)
@@ -132,13 +142,25 @@ struct StatusBadge: View {
 struct MessageBanner: View {
     @ObservedObject var notifier: Notifier
 
+    private var banner: BannerPresentation? {
+        AppFeedback.bannerPresentation(message: notifier.message,
+                                       isError: notifier.isError)
+    }
+
+    private var iconColor: Color {
+        banner?.tone == .warning ? FlatPalette.amber : FlatPalette.green
+    }
+
+    private var iconKind: FlatIconKind {
+        banner?.tone == .warning ? .warning : .check
+    }
+
     var body: some View {
-        if let m = notifier.message {
+        if let banner {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    FlatIcon(kind: notifier.isError ? .warning : .check, size: 14,
-                             color: notifier.isError ? FlatPalette.amber : FlatPalette.green)
-                    Text(notifier.isError ? "Problem" : "Done")
+                    FlatIcon(kind: iconKind, size: 14, color: iconColor)
+                    Text(banner.title)
                         .font(.caption.bold())
                     Spacer()
                     Button {
@@ -148,7 +170,7 @@ struct MessageBanner: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(m)
+                Text(banner.message)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(6)
@@ -157,11 +179,11 @@ struct MessageBanner: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.primary.opacity(0.06))
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
+                    .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
             )
             .padding(8)
         }

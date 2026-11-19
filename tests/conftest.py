@@ -1,18 +1,16 @@
-"""Shared fixtures: rebind klipperformac to a throwaway home + data dir.
+"""Offline test harness: every test runs against a throwaway KLIPPERFORMAC_HOME.
 
-This is the only harness for the 10.15-support branch's test suite. It
-intentionally only reloads modules that exist in the shipping CLI.
+The stack's modules read paths at import time, so fixtures set env vars and
+reload the whole module graph rather than monkeypatching constants in place.
 """
-
 import importlib
+import os
 import types
 
 import pytest
 
-# Modules in the lean CLI on this branch. Tests that touch flash/mcus/
-# backup/battery/cam live on the agent-experiment branch; they're not
-# applicable here.
-MODULES = ("paths", "configgen", "detect", "versions", "process", "installer", "cli")
+MODULES = ("paths", "configgen", "detect", "versions", "shaper", "process",
+           "cam", "installer", "cli", "batteryguard")
 
 
 @pytest.fixture
@@ -25,11 +23,8 @@ def stack(tmp_path, monkeypatch):
     data = tmp_path / "data"
     monkeypatch.setenv("KLIPPERFORMAC_HOME", str(home))
     monkeypatch.setenv("KLIPPERFORMAC_DATA", str(data))
-    for var in (
-        "KLIPPERFORMAC_WEB_PORT",
-        "KLIPPERFORMAC_FLUIDD_PORT",
-        "KLIPPERFORMAC_MOONRAKER_PORT",
-    ):
+    for var in ("KLIPPERFORMAC_WEB_PORT", "KLIPPERFORMAC_FLUIDD_PORT",
+                "KLIPPERFORMAC_MOONRAKER_PORT", "KLIPPERFORMAC_CAM_PORT"):
         monkeypatch.delenv(var, raising=False)
     ns = types.SimpleNamespace()
     for name in MODULES:
@@ -42,3 +37,14 @@ def stack(tmp_path, monkeypatch):
     ns.paths.CONFIG.mkdir(parents=True, exist_ok=True)
     ns.paths.PRESETS.mkdir(parents=True, exist_ok=True)
     return ns
+
+
+@pytest.fixture
+def moonraker_generated(stack):
+    """The shipped generated moonraker.conf written verbatim; returns text."""
+    text = stack.configgen.MOONRAKER_CFG.format(
+        host="127.0.0.1", moonraker_port=7125,
+        uds_address=str(stack.paths.API_SOCKET), web_port=8080,
+        fluidd_port=8081)
+    stack.paths.MOONRAKER_CONF.write_text(text)
+    return text
