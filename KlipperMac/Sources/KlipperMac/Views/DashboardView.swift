@@ -191,7 +191,8 @@ struct DashboardView: View {
                 Button(action: { Task { await model.startStack() } }) {
                     Text("Start")
                         .frame(width: stackButtonWidth)
-                        .compatBordered()
+                        .foregroundColor(.green)
+                        .compatBorderedProminent(tint: .green)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.busy || model.snapshot.anyUp || !model.env.installed)

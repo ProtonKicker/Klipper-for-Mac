@@ -53,7 +53,7 @@ struct KlipperForMacMain {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var model: AppModel?
 
@@ -74,6 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "Klipper for Mac"
+            window.isReleasedWhenClosed = false
+            window.delegate = self
             window.contentView = NSHostingView(rootView: root)
             window.setContentSize(NSSize(width: 880, height: 620))
             window.center()
@@ -89,6 +91,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // Quit when nothing is running; if the stack is up, keep the app alive
+        // with the UI hidden so services continue in the background.
+        !StackReader.readSync(env: KEnvironment.shared).anyUp
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Closing the window hides the UI while the stack runs; quit only when stopped.
+        if StackReader.readSync(env: KEnvironment.shared).anyUp {
+            sender.orderOut(nil)
+            return false
+        }
+        return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        return true
     }
 }
