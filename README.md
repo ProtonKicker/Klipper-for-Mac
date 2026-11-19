@@ -35,6 +35,11 @@ pane, and press Start. Fluidd is at **http://localhost:8081** (Mainsail :8080).
 `printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
 with your printer's real config (the Presets picker can import one).
 
+The app includes Printer, Recording, and Settings panes. **Settings → About**
+can check for and install app updates from GitHub Releases. Closing the window
+hides the UI while the stack keeps running if a Klipper instance is started; the
+app fully quits only when the stack is stopped.
+
 The app is ad-hoc signed (notarization planned), so right-click → **Open**
 works around the first-launch warning. It resolves its bundled CLI from inside
 its own bundle, so it works from any install location, not just /Applications.
@@ -98,11 +103,11 @@ off at the café.
 | command | what it does |
 |---|---|
 | `setup` | clone pinned Klipper/Moonraker, fetch Fluidd + Mainsail, build venv, verify (`--with-shaper` builds the Python 3.14 shaper venv too) |
-| `up` / `down` / `restart` | start/stop the stack (`caffeinate` keeps Mac awake) |
+| `up` / `down` / `restart` | start/stop the stack (`caffeinate` keeps Mac awake). `up`/restart best-effort auto-sync USB MCU serial ports into `printer.cfg` (only matching `serial:` lines) before Klipper reads it |
 | `killall` | force-kill the stack plus stray leftovers |
 | `status` | service state, pinned versions, available updates |
 | `lan [on\|off]` | show/toggle access for other devices |
-| `serial` | list USB serials; `--auto`/`--set PATH` writes `[mcu] serial:` into printer.cfg |
+| `serial` | list USB serials/MCU sections; `--auto`/`--set PATH [MCU]` writes a section's `serial:`; `--sync` resolves ports by USB identity. Serials are also auto-synced best-effort before stack start/repair and on Klipper `RESTART`/`FIRMWARE_RESTART` (only matching MCU `serial:` lines change) |
 | `data` | show data folder; `--set PATH` moves everything there |
 | `presets` | config presets (`--save/--use/--import`, auto-backup) |
 | `backup create/list/verify/restore/prune` | archive the whole data folder to `data/backups/`, verify an archive actually restores, restore it, keep the newest 10 |
@@ -176,9 +181,9 @@ klipperformac cam off       # off = nothing streams (privacy by default)
 Mainsail/Fluidd pick the camera up via Moonraker's standard `[webcam]` config
 (no Moonraker edits). Supports built-in FaceTime cameras, USB UVC webcams, and
 iPhone Continuity Camera. `klipperformac cam snapshot` grabs one frame (saved
-to the data folder, great for timelapses); the `.app` has a Camera pane with a
-live preview. The stream binds to localhost only — other devices can't watch
-unless you deliberately turn LAN access on.
+to the data folder, great for timelapses); the `.app` has a Recording/Camera pane
+with camera controls and a live preview. The stream binds to localhost only — other
+devices can't watch unless you deliberately turn LAN access on.
 
 ## License
 

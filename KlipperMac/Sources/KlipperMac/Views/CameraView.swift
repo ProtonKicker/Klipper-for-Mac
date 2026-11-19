@@ -100,7 +100,6 @@ struct CameraView: View {
                 }
                 Card { cameraSection }
                 Card { recordingSection }
-                Card { previewSection }
                 Card { snapshotSection }
                 Card { settingsSection }
                 Card { privacySection }
@@ -149,6 +148,23 @@ struct CameraView: View {
                 .buttonStyle(.plain)
                 .disabled(model.busy || !env.isCLIInstalled)
                 Spacer()
+            }
+
+            if camOn {
+                CamStreamView(address: streamURL)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 10) {
+                    FlatIcon(kind: .camera, size: 34, color: FlatPalette.blue)
+                    Text(placeholderText)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
             }
 
             if !env.isCLIInstalled { installHint }
@@ -294,30 +310,6 @@ struct CameraView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: - live picture
-
-    @ViewBuilder private var previewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Preview")
-            if camOn {
-                CamStreamView(address: streamURL)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                VStack(spacing: 10) {
-                    FlatIcon(kind: .camera, size: 34, color: FlatPalette.blue)
-                    Text(placeholderText)
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
-            }
-        }
     }
 
     private var placeholderText: String {
