@@ -26,10 +26,20 @@ struct SettingsView: View {
             sectionHeader("About")
             FieldRow(label: "App version", value: appVersion)
             HStack(spacing: 8) {
-                Button("Check for app update") { Task { await model.updateApp() } }
-                    .disabled(model.appUpdateBusy)
+                Button(model.appUpdateButtonTitle) { Task { await model.updateApp() } }
+                    .disabled(model.appUpdateBusy || (model.availableAppUpdate != nil && model.snapshot.anyUp))
+                if model.availableAppUpdate != nil && !model.appUpdateBusy {
+                    Button("Check again") { Task { await model.checkForAppUpdate() } }
+                        .disabled(model.appUpdateBusy)
+                }
                 if model.appUpdateBusy { ActivityIndicator() }
                 Spacer()
+            }
+            if model.availableAppUpdate != nil && model.snapshot.anyUp {
+                Text("Stop the Klipper stack to install the update. The app will restart to finish when the stack is not running.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !model.appUpdateStatus.isEmpty {
                 Text(model.appUpdateStatus)

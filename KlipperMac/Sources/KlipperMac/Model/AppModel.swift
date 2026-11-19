@@ -746,7 +746,7 @@ private func _syncNamesFromReport(_ report: SerialReport) {
 
     // MARK: - in-app update (GitHub releases)
 
-    private struct GHRelease {
+    struct GHRelease {
         let tag: String
         let name: String
         let version: String
@@ -754,14 +754,25 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         let assetURL: URL
     }
 
-    func updateApp() async {
+    @Published var availableAppUpdate: GHRelease?
+
+    var availableAppUpdateLabel: String? {
+        guard let r = availableAppUpdate else { return nil }
+        let v = r.version.isEmpty ? r.tag : r.version
+        return r.prerelease ? "\(v) (pre-release)" : v
+    }
+
+    var appUpdateButtonTitle: String {
+        availableAppUpdate == nil ? "Check for updates" : "Update and Restart"
+    }
+
+    func checkForAppUpdate() async {
         guard !appUpdateBusy else { return }
         appUpdateBusy = true
         defer { appUpdateBusy = false }
 
         let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
         appUpdateStatus = "Checking for updates…"
-
         do {
             guard let releasesURL = URL(string: "https://api.github.com/repos/ProtonKicker/Klipper-for-Mac/releases?per_page=20") else {
                 appUpdateStatus = "Could not check for updates."
@@ -772,27 +783,60 @@ private func _syncNamesFromReport(_ report: SerialReport) {
             req.setValue("KlipperForMac-Updater", forHTTPHeaderField: "User-Agent")
             req.timeoutInterval = 20
             let data = try await fetchData(request: req)
-
             guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                 appUpdateStatus = "Could not read release info."
                 return
             }
-
             let release = arr.compactMap { parseRelease($0) }.first { isNewer($0.version, than: current) }
-            guard let release else {
+            if let release {
+                availableAppUpdate = release
+                let label = availableAppUpdateLabel ?? release.tag
+                appUpdateStatus = "Update available: \(label). Restart to install (stop the Klipper stack first if it’s running)."
+            } else {
+                availableAppUpdate = nil
                 appUpdateStatus = "You're up to date (v\(current))."
-                return
             }
+        } catch {
+            availableAppUpdate = nil
+            appUpdateStatus = "Update check failed: \(error.localizedDescription)"
+        }
+    }
 
+    func installAppUpdate() async {
+        guard let release = availableAppUpdate else {
+            await checkForAppUpdate()
+            return
+        }
+        guard !appUpdateBusy else { return }
+        let stackRunning = StackReader.readSync(env: env).anyUp || snapshot.anyUp
+        if stackRunning {
+            appUpdateStatus = "Stop the Klipper stack before installing the update (it will restart the app when finished)."
+            return
+        }
+        appUpdateBusy = true
+        defer { appUpdateBusy = false }
+        do {
             appUpdateStatus = "Downloading \(release.name.isEmpty ? release.tag : release.name)…"
             let zipURL = try await downloadFile(from: release.assetURL)
             defer { try? FileManager.default.removeItem(at: zipURL) }
 
             appUpdateStatus = "Installing \(release.tag)…"
             try installDownloadedApp(zipURL: zipURL)
+            availableAppUpdate = nil
             appUpdateStatus = "Restarting to finish update…"
         } catch {
             appUpdateStatus = "Update failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// One-click flow: check for an update, then install and restart if available
+    /// (only when the Klipper stack is not running).
+    func updateApp() async {
+        if availableAppUpdate == nil {
+            await checkForAppUpdate()
+        }
+        if availableAppUpdate != nil {
+            await installAppUpdate()
         }
     }
 
@@ -893,9 +937,11 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         try fm.copyItem(at: newApp, to: staged)
         _ = try? fm.removeItem(at: work)
 
+        // Helper waits for this process to exit, replaces the app bundle, and relaunches it.
         let pid = ProcessInfo.processInfo.processIdentifier
         let script = """
         while kill -0 \(pid) >/dev/null 2>&1; do sleep 0.2; done
+        sleep 0.3
         rm -rf '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))'
         ditto '\(staged.path.replacingOccurrences(of: "'", with: "'\\''"))' '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))'
         rm -rf '\(staged.path.replacingOccurrences(of: "'", with: "'\\''"))'
@@ -907,7 +953,11 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         helper.arguments = ["-c", script]
         try helper.run()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        // Allow the relaunch quit even if normal close/quit behavior would hide the UI.
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.allowTerminateForUpdate = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             NSApp.terminate(nil)
         }
     }
