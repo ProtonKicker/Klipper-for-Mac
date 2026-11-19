@@ -137,6 +137,10 @@ extension View {
     }
 }
 
+func compatNSColor(_ color: NSColor) -> Color {
+    Color(color)
+}
+
 /// Clickable control that never draws the macOS focus ring/highlight box.
 /// Used for small glyph actions (e.g. Refresh) where the blue focus ring is noisy.
 struct NoFocusButton<Label: View>: NSViewRepresentable {

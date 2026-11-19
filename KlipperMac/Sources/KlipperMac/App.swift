@@ -91,22 +91,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // Quit when nothing is running; if the stack is up, keep the app alive
-        // with the UI hidden so services continue in the background.
-        !StackReader.readSync(env: KEnvironment.shared).anyUp
+        // Keep the process alive when the UI is hidden and services are running.
+        false
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         // Closing the window hides the UI while the stack runs; quit only when stopped.
         if StackReader.readSync(env: KEnvironment.shared).anyUp {
             sender.orderOut(nil)
+            NSApp.setActivationPolicy(.accessory)
             return false
         }
         return true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // If a Klipper instance/service is running, hide UI but keep services on.
+        // Fully quit only when nothing is running.
+        if StackReader.readSync(env: KEnvironment.shared).anyUp {
+            if let w = window ?? NSApp.windows.first {
+                w.orderOut(nil)
+            }
+            NSApp.setActivationPolicy(.accessory)
+            return .terminateCancel
+        }
+        NSApp.setActivationPolicy(.regular)
+        return .terminateNow
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
+            NSApp.setActivationPolicy(.regular)
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
