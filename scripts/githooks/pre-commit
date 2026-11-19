@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$ROOT"
+
+if [ "${SKIP_QA:-0}" = "1" ]; then
+    printf 'pre-commit: SKIP_QA=1 -> skipping qa-fast\n'
+    exit 0
+fi
+
+exec sh scripts/qa/fast.sh

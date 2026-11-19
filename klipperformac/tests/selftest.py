@@ -16,10 +16,11 @@ ORIGIN = paths.web_url()
 
 
 def check_static():
+    ui = paths.default_ui()
     with urllib.request.urlopen(paths.web_url() + "/", timeout=8) as r:
         body = r.read().decode(errors="replace")
     if "<html" not in body.lower():
-        raise AssertionError("mainsail index is not HTML")
+        raise AssertionError("{} index is not HTML".format(ui))
     return r.status, len(body)
 
 
@@ -57,11 +58,13 @@ async def check_ws(url=None):
 
 def main():
     results = []
+    ui = paths.default_ui()
     try:
         status, n = check_static()
-        results.append((f"mainsail static {status} ({n} bytes)", True))
+        results.append(("{}, {} static {} ({} bytes)".format(
+            ui, paths.ui_url(ui), status, n), True))
     except Exception as e:
-        results.append(("mainsail static: " + str(e)[:100], False))
+        results.append(("{} static: ".format(ui) + str(e)[:100], False))
     try:
         status = check_rest()
         results.append((f"moonraker REST {status} klippy_connected", True))

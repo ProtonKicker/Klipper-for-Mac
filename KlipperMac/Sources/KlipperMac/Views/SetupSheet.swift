@@ -14,9 +14,14 @@ struct SetupSheet: View {
                 Spacer()
                 if running { ActivityIndicator() }
             }
-            LogTextView(text: lines.joined(separator: "\n"), follow: true)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            LogTextView(text: lines.joined(separator: "\n"), follow: running)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(compatNSColor(.textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
             HStack {
                 Spacer()
                 Button(running ? "Running…" : "Done", action: onClose)

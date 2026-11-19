@@ -1,0 +1,51 @@
+#!/bin/sh
+# Bundled CLI launcher for Klipper for Mac.app.
+# Resolves everything relative to this file so the app works from any install
+# location (Applications, a disk image, a temp unzip, ...) and never depends on
+# a separately installed `klipperformac` or a system Python.
+set -eu
+
+SELF="$0"
+while [ -L "$SELF" ]; do
+    L=$(readlink "$SELF")
+    case "$L" in
+        /*) SELF="$L" ;;
+        *) SELF=$(dirname "$SELF")/"$L" ;;
+    esac
+done
+BIN=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd -P)
+CLI=$(CDPATH= cd -- "$BIN/.." && pwd -P)
+RESOURCES=$(CDPATH= cd -- "$CLI/.." && pwd -P)
+KLIPPERFORMAC_CAM_BIN="$RESOURCES/KlipperCam"
+export KLIPPERFORMAC_CAM_BIN
+
+ARCH=$(uname -m)
+case "$ARCH" in
+    arm64|aarch64) RUNTIME_ARCH=arm64 ;;
+    x86_64|i386)   RUNTIME_ARCH=x86_64 ;;
+    *) echo "klipperformac: unsupported architecture: $ARCH" >&2; exit 127 ;;
+esac
+
+PYDIR="$CLI/runtimes/$RUNTIME_ARCH/bin"
+PY="$PYDIR/python3.12"
+if [ ! -x "$PY" ]; then
+    echo "klipperformac: bundled Python is missing for $ARCH ($PY)." >&2
+    echo "Reinstall Klipper for Mac.app from the release ZIP." >&2
+    exit 127
+fi
+if [ ! -f "$CLI/lib/klipperformac/__main__.py" ]; then
+    echo "klipperformac: bundled CLI sources are missing ($CLI/lib/klipperformac)." >&2
+    exit 127
+fi
+
+PYTHONPATH="$CLI/lib"
+export PYTHONPATH
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+# setup() creates its venv from this interpreter; keep it first so a Mac with
+# only the old system Python 3.9 still works without any extra install.
+export PATH="$PYDIR:$PATH"
+: "${KLIPPERFORMAC_PYTHON:=$PY}"
+export KLIPPERFORMAC_PYTHON
+
+exec "$PY" -m klipperformac "$@"

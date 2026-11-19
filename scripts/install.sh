@@ -1,5 +1,6 @@
 #!/bin/sh
-# curl-friendly one-liner installer for Klipper for Mac (CLI + TUI, no GUI bundle yet).
+# curl-friendly one-liner installer for terminal users (CLI + TUI).
+# The GUI release ZIP bundles its own CLI + Python; this script is optional.
 #   curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh
 set -e
 
