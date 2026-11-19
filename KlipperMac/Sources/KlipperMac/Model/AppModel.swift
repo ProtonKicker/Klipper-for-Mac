@@ -72,6 +72,10 @@ final class AppModel: ObservableObject {
 
     @Published var updateLines: [String] = []
 
+    // in-app app update (GitHub releases)
+    @Published var appUpdateStatus = ""
+    @Published var appUpdateBusy = false
+
     let env = KEnvironment.shared
     private var timer: Timer?
     private var clearTask: Task<Void, Never>?
@@ -738,5 +742,173 @@ private func _syncNamesFromReport(_ report: SerialReport) {
     func copyToPasteboard(_ s: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(s, forType: .string)
+    }
+
+    // MARK: - in-app update (GitHub releases)
+
+    private struct GHRelease {
+        let tag: String
+        let name: String
+        let version: String
+        let prerelease: Bool
+        let assetURL: URL
+    }
+
+    func updateApp() async {
+        guard !appUpdateBusy else { return }
+        appUpdateBusy = true
+        defer { appUpdateBusy = false }
+
+        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+        appUpdateStatus = "Checking for updates…"
+
+        do {
+            guard let releasesURL = URL(string: "https://api.github.com/repos/ProtonKicker/Klipper-for-Mac/releases?per_page=20") else {
+                appUpdateStatus = "Could not check for updates."
+                return
+            }
+            var req = URLRequest(url: releasesURL)
+            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            req.setValue("KlipperForMac-Updater", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 20
+            let data = try await fetchData(request: req)
+
+            guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                appUpdateStatus = "Could not read release info."
+                return
+            }
+
+            let release = arr.compactMap { parseRelease($0) }.first { isNewer($0.version, than: current) }
+            guard let release else {
+                appUpdateStatus = "You're up to date (v\(current))."
+                return
+            }
+
+            appUpdateStatus = "Downloading \(release.name.isEmpty ? release.tag : release.name)…"
+            let zipURL = try await downloadFile(from: release.assetURL)
+            defer { try? FileManager.default.removeItem(at: zipURL) }
+
+            appUpdateStatus = "Installing \(release.tag)…"
+            try installDownloadedApp(zipURL: zipURL)
+            appUpdateStatus = "Restarting to finish update…"
+        } catch {
+            appUpdateStatus = "Update failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func parseRelease(_ obj: [String: Any]) -> GHRelease? {
+        if obj["draft"] as? Bool == true { return nil }
+        guard let tag = obj["tag_name"] as? String else { return nil }
+        let name = (obj["name"] as? String) ?? tag
+        let prerelease = (obj["prerelease"] as? Bool) ?? false
+        let version = tag.hasPrefix("v") || tag.hasPrefix("V") ? String(tag.dropFirst()) : tag
+        guard let assets = obj["assets"] as? [[String: Any]] else { return nil }
+        for asset in assets {
+            guard let aname = asset["name"] as? String, aname == "Klipper-for-Mac.zip",
+                  let urlStr = asset["browser_download_url"] as? String,
+                  let url = URL(string: urlStr) else { continue }
+            return GHRelease(tag: tag, name: name, version: version, prerelease: prerelease, assetURL: url)
+        }
+        return nil
+    }
+
+    private func isNewer(_ remote: String, than local: String) -> Bool {
+        func parts(_ s: String) -> [Int] {
+            let core = s.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? s
+            let t = (core.hasPrefix("v") || core.hasPrefix("V")) ? String(core.dropFirst()) : core
+            return t.split(separator: ".").map { token in Int(token.filter { $0.isNumber }) ?? 0 }
+        }
+        let a = parts(remote), b = parts(local)
+        let n = max(a.count, b.count)
+        for i in 0..<n {
+            let av = i < a.count ? a[i] : 0
+            let bv = i < b.count ? b[i] : 0
+            if av != bv { return av > bv }
+        }
+        return false
+    }
+
+    private func fetchData(request: URLRequest) async throws -> Data {
+        try await withCheckedThrowingContinuation { cont in
+            let task = URLSession.shared.dataTask(with: request) { data, _, error in
+                if let error = error {
+                    cont.resume(throwing: error)
+                } else {
+                    cont.resume(returning: data ?? Data())
+                }
+            }
+            task.resume()
+        }
+    }
+
+    private func downloadFile(from url: URL) async throws -> URL {
+        try await withCheckedThrowingContinuation { cont in
+            var req = URLRequest(url: url)
+            req.setValue("KlipperForMac-Updater", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 300
+            let task = URLSession.shared.downloadTask(with: req) { tmp, _, error in
+                if let error = error {
+                    cont.resume(throwing: error)
+                    return
+                }
+                guard let tmp else {
+                    cont.resume(throwing: NSError(domain: "AppUpdate", code: 1, userInfo: [NSLocalizedDescriptionKey: "Download failed."]))
+                    return
+                }
+                let dest = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Klipper-for-Mac-update-\(UUID().uuidString).zip")
+                do {
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tmp, to: dest)
+                    cont.resume(returning: dest)
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+            task.resume()
+        }
+    }
+
+    private func installDownloadedApp(zipURL: URL) throws {
+        let fm = FileManager.default
+        let work = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("kfm-update-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+
+        let unzip = Process()
+        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        unzip.arguments = ["-x", "-k", zipURL.path, work.path]
+        try unzip.run()
+        unzip.waitUntilExit()
+        guard unzip.terminationStatus == 0 else {
+            throw NSError(domain: "AppUpdate", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not extract the update."])
+        }
+
+        let contents = (try? fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)) ?? []
+        guard let newApp = contents.first(where: { $0.pathExtension == "app" }) else {
+            throw NSError(domain: "AppUpdate", code: 3, userInfo: [NSLocalizedDescriptionKey: "Update package did not contain an app."])
+        }
+
+        let dest = Bundle.main.bundleURL
+        let staged = dest.deletingLastPathComponent().appendingPathComponent(".Klipper-for-Mac-update.app")
+        try? fm.removeItem(at: staged)
+        try fm.copyItem(at: newApp, to: staged)
+        _ = try? fm.removeItem(at: work)
+
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let script = """
+        while kill -0 \(pid) >/dev/null 2>&1; do sleep 0.2; done
+        rm -rf '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))'
+        ditto '\(staged.path.replacingOccurrences(of: "'", with: "'\\''"))' '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))'
+        rm -rf '\(staged.path.replacingOccurrences(of: "'", with: "'\\''"))'
+        xattr -dr com.apple.quarantine '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))' >/dev/null 2>&1 || true
+        open '\(dest.path.replacingOccurrences(of: "'", with: "'\\''"))'
+        """
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", script]
+        try helper.run()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApp.terminate(nil)
+        }
     }
 }

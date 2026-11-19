@@ -92,11 +92,10 @@ struct CameraView: View {
                 HStack {
                     Text("Recording").font(.system(size: 22, weight: .bold))
                     Spacer()
-                    Button(action: { Task { await reloadCamera() } }) {
-                        Text("↻").font(.system(size: 15, weight: .medium))
-                    }
-                    .buttonStyle(.plain)
-                    .helpIfAvailable("Refresh")
+                    Text("↻").font(.system(size: 15, weight: .medium))
+                        .contentShape(Rectangle())
+                        .onTapGesture { Task { await reloadCamera() } }
+                        .helpIfAvailable("Refresh")
                 }
                 Card { cameraSection }
                 Card { recordingSection }

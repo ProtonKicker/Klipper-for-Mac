@@ -25,6 +25,18 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("About")
             FieldRow(label: "App version", value: appVersion)
+            HStack(spacing: 8) {
+                Button("Check for app update") { Task { await model.updateApp() } }
+                    .disabled(model.appUpdateBusy)
+                if model.appUpdateBusy { ActivityIndicator() }
+                Spacer()
+            }
+            if !model.appUpdateStatus.isEmpty {
+                Text(model.appUpdateStatus)
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Button("Project on GitHub") {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             }

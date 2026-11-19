@@ -169,13 +169,10 @@ struct DashboardView: View {
             HStack {
                 sectionHeader("Stack")
                 Spacer()
-                Button(action: {
-                    Task { await model.refresh(reloadEnv: true) }
-                }) {
-                    Text("↻").font(.system(size: 15, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .helpIfAvailable("Refresh")
+                Text("↻").font(.system(size: 15, weight: .medium))
+                    .contentShape(Rectangle())
+                    .onTapGesture { Task { await model.refresh(reloadEnv: true) } }
+                    .helpIfAvailable("Refresh")
             }
             HStack(spacing: 12) {
                 StatusBadge(overall: model.snapshot.overall)
