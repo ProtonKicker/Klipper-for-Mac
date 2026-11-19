@@ -1,6 +1,7 @@
 """klipperformac command-line interface: setup | up | down | killall | status |
 logs | serial | update | open | doctor | timing | backup | cam | batteryguard |
 powerloss | login | supervise | uninstall."""
+
 import argparse
 import contextlib
 import fcntl
@@ -16,8 +17,19 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from . import (batteryguard, cam, configgen, detect, installer, launchd, paths,
-               powerloss, process, shaper, versions)
+from . import (
+    batteryguard,
+    cam,
+    configgen,
+    detect,
+    installer,
+    launchd,
+    paths,
+    powerloss,
+    process,
+    shaper,
+    versions,
+)
 
 
 def _die(msg):
@@ -48,13 +60,19 @@ def _cli_lock():
         try:
             paths.RUN.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            _die("Cannot prepare {} for the command lock: {}".format(
-                paths.RUN, getattr(e, "strerror", None) or e))
+            _die(
+                "Cannot prepare {} for the command lock: {}".format(
+                    paths.RUN, getattr(e, "strerror", None) or e
+                )
+            )
         try:
             fh = open(paths.CLI_LOCK, "a+")
         except OSError as e:
-            _die("Cannot open {} for the command lock: {}".format(
-                paths.CLI_LOCK, getattr(e, "strerror", None) or e))
+            _die(
+                "Cannot open {} for the command lock: {}".format(
+                    paths.CLI_LOCK, getattr(e, "strerror", None) or e
+                )
+            )
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -84,8 +102,11 @@ def _save_settings(settings):
     try:
         paths.save_settings(settings)
     except OSError as e:
-        _die("Could not write {} (your settings are unchanged): {}".format(
-            paths.SETTINGS, getattr(e, "strerror", None) or e))
+        _die(
+            "Could not write {} (your settings are unchanged): {}".format(
+                paths.SETTINGS, getattr(e, "strerror", None) or e
+            )
+        )
 
 
 # A preset name becomes one filename: PRESETS/<name>.cfg, and _copy_atomic first
@@ -103,24 +124,28 @@ def _safe_name(name, what="name"):
     joined onto PRESETS/history, blow the filename limit, or forge rows in the
     preset listing."""
     if not name or re.search(r"[/\\]|\.\.|^\.", name):
-        _die("Invalid {} '{}': no path separators, '..', or leading dot "
-             "allowed".format(what, name))
+        _die("Invalid {} '{}': no path separators, '..', or leading dot allowed".format(what, name))
     # A newline or tab in a name is not a name: it splits `klipperformac
     # presets` (and the GUI/TUI list that parses it) into rows nobody typed.
     if re.search(r"[\x00-\x1f\x7f]", name):
-        _die("Invalid {} '{}': no control characters (spaces are fine, "
-             "newlines and tabs are not)".format(what, name))
-    if len(name) > PRESET_NAME_MAX_CHARS or len(name.encode("utf-8")) \
-            > PRESET_NAME_MAX_BYTES:
-        _die("Invalid {} '{}': too long ({} characters at most). A preset name "
-             "is a filename".format(what, name[:32] + "...",
-                                    PRESET_NAME_MAX_CHARS))
+        _die(
+            "Invalid {} '{}': no control characters (spaces are fine, "
+            "newlines and tabs are not)".format(what, name)
+        )
+    if len(name) > PRESET_NAME_MAX_CHARS or len(name.encode("utf-8")) > PRESET_NAME_MAX_BYTES:
+        _die(
+            "Invalid {} '{}': too long ({} characters at most). A preset name is a filename".format(
+                what, name[:32] + "...", PRESET_NAME_MAX_CHARS
+            )
+        )
     return name
 
 
 def cmd_setup(args):
-    installer.setup(with_shaper=getattr(args, "with_shaper", False),
-                    install_python=getattr(args, "install_python", False))
+    installer.setup(
+        with_shaper=getattr(args, "with_shaper", False),
+        install_python=getattr(args, "install_python", False),
+    )
 
 
 def _moonraker_get(path, timeout=3):
@@ -175,12 +200,11 @@ def _powerloss_session_live(state=None, live_ports=None):
     `powerloss-test` gate stays on the stricter helper above."""
     state = process.running() if state is None else state
     if state:
-        return any(state.get(name) for name in ("klipper", "moonraker",
-                                                "web_mainsail",
-                                                "web_fluidd"))
+        return any(
+            state.get(name) for name in ("klipper", "moonraker", "web_mainsail", "web_fluidd")
+        )
     ports = _our_listener_ports() if live_ports is None else set(live_ports)
-    return bool({paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT}
-                & ports)
+    return bool({paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT} & ports)
 
 
 def _save_powerloss(**kwargs):
@@ -189,8 +213,11 @@ def _save_powerloss(**kwargs):
     try:
         return powerloss.save_settings(**kwargs)
     except OSError as e:
-        _die("Could not write {} (your settings are unchanged): {}".format(
-            paths.SETTINGS, getattr(e, "strerror", None) or e))
+        _die(
+            "Could not write {} (your settings are unchanged): {}".format(
+                paths.SETTINGS, getattr(e, "strerror", None) or e
+            )
+        )
 
 
 def _lan_conf_expected():
@@ -224,34 +251,49 @@ def _lan_urls(indent="  "):
     ip = detect.lan_ip() if want else None
     lines = []
     if want and not ip:
-        lines.append(indent + "LAN:       enabled, but this Mac has no network "
-                            "address right now")
+        lines.append(indent + "LAN:       enabled, but this Mac has no network address right now")
         return lines
     if want:
         if running_bind != "closed":
-            lines.append(indent + "LAN UI:    http://{}:{}  (mainsail)   "
-                                "http://{}:{}  (fluidd)".format(
-                                    ip, paths.WEB_PORT, ip, paths.FLUIDD_PORT))
+            lines.append(
+                indent
+                + "LAN UI:    http://{}:{}  (mainsail)   http://{}:{}  (fluidd)".format(
+                    ip, paths.WEB_PORT, ip, paths.FLUIDD_PORT
+                )
+            )
         if expected == "open":
-            lines.append(indent + "LAN API:   http://{}:{}  (Orca on other "
-                                  "devices)".format(ip, paths.MOONRAKER_PORT))
+            lines.append(
+                indent
+                + "LAN API:   http://{}:{}  (Orca on other devices)".format(
+                    ip, paths.MOONRAKER_PORT
+                )
+            )
         if running_bind == "closed":
-            lines.append(indent + "[!] The UI proxies are listening on "
-                        "localhost only right now - they bind the LAN address "
-                        "when they start: klipperformac restart")
+            lines.append(
+                indent + "[!] The UI proxies are listening on "
+                "localhost only right now - they bind the LAN address "
+                "when they start: klipperformac restart"
+            )
     if want and expected in ("closed", "unpinned"):
         lines.append(
-            indent + "[!] LAN is switched on in settings but moonraker.conf "
+            indent
+            + "[!] LAN is switched on in settings but moonraker.conf "
             "pins host to {} - the API stays localhost-only until you run: "
             "klipperformac restart".format(
-                "127.0.0.1" if expected == "closed" else "nothing "
-                "(upstream Moonraker defaults to 0.0.0.0)"))
+                "127.0.0.1"
+                if expected == "closed"
+                else "nothing (upstream Moonraker defaults to 0.0.0.0)"
+            )
+        )
     if not want and (expected == "open" or running_bind == "open"):
         lines.append(
-            indent + "[!] LAN is switched OFF in settings but {} is still "
+            indent
+            + "[!] LAN is switched OFF in settings but {} is still "
             "listening on this Mac's network address - close it now with: "
             "klipperformac restart".format(
-                "moonraker.conf" if expected == "open" else "the UI proxies"))
+                "moonraker.conf" if expected == "open" else "the UI proxies"
+            )
+        )
     return lines
 
 
@@ -275,10 +317,37 @@ def _guard_autostart():
         return
     cfg = batteryguard.battery_settings()
     if ok:
-        print("Battery guard: on (pause {}%, critical {}%)".format(
-            cfg["pauseAt"], cfg["criticalAt"]))
+        print(
+            "Battery guard: on (pause {}%, critical {}%)".format(cfg["pauseAt"], cfg["criticalAt"])
+        )
     else:
         print("\n".join(lines))
+
+
+def _sync_serials_best_effort(context=""):
+    """Resolve USB MCU ports into printer.cfg when possible.
+
+    Runs before stack start / host restart so a re-enumerated board (common
+    after FIRMWARE_RESTART or replug on macOS) is picked up automatically.
+    Only serial: lines of matching [mcu*] sections may change; everything else
+    in printer.cfg is left untouched. Never fatal: the stack/restart can still
+    be attempted and will report its own connection errors.
+    """
+    if not paths.PRINTER_CFG.exists():
+        return []
+    try:
+        lines, ok = _sync_serials(paths.PRINTER_CFG)
+    except Exception as e:
+        return ["[!] serial auto-sync skipped ({}): {}".format(context or "pre-start", e)]
+    if len(lines) == 1 and "nothing to sync" in lines[0].lower():
+        return []
+    if lines and not ok:
+        lines = list(lines) + [
+            "[!] serial auto-sync incomplete: check "
+            "`klipperformac serial` if the printer "
+            "does not connect."
+        ]
+    return lines
 
 
 def _cmd_up(args):
@@ -296,15 +365,20 @@ def _cmd_up(args):
             # and moonraker are not restarted quietly, because a live klipper
             # with a print running must never be killed by a status command -
             # so this fails loudly and names the repair.
-            _die("[!] Stack is half stopped ({} DOWN) but still tracked. "
-                 "Repair it with: klipperformac restart".format(
-                     ", ".join(dead_core)))
-        dead_ui = [n for n in process.SERVICES
-                   if n not in ("klipper", "moonraker") and not state.get(n)]
+            _die(
+                "[!] Stack is half stopped ({} DOWN) but still tracked. "
+                "Repair it with: klipperformac restart".format(", ".join(dead_core))
+            )
+        dead_ui = [
+            n for n in process.SERVICES if n not in ("klipper", "moonraker") and not state.get(n)
+        ]
         if dead_ui:
-            print("[!] Partially stopped ({} DOWN): restarting those services "
-                  "only, the running klipper/moonraker are left alone."
-                  .format(", ".join(dead_ui)))
+            print(
+                "[!] Partially stopped ({} DOWN): restarting those services "
+                "only, the running klipper/moonraker are left alone.".format(", ".join(dead_ui))
+            )
+            for line in _sync_serials_best_effort("repair"):
+                print(line)
             process.repair(state)
             _want_up("up (repair)")
         else:
@@ -316,6 +390,11 @@ def _cmd_up(args):
             return
     else:
         note = shaper.interpreter_for_klipper()[1]
+        # Auto-sync serial paths before launching klippy so a board whose USB
+        # /dev/cu.* node was renumbered (replug, sleep/wake, firmware restart)
+        # is resolved back onto the correct port without touching other config.
+        for line in _sync_serials_best_effort("before start"):
+            print(line)
         # The verdict of the session before this one, read BEFORE start() rolls
         # it into history: at up-time is the moment the question "did the power
         # go out, or did somebody just type `down`?" still has an answer worth
@@ -352,19 +431,22 @@ def _wait_ready(timeout=35):
             print("  ready: moonraker up, klippy {} (state: {})".format(conn, state))
             return True
         time.sleep(0.7)
-    print("[!] Moonraker did not answer within {}s — check: klipperformac logs"
-          .format(timeout))
+    print("[!] Moonraker did not answer within {}s — check: klipperformac logs".format(timeout))
     held = [(port, pid) for port, pid in process.our_listeners()]
     squatters = process.port_conflicts()
     if squatters:
         for port, pid, desc in squatters:
-            print("[!] Port {} is answered by {} (not this stack): stop that "
-                  "program or run: klipperformac killall".format(
-                      port, "pid {} ({})".format(pid, desc) if pid else desc))
+            print(
+                "[!] Port {} is answered by {} (not this stack): stop that "
+                "program or run: klipperformac killall".format(
+                    port, "pid {} ({})".format(pid, desc) if pid else desc
+                )
+            )
     elif held:
-        print("[!] Our own processes are alive on port(s) {} but nothing "
-              "answered: run: klipperformac restart".format(
-                  ", ".join(str(port) for port, _ in held)))
+        print(
+            "[!] Our own processes are alive on port(s) {} but nothing "
+            "answered: run: klipperformac restart".format(", ".join(str(port) for port, _ in held))
+        )
     return False
 
 
@@ -378,8 +460,10 @@ def _want_up(reason="up"):
     try:
         launchd.want_set(reason)
     except Exception as e:
-        print("[!] autostart intent not recorded ({}): `klipperformac login` "
-              "supervision cannot see that you want the stack up".format(e))
+        print(
+            "[!] autostart intent not recorded ({}): `klipperformac login` "
+            "supervision cannot see that you want the stack up".format(e)
+        )
 
 
 def _want_down(reason="down"):
@@ -391,8 +475,10 @@ def _want_down(reason="down"):
     try:
         launchd.want_clear(reason)
     except Exception as e:
-        print("[!] autostart intent not cleared ({}): a running supervisor "
-              "could bring the stack back".format(e))
+        print(
+            "[!] autostart intent not cleared ({}): a running supervisor "
+            "could bring the stack back".format(e)
+        )
 
 
 def cmd_down(args):
@@ -406,11 +492,16 @@ def cmd_down(args):
         stopped = process.stop()
     cam_off, cam_lines = cam.stop()
     if guard_off:
-        print("Battery guard stopped with the stack (still enabled: `up` "
-              "starts it again; `batteryguard off` turns it off for good).")
+        print(
+            "Battery guard stopped with the stack (still enabled: `up` "
+            "starts it again; `batteryguard off` turns it off for good)."
+        )
     if cam_off:
-        print("Stopped (camera turned off too)." if stopped
-              else "Stack was not running; camera stopped.")
+        print(
+            "Stopped (camera turned off too)."
+            if stopped
+            else "Stack was not running; camera stopped."
+        )
     elif stopped:
         print("Stopped.")
     else:
@@ -423,9 +514,11 @@ def cmd_down(args):
     # stop. Report what is still there and how to clear it.
     left = process.our_listeners()
     if left:
-        print("[!] Still listening: {} - clear with: klipperformac killall"
-              .format(", ".join("port {} (pid {})".format(p, pid)
-                                for p, pid in left)))
+        print(
+            "[!] Still listening: {} - clear with: klipperformac killall".format(
+                ", ".join("port {} (pid {})".format(p, pid) for p, pid in left)
+            )
+        )
         sys.exit(1)
 
 
@@ -438,8 +531,7 @@ def cmd_killall(args):
         # and a login supervisor that brought the stack back 10 s later would
         # turn a cleanup command into a fight.
         _want_down("killall")
-        killed = process.kill_all() + cam.kill_orphans() \
-            + batteryguard.kill_orphans()
+        killed = process.kill_all() + cam.kill_orphans() + batteryguard.kill_orphans()
     if not killed:
         print("Nothing to kill.")
         return
@@ -464,13 +556,17 @@ def _status_powerloss_line():
     this one."""
     cfg = powerloss.settings()
     if not cfg["journal"]:
-        return ("  powerloss    journal off  (a power cut then leaves no seam: "
-                "klipperformac powerloss on)")
+        return (
+            "  powerloss    journal off  (a power cut then leaves no seam: "
+            "klipperformac powerloss on)"
+        )
     records = powerloss.read_records()
     last = records[-1] if records else None
-    tail = "  last {} @ byte {}".format(last.get("filename"),
-                                        last.get("file_position")) if last \
+    tail = (
+        "  last {} @ byte {}".format(last.get("filename"), last.get("file_position"))
+        if last
         else "  no snapshot yet"
+    )
     return "  powerloss    journal on  {} records{}".format(len(records), tail)
 
 
@@ -485,13 +581,17 @@ def _status_guard_lines():
     guard = batteryguard.running()
     cfg = batteryguard.battery_settings()
     if guard is not None:
-        return ["  {:<12} on  pid {}  pause {}%  critical {}%".format(
-            "batteryguard", guard.get("pid"), cfg["pauseAt"],
-            cfg["criticalAt"])]
+        return [
+            "  {:<12} on  pid {}  pause {}%  critical {}%".format(
+                "batteryguard", guard.get("pid"), cfg["pauseAt"], cfg["criticalAt"]
+            )
+        ]
     if cfg["enabled"]:
-        return ["  {:<12} armed  pause {}%  critical {}% (starts with the "
-                "stack)".format("batteryguard", cfg["pauseAt"],
-                                cfg["criticalAt"])]
+        return [
+            "  {:<12} armed  pause {}%  critical {}% (starts with the stack)".format(
+                "batteryguard", cfg["pauseAt"], cfg["criticalAt"]
+            )
+        ]
     return []
 
 
@@ -505,16 +605,17 @@ def cmd_status(args):
         else:
             print("stopped")
         if left:
-            print("  [!] {} still answering although no stack is tracked: "
-                  "klipperformac killall".format(
-                      ", ".join("port {}".format(p) for p, _ in left)))
+            print(
+                "  [!] {} still answering although no stack is tracked: "
+                "klipperformac killall".format(", ".join("port {}".format(p) for p, _ in left))
+            )
         for line in _lan_urls(indent="  "):
             print(line)
         for line in _status_guard_lines():
             print(line)
         for line in powerloss.verdict_lines(
-                stack_up=_powerloss_session_live(state=None,
-                                                 live_ports=live_ports)):
+            stack_up=_powerloss_session_live(state=None, live_ports=live_ports)
+        ):
             print(line)
         return
     pins = versions.load_pins()
@@ -526,13 +627,15 @@ def cmd_status(args):
         print("  {:<12} {}".format(name, "up" if state.get(name) else "DOWN"))
     klippy = _klippy_state() if up.get("moonraker") else None
     if up.get("moonraker"):
-        print("  {:<12} {}".format(
-            "klippy", klippy if klippy else "printer state unknown"))
+        print("  {:<12} {}".format("klippy", klippy if klippy else "printer state unknown"))
     print("  url          {}".format(paths.web_url()))
     for line in _lan_urls():
         print(line)
-    print("  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
-        pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]))
+    print(
+        "  pins         klipper {}  moonraker {}  mainsail {}  fluidd {}".format(
+            pins["klipper"], pins["moonraker"], pins["mainsail"], pins["fluidd"]
+        )
+    )
     st = shaper.readiness()
     print("  shaper       " + st["detail"])
     cam_state = cam.running()
@@ -547,14 +650,19 @@ def cmd_status(args):
     guard = batteryguard.running()
     guard_cfg = batteryguard.battery_settings()
     if guard is not None:
-        print("  batteryguard on  pid {}  pause {}%  critical {}%".format(
-            guard.get("pid"), guard_cfg["pauseAt"], guard_cfg["criticalAt"]))
+        print(
+            "  batteryguard on  pid {}  pause {}%  critical {}%".format(
+                guard.get("pid"), guard_cfg["pauseAt"], guard_cfg["criticalAt"]
+            )
+        )
     elif guard_cfg["enabled"]:
-        print("  batteryguard armed  pause {}%  critical {}% (starts with the "
-              "stack)".format(guard_cfg["pauseAt"], guard_cfg["criticalAt"]))
+        print(
+            "  batteryguard armed  pause {}%  critical {}% (starts with the stack)".format(
+                guard_cfg["pauseAt"], guard_cfg["criticalAt"]
+            )
+        )
     else:
-        print("  batteryguard off  (laptop prints: klipperformac "
-              "batteryguard on)")
+        print("  batteryguard off  (laptop prints: klipperformac batteryguard on)")
     print(_status_powerloss_line())
     updates, errors = versions.cached_check()
     for e in errors:
@@ -570,22 +678,29 @@ def cmd_lan(args):
         settings["lan"] = enabled
         _save_settings(settings)
         changed = configgen.apply_lan(enabled)
-        print("LAN access {}.".format("OPEN — other devices can reach the "
-                                      "printer" if enabled
-                                      else "closed (this Mac only)"))
+        print(
+            "LAN access {}.".format(
+                "OPEN — other devices can reach the printer"
+                if enabled
+                else "closed (this Mac only)"
+            )
+        )
         if not paths.MOONRAKER_CONF.exists():
-            print("[!] No moonraker.conf yet, so nothing was pinned in it: the "
-                  "bind is written when the config is created (run: "
-                  "klipperformac setup)")
+            print(
+                "[!] No moonraker.conf yet, so nothing was pinned in it: the "
+                "bind is written when the config is created (run: "
+                "klipperformac setup)"
+            )
         if process.running() is not None:
             # Both halves of the switch read their setting once, at startup:
             # Moonraker from moonraker.conf, our proxies from settings.json.
             # Saying "closed (this Mac only)." and leaving *:7125 answering is
             # the mistake this guards - a user who runs `lan off` before going
             # to a hotel network must be told the port is still open.
-            print("[!] The stack is running: what is actually listening right "
-                  "now is unchanged{}.".format(
-                      "" if changed else " (the config already said this)"))
+            print(
+                "[!] The stack is running: what is actually listening right "
+                "now is unchanged{}.".format("" if changed else " (the config already said this)")
+            )
             print("Apply now with: klipperformac restart")
         elif not enabled:
             print("Next start stays localhost-only.")
@@ -603,8 +718,7 @@ def cmd_lan(args):
         for line in notes:
             print(line)
     else:
-        print("Only this Mac can reach the stack (localhost). Turn on with: "
-              "klipperformac lan on")
+        print("Only this Mac can reach the stack (localhost). Turn on with: klipperformac lan on")
 
 
 def cmd_logs(args):
@@ -637,8 +751,7 @@ def _identity_map():
         rows = fn() or []
     except Exception:
         return {}
-    return {r["path"]: r for r in rows
-            if isinstance(r, dict) and r.get("path")}
+    return {r["path"]: r for r in rows if isinstance(r, dict) and r.get("path")}
 
 
 def _identity_tail(ident, claim):
@@ -672,6 +785,7 @@ def _configured_mcus():
     """
     try:
         from . import flash
+
         rows = flash.configured_serials()
         return rows, flash.claimed_by_section(rows)
     except Exception:
@@ -696,21 +810,25 @@ def _serial_notes(ports, rows, claims):
     for name, serial in rows:
         label = "[mcu]" if name == "mcu" else "[mcu {}]".format(name)
         if serial in owner:
-            notes.append("[!] {} and {} both point at {}: one klippy can hold "
-                         "that port, the other retries for 90 s and then "
-                         "errors.".format(owner[serial], label, serial))
+            notes.append(
+                "[!] {} and {} both point at {}: one klippy can hold "
+                "that port, the other retries for 90 s and then "
+                "errors.".format(owner[serial], label, serial)
+            )
         else:
             owner[serial] = label
         if serial not in present:
             missing += 1
-            notes.append("[!] {} points at {}, which is not attached right now."
-                         .format(label, serial))
+            notes.append(
+                "[!] {} points at {}, which is not attached right now.".format(label, serial)
+            )
     if missing and len(rows) == 1:
         free = [p["path"] for p in ports if p["path"] not in claims]
         if len(free) == 1:
-            notes.append("    macOS may have renamed the node. If it is the "
-                         "same board, re-point it: klipperformac serial --set "
-                         + free[0])
+            notes.append(
+                "    macOS may have renamed the node. If it is the "
+                "same board, re-point it: klipperformac serial --set " + free[0]
+            )
     return notes
 
 
@@ -770,8 +888,7 @@ def _serial_notes(ports, rows, claims):
 
 MCU_IDENTITY_MARKER = "# klipperformac:identity"
 MCU_PROBE_TIMEOUT = 3.0
-_MCU_JSON_KEYS = ("mcu", "section", "serial", "configured", "claimed",
-                  "identity", "conflict")
+_MCU_JSON_KEYS = ("mcu", "section", "serial", "configured", "claimed", "identity", "conflict")
 #: The contract's conflict vocabulary, IN PRECEDENCE ORDER: cause before symptom.
 #: ``mcus.CONFLICT_CODES`` is the same tuple on the reader's side, and
 #: ``tests/contract/test_json_bytes_contract.py`` pins the two against each other
@@ -784,8 +901,7 @@ _MCU_CONFLICT_RANK = {code: rank for rank, code in enumerate(_MCU_CONFLICTS)}
 # first serial line anywhere in the file.
 _MCU_REAL_PORT_RE = re.compile(r"/dev/(cu|tty|usbserial|usbmodem)\S*")
 _MCU_COMMENT_RE = re.compile(r"[#;].*$")
-_MCU_MARKER_RE = re.compile(
-    r"[#;][^\n]*klipperformac:identity[ \t]*(\S+)", re.IGNORECASE)
+_MCU_MARKER_RE = re.compile(r"[#;][^\n]*klipperformac:identity[ \t]*(\S+)", re.IGNORECASE)
 
 
 def _mcus_module():
@@ -880,8 +996,7 @@ def _mcu_section_name(inner, closed=True):
     """
     lowered = inner.lower()
     is_mcu = closed and (inner == "mcu" or inner.startswith("mcu "))
-    if not (lowered == "mcu" or lowered.startswith("mcu ")
-            or ("mcu" in lowered and "]" in inner)):
+    if not (lowered == "mcu" or lowered.startswith("mcu ") or ("mcu" in lowered and "]" in inner)):
         # Not an mcu section and does not look like one: not this command's
         # business ('[stepper_x]', '[fan]', a plain typo in another section).
         return False, None, False
@@ -913,7 +1028,7 @@ def _parse_mcu_sections(text):
     rows = []
     by_name = {}
     current = None
-    serial_row = None       # section whose serial: the LAST option line set
+    serial_row = None  # section whose serial: the LAST option line set
     for raw in (text or "").splitlines():
         pruned = _MCU_COMMENT_RE.sub("", raw).strip()
         if pruned.startswith("["):
@@ -926,10 +1041,15 @@ def _parse_mcu_sections(text):
                 continue
             current = by_name.get(inner)
             if current is None:
-                current = {"mcu": name, "section": "[" + inner + "]",
-                           "serial": None, "marker": None,
-                           "canbus": None, "is_mcu": is_mcu,
-                           "bad_name": bad}
+                current = {
+                    "mcu": name,
+                    "section": "[" + inner + "]",
+                    "serial": None,
+                    "marker": None,
+                    "canbus": None,
+                    "is_mcu": is_mcu,
+                    "bad_name": bad,
+                }
                 by_name[inner] = current
                 rows.append(current)
             serial_row = None
@@ -956,7 +1076,7 @@ def _parse_mcu_sections(text):
             serial_row = None
             m = re.match(r"serial[ \t]*:[ \t]*(\S+)", pruned)
             if m:
-                current["serial"] = m.group(1)   # klipper: last one wins
+                current["serial"] = m.group(1)  # klipper: last one wins
                 serial_row = current
                 continue
             can = re.match(r"canbus_uuid[ \t]*:[ \t]*(\S+)", pruned)
@@ -999,12 +1119,12 @@ def _mcu_identity_view(ident, present):
     """
     if not ident:
         return None
-    return {"vid_pid": (str(ident.get("vid_pid")).lower()
-                        if ident.get("vid_pid") else None),
-            "serial": (str(ident.get("serial"))
-                       if ident.get("serial") else None),
-            "key": (str(ident.get("key")) if ident.get("key") else None),
-            "present": bool(present)}
+    return {
+        "vid_pid": (str(ident.get("vid_pid")).lower() if ident.get("vid_pid") else None),
+        "serial": (str(ident.get("serial")) if ident.get("serial") else None),
+        "key": (str(ident.get("key")) if ident.get("key") else None),
+        "present": bool(present),
+    }
 
 
 def _mcu_rows(cfg_path, text):
@@ -1044,8 +1164,7 @@ def _mcu_rows(cfg_path, text):
         if not isinstance(row, dict):
             continue
         name = _mcu_row_name(row)
-        header = row.get("section_header") or detect.mcu_header(name) \
-            or "[mcu ?]"
+        header = row.get("section_header") or detect.mcu_header(name) or "[mcu ?]"
         # mcus.py owns the name rules (four-character strip, pin-chip collisions),
         # so take its verdict when it gives one; the recomputation below is only
         # for a module that answers without those keys.
@@ -1057,14 +1176,18 @@ def _mcu_rows(cfg_path, text):
                 bad = bad or not row.get("is_mcu")
             else:
                 bad = bad or _mcu_bad_name(name, name == "mcu")
-        out.append({"mcu": name,
-                    "section": header,
-                    "serial": row.get("serial") or None,
-                    "canbus": row.get("canbus_uuid") or row.get("canbus"),
-                    "marker": row.get("marker") or markers.get(name),
-                    "bad_name": bad,
-                    "configured": row.get("configured", True),
-                    "conflict": conflicts.get(name)})
+        out.append(
+            {
+                "mcu": name,
+                "section": header,
+                "serial": row.get("serial") or None,
+                "canbus": row.get("canbus_uuid") or row.get("canbus"),
+                "marker": row.get("marker") or markers.get(name),
+                "bad_name": bad,
+                "configured": row.get("configured", True),
+                "conflict": conflicts.get(name),
+            }
+        )
     return out
 
 
@@ -1104,24 +1227,38 @@ def _mcu_entries(cfg_path=None, text=None, ports=None, idents=None):
         if row.get("configured", True) is False:
             # A row mcus offered for a section that is not in the file: nothing
             # to conflict about, and never a port to write.
-            entries.append({"mcu": name, "section": header, "serial": None,
-                            "configured": False, "claimed": False,
-                            "canbus": None, "marker": None, "identity": None,
-                            "conflict": None})
+            entries.append(
+                {
+                    "mcu": name,
+                    "section": header,
+                    "serial": None,
+                    "configured": False,
+                    "claimed": False,
+                    "canbus": None,
+                    "marker": None,
+                    "identity": None,
+                    "conflict": None,
+                }
+            )
             continue
         serial = row.get("serial") or None
         canbus = row.get("canbus") or None
-        entries.append({"mcu": name, "section": header,
-                        "serial": serial or canbus,
-                        "configured": True,
-                        # `claimed` is about a USB node: a CAN uuid configures
-                        # an MCU but holds no /dev/cu.* open.
-                        "claimed": bool(serial),
-                        "canbus": canbus,
-                        "marker": row.get("marker"),
-                        "_bad_name": bool(row.get("bad_name")),
-                        "_conflict": row.get("conflict"),
-                        "identity": None})
+        entries.append(
+            {
+                "mcu": name,
+                "section": header,
+                "serial": serial or canbus,
+                "configured": True,
+                # `claimed` is about a USB node: a CAN uuid configures
+                # an MCU but holds no /dev/cu.* open.
+                "claimed": bool(serial),
+                "canbus": canbus,
+                "marker": row.get("marker"),
+                "_bad_name": bool(row.get("bad_name")),
+                "_conflict": row.get("conflict"),
+                "identity": None,
+            }
+        )
     owners = {}
     for e in entries:
         if e["claimed"]:
@@ -1132,8 +1269,11 @@ def _mcu_entries(cfg_path=None, text=None, ports=None, idents=None):
             ours = "bad-section-name"
         elif e["claimed"] and len(owners.get(e["serial"], [])) > 1:
             ours = "duplicate-port"
-        elif e["configured"] and not e.get("canbus") and \
-                (not e["claimed"] or e["serial"] not in present):
+        elif (
+            e["configured"]
+            and not e.get("canbus")
+            and (not e["claimed"] or e["serial"] not in present)
+        ):
             ours = "missing-port"
         given = e.get("_conflict")
         given = given if given in _MCU_CONFLICT_RANK else None
@@ -1169,8 +1309,12 @@ def _mcu_identity(entry, present, idents, by_key):
         if hit:
             return _mcu_identity_view(hit, hit.get("path") in present)
         vid_pid, serial_no = _mcu_key_parts(entry.get("marker"))
-        return {"vid_pid": vid_pid, "serial": serial_no or None,
-                "key": entry.get("marker"), "present": False}
+        return {
+            "vid_pid": vid_pid,
+            "serial": serial_no or None,
+            "key": entry.get("marker"),
+            "present": False,
+        }
     if serial:
         # A node that exists but has no USB board behind it (a virtual port, a
         # Bluetooth tunnel, an unreadable ioreg) is still not an identity.
@@ -1182,12 +1326,17 @@ def _mcu_json(entries):
     """The --json payload: exactly the contract, keys in contract order."""
     mcus = []
     for e in entries:
-        mcus.append({"mcu": e["mcu"], "section": e["section"],
-                     "serial": e.get("serial"),
-                     "configured": bool(e.get("configured", True)),
-                     "claimed": bool(e.get("claimed")),
-                     "identity": e.get("identity"),
-                     "conflict": e.get("conflict")})
+        mcus.append(
+            {
+                "mcu": e["mcu"],
+                "section": e["section"],
+                "serial": e.get("serial"),
+                "configured": bool(e.get("configured", True)),
+                "claimed": bool(e.get("claimed")),
+                "identity": e.get("identity"),
+                "conflict": e.get("conflict"),
+            }
+        )
     return {"mcus": mcus, "single": len(mcus) <= 1}
 
 
@@ -1198,8 +1347,7 @@ def _mcu_json_line(entries):
     try:
         return json.dumps(_mcu_json(entries), default=str)
     except Exception as e:
-        print("[!] serial --json could not describe the sections: {}".format(e),
-              file=sys.stderr)
+        print("[!] serial --json could not describe the sections: {}".format(e), file=sys.stderr)
         return json.dumps({"mcus": [], "single": True})
 
 
@@ -1232,8 +1380,7 @@ def _mcu_table_lines(entries, ports):
             tail = "  identity " + str(ident["key"])
             if ident.get("present") is False:
                 tail += " (not attached)"
-        lines.append("  {:<14} {:<30} {}{}".format(
-            e["section"], str(serial or "-"), verdict, tail))
+        lines.append("  {:<14} {:<30} {}{}".format(e["section"], str(serial or "-"), verdict, tail))
     lines.append("  (machine-readable: klipperformac serial --json)")
     return lines
 
@@ -1293,8 +1440,7 @@ def _sync_serials(cfg_path):
         if key:
             live_by_key[key] = ident
 
-    claimed = {e["serial"] for e in entries
-               if e["serial"] and e["serial"].startswith("/dev/")}
+    claimed = {e["serial"] for e in entries if e["serial"] and e["serial"].startswith("/dev/")}
     lines = []
     ok = True
     used = set(claimed)
@@ -1322,30 +1468,30 @@ def _sync_serials(cfg_path):
             continue
         live = live_by_key.get(marker.lower())
         if live is None:
-            lines.append("[!] {} bound to {} — board NOT attached, skipped."
-                         .format(label, marker))
+            lines.append("[!] {} bound to {} — board NOT attached, skipped.".format(label, marker))
             ok = False
             continue
         new_path = live["path"]
         if new_path in used:
-            lines.append("[!] {}: board {} already claimed by another section."
-                         .format(label, new_path))
+            lines.append(
+                "[!] {}: board {} already claimed by another section.".format(label, new_path)
+            )
             ok = False
             continue
         wrote, why = _write_mcu_serial(cfg_path, new_path, name)
         if wrote:
             used.discard(serial)
             used.add(new_path)
-            lines.append("Synced {}: {} → {} (identity {})".format(
-                label, serial, new_path, marker))
+            lines.append("Synced {}: {} → {} (identity {})".format(label, serial, new_path, marker))
             # Refresh cached text so pass 2 sees the update.
             try:
                 current_text = paths.read_config_text(cfg_path)
             except Exception:
                 pass
         else:
-            lines.append("[!] {}: could NOT update to {}: {}".format(
-                label, new_path, why or "write refused"))
+            lines.append(
+                "[!] {}: could NOT update to {}: {}".format(label, new_path, why or "write refused")
+            )
             ok = False
 
     # --- PASS 2: fallback for markerless, stale-port sections -----------
@@ -1354,17 +1500,22 @@ def _sync_serials(cfg_path):
         entries = list_fn(paths.read_config_text(cfg_path))
     except Exception:
         pass
-    stale = [e for e in entries
-             if e["serial"] and e["serial"].startswith("/dev/")
-             and e["serial"] not in present
-             and not e.get("canbus_uuid")]
+    stale = [
+        e
+        for e in entries
+        if e["serial"]
+        and e["serial"].startswith("/dev/")
+        and e["serial"] not in present
+        and not e.get("canbus_uuid")
+    ]
     if not stale:
         if not lines:
             return ["All MCU sections already on live ports — nothing to sync."], ok
         return lines, ok
 
-    fresh_claimed = {e["serial"] for e in entries if e["serial"]
-                     and e["serial"].startswith("/dev/")}
+    fresh_claimed = {
+        e["serial"] for e in entries if e["serial"] and e["serial"].startswith("/dev/")
+    }
     used = set(fresh_claimed)
     ports = detect.scan()
     for entry in stale:
@@ -1372,7 +1523,8 @@ def _sync_serials(cfg_path):
         label = _mcu_section_label(name)
         # Has an identity marker but board not attached → already reported.
         marker = _section_identity_marker(
-            paths.read_config_text(cfg_path) if cfg_path.exists() else "", name)
+            paths.read_config_text(cfg_path) if cfg_path.exists() else "", name
+        )
         if marker:
             continue
         free = [p for p in ports if p["path"] not in used]
@@ -1381,21 +1533,24 @@ def _sync_serials(cfg_path):
             wrote, why = _write_mcu_serial(cfg_path, new_path, name)
             if wrote:
                 used.add(new_path)
-                lines.append("Synced {}: {} → {} (single candidate)".format(
-                    label, entry["serial"], new_path))
+                lines.append(
+                    "Synced {}: {} → {} (single candidate)".format(label, entry["serial"], new_path)
+                )
             else:
-                lines.append("[!] {}: could NOT update to {}: {}".format(
-                    label, new_path, why or "write refused"))
+                lines.append(
+                    "[!] {}: could NOT update to {}: {}".format(
+                        label, new_path, why or "write refused"
+                    )
+                )
                 ok = False
         elif not free:
-            lines.append("[!] {}: no unclaimed board left for {}.".format(
-                label, entry["serial"]))
+            lines.append("[!] {}: no unclaimed board left for {}.".format(label, entry["serial"]))
             ok = False
         else:
             lines.append(
                 "[!] {}: {} is stale, {} candidates — pick manually: "
-                "klipperformac serial --set PATH {}".format(
-                    label, entry["serial"], len(free), name))
+                "klipperformac serial --set PATH {}".format(label, entry["serial"], len(free), name)
+            )
             ok = False
     return lines, ok
 
@@ -1427,10 +1582,10 @@ def _section_identity_marker(cfg_text, mcu_name):
         if is_header:
             header_text = stripped[1:-1]
             if header_text == "mcu":
-                in_target = (target == "mcu")
+                in_target = target == "mcu"
             elif header_text.startswith(prefix):
                 derived = header_text[strip_fn:]
-                in_target = (derived == target)
+                in_target = derived == target
             else:
                 in_target = False
             continue
@@ -1476,12 +1631,13 @@ def _write_mcu_serial(cfg_path, device_path, name="mcu"):
             text, encoding = paths.read_config(cfg_path)
         except Exception as e:
             return False, "could not read {}: {}".format(
-                cfg_path, getattr(e, "strerror", None) or e)
+                cfg_path, getattr(e, "strerror", None) or e
+            )
         updated = None
         try:
             updated = fn(text, name, device_path)
         except TypeError:
-            updated = None          # unknown signature: use our own writer
+            updated = None  # unknown signature: use our own writer
         except Exception as e:
             return False, str(e) or "mcus.set_serial() refused the write"
         if isinstance(updated, str):
@@ -1489,7 +1645,8 @@ def _write_mcu_serial(cfg_path, device_path, name="mcu"):
                 paths.write_config(cfg_path, updated, encoding)
             except Exception as e:
                 return False, "could not write {}: {}".format(
-                    cfg_path, getattr(e, "strerror", None) or e)
+                    cfg_path, getattr(e, "strerror", None) or e
+                )
             return _mcu_section_serial(cfg_path, name) == device_path, None
     try:
         if not detect.write_serial(cfg_path, device_path, name):
@@ -1516,8 +1673,7 @@ def _mcu_conflicts(cfg_path):
         if conflict == "missing-port" and e.get("serial"):
             continue
         if conflict == "missing-port":
-            out.append("{} has no serial: (klipper cannot start it)".format(
-                e["section"]))
+            out.append("{} has no serial: (klipper cannot start it)".format(e["section"]))
         elif conflict:
             out.append("{}: {}".format(e["section"], conflict))
     return out
@@ -1562,8 +1718,9 @@ def _mcu_runtime(name, timeout=MCU_PROBE_TIMEOUT):
     'unknown', which no caller may treat as a failure.
     """
     obj = _mcu_object_name(name)
-    data = _moonraker_get("/printer/objects/query?{}=mcu_version".format(
-        obj.replace(" ", "%20")), timeout=timeout)
+    data = _moonraker_get(
+        "/printer/objects/query?{}=mcu_version".format(obj.replace(" ", "%20")), timeout=timeout
+    )
     if not isinstance(data, dict):
         return "unknown", "moonraker did not answer"
     status = (data.get("result") or {}).get("status") or {}
@@ -1587,7 +1744,9 @@ def _klipper_checkout_version(timeout=3.0):
     try:
         res = subprocess.run(
             ["git", "-C", str(paths.KLIPPER), "rev-parse", "--short=7", "HEAD"],
-            capture_output=True, timeout=timeout)
+            capture_output=True,
+            timeout=timeout,
+        )
     except Exception:
         return None
     if res.returncode != 0:
@@ -1623,14 +1782,16 @@ def _mcu_runtime_rows(cfg_path=None, entries=None):
         if not e.get("configured", True):
             continue
         verdict, detail = _mcu_runtime(e["mcu"])
-        rows.append({
-            "entry": e,
-            "section": e["section"],
-            "mcu": e["mcu"],
-            "serial": e.get("serial"),
-            "verdict": verdict,
-            "detail": detail,
-        })
+        rows.append(
+            {
+                "entry": e,
+                "section": e["section"],
+                "mcu": e["mcu"],
+                "serial": e.get("serial"),
+                "verdict": verdict,
+                "detail": detail,
+            }
+        )
     return rows
 
 
@@ -1643,21 +1804,20 @@ def _mcu_lines_fail(lines, klippy):
     the 3 s GET with no answer - is never an accusation: doctor's exit code is
     the install-correctness gate AGENTS.md 4 puts on "done", not a hardware
     attendance sheet."""
-    return any(verdict == "missing" and klippy == "ready"
-               for _tag, _text, verdict in (lines or []))
+    return any(verdict == "missing" and klippy == "ready" for _tag, _text, verdict in (lines or []))
 
 
 def _mcu_firmware_lines_fail(lines, klippy):
     """Whether a firmware-vs-checkout mismatch should turn doctor red."""
-    return any(verdict == "mismatch" and klippy == "ready"
-               for _tag, _text, verdict in (lines or []))
+    return any(
+        verdict == "mismatch" and klippy == "ready" for _tag, _text, verdict in (lines or [])
+    )
 
 
 def _mcu_report_lines(cfg_path=None, entries=None, rows=None):
     """[(tag, text)] one line per configured MCU, shared by doctor and selftest
     so the two can never disagree about the same printer."""
-    rows = _mcu_runtime_rows(cfg_path=cfg_path, entries=entries) \
-        if rows is None else rows
+    rows = _mcu_runtime_rows(cfg_path=cfg_path, entries=entries) if rows is None else rows
     lines = []
     for row in rows:
         e = row["entry"]
@@ -1665,14 +1825,12 @@ def _mcu_report_lines(cfg_path=None, entries=None, rows=None):
         detail = row["detail"]
         if verdict == "ok":
             tag = "[ok] "
-            text = "mcu {}: loaded by klippy (firmware {})".format(
-                e["section"], detail)
+            text = "mcu {}: loaded by klippy (firmware {})".format(e["section"], detail)
             if e.get("serial"):
                 text += " on {}".format(e["serial"])
         elif verdict == "missing":
             tag = "[!] "
-            text = "mcu {}: klippy did not load this section ({})".format(
-                e["section"], detail)
+            text = "mcu {}: klippy did not load this section ({})".format(e["section"], detail)
         else:
             tag = "[i]  "
             text = "mcu {}: runtime unknown ({})".format(e["section"], detail)
@@ -1691,19 +1849,25 @@ def _mcu_firmware_match_lines(rows=None, expected=None):
         if row["verdict"] != "ok":
             continue
         if _runtime_matches_checkout(row["detail"], expected):
-            lines.append((
-                "[ok] ",
-                "mcu {}: firmware matches installed klipper {}".format(
-                    row["section"], expected),
-                "match",
-            ))
+            lines.append(
+                (
+                    "[ok] ",
+                    "mcu {}: firmware matches installed klipper {}".format(
+                        row["section"], expected
+                    ),
+                    "match",
+                )
+            )
         else:
-            lines.append((
-                "[!] ",
-                "mcu {}: firmware {} does not match installed klipper {}".format(
-                    row["section"], row["detail"], expected),
-                "mismatch",
-            ))
+            lines.append(
+                (
+                    "[!] ",
+                    "mcu {}: firmware {} does not match installed klipper {}".format(
+                        row["section"], row["detail"], expected
+                    ),
+                    "mismatch",
+                )
+            )
     return lines
 
 
@@ -1719,26 +1883,33 @@ def _mcu_log_provenance_lines(rows=None, log_info=None):
         if not info:
             continue
         if info["version"] == row["detail"]:
-            lines.append((
-                "[ok] ",
-                "mcu {}: klippy.log last loaded {} ({})".format(
-                    row["section"], info["version"], info["build_versions"]),
-                "match",
-            ))
+            lines.append(
+                (
+                    "[ok] ",
+                    "mcu {}: klippy.log last loaded {} ({})".format(
+                        row["section"], info["version"], info["build_versions"]
+                    ),
+                    "match",
+                )
+            )
         else:
-            lines.append((
-                "[!] ",
-                "mcu {}: klippy.log last loaded {}, but runtime says {}".format(
-                    row["section"], info["version"], row["detail"]),
-                "mismatch",
-            ))
+            lines.append(
+                (
+                    "[!] ",
+                    "mcu {}: klippy.log last loaded {}, but runtime says {}".format(
+                        row["section"], info["version"], row["detail"]
+                    ),
+                    "mismatch",
+                )
+            )
     return lines
 
 
 def _mcu_log_lines_fail(lines, klippy):
     """Whether a klippy.log/runtime mismatch should turn doctor red."""
-    return any(verdict == "mismatch" and klippy == "ready"
-               for _tag, _text, verdict in (lines or []))
+    return any(
+        verdict == "mismatch" and klippy == "ready" for _tag, _text, verdict in (lines or [])
+    )
 
 
 def cmd_serial(args):
@@ -1779,21 +1950,20 @@ def cmd_serial(args):
             _die("No printer.cfg yet. Run: klipperformac setup")
         header = detect.mcu_header(name)
         if header is None:
-            _die("Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
-                 "klipper would read a section back as a different object than "
-                 "the name you typed.".format(name))
+            _die(
+                "Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
+                "klipper would read a section back as a different object than "
+                "the name you typed.".format(name)
+            )
         try:
             text, encoding = paths.read_config(paths.PRINTER_CFG)
             updated = _mcus_module().add_mcu_section(text, name)
             paths.write_config(paths.PRINTER_CFG, updated, encoding)
         except Exception as e:
-            _die("Could not add {}: {}".format(header,
-                                                getattr(e, "strerror", None)
-                                                or str(e)))
+            _die("Could not add {}: {}".format(header, getattr(e, "strerror", None) or str(e)))
         # The write flow runs on a snapshot from before the add; re-read so
         # the section is present for the conflict / canbus / "not in" checks.
-        sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports,
-                                idents=idents)
+        sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports, idents=idents)
     if not as_json:
         # --json means stdout is exactly one JSON document: no port rows, no
         # advice, no "Wrote serial to". Diagnostics go to stderr instead.
@@ -1805,12 +1975,16 @@ def cmd_serial(args):
         if len(ports) == 1:
             target = ports[0]["path"]
         elif not ports:
-            _die("No USB printer board detected, so --auto has nothing to "
-                 "pick. Plug it in and retry, or name the port: "
-                 "klipperformac serial --set /dev/cu.usbmodem14101")
+            _die(
+                "No USB printer board detected, so --auto has nothing to "
+                "pick. Plug it in and retry, or name the port: "
+                "klipperformac serial --set /dev/cu.usbmodem14101"
+            )
         else:
-            _die("--auto: {} candidates found; pick one of the above: "
-                 "klipperformac serial --set PATH".format(len(ports)))
+            _die(
+                "--auto: {} candidates found; pick one of the above: "
+                "klipperformac serial --set PATH".format(len(ports))
+            )
     if args.sync:
         if not paths.PRINTER_CFG.exists():
             _die("No printer.cfg yet. Run: klipperformac setup")
@@ -1824,9 +1998,11 @@ def cmd_serial(args):
         for text in synced:
             print(text)
         if as_json:
-            print(_mcu_json_line(_mcu_entries(
-                cfg_path=paths.PRINTER_CFG, ports=sync_ports,
-                idents=sync_idents)))
+            print(
+                _mcu_json_line(
+                    _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=sync_ports, idents=sync_idents)
+                )
+            )
         if not sync_ok:
             sys.exit(2)
         return
@@ -1837,17 +2013,18 @@ def cmd_serial(args):
             print(_mcu_json_line(entries))
             return
         if not ports:
-            print("No USB serial devices found. Connect the printer board and "
-                  "retry.")
+            print("No USB serial devices found. Connect the printer board and retry.")
         if entries:
             for line in _mcu_table_lines(entries, ports):
                 print(line)
         for note in _serial_notes(ports, rows, claims):
             print(note)
         if ports:
-            print("\nTo use one: klipperformac serial --set "
-                  "/dev/cu.usbserial-XXXX [MCUNAME] (or --auto for the first "
-                  "above)")
+            print(
+                "\nTo use one: klipperformac serial --set "
+                "/dev/cu.usbserial-XXXX [MCUNAME] (or --auto for the first "
+                "above)"
+            )
         return
     # From here the user asked for a specific port: an exit 0 that wrote
     # nothing (no device scanned, no printer.cfg, no [mcu]) is a lie that CI,
@@ -1858,29 +2035,34 @@ def cmd_serial(args):
         _die("Invalid device path: must not contain newlines")
     header = detect.mcu_header(name)
     if header is None:
-        _die("Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
-             "klipper would read a section back as a different object than the "
-             "name you typed.".format(name))
-    sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports,
-                            idents=idents)
+        _die(
+            "Invalid MCU name '{}': one word, no spaces, no ':' or ']' - "
+            "klipper would read a section back as a different object than the "
+            "name you typed.".format(name)
+        )
+    sections = _mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports, idents=idents)
     names = [e["mcu"] for e in sections if e.get("configured", True)]
     if name not in names:
-        _die("No {} section in {}: nothing was written. Available: {} "
-             "(klipperformac serial --json gives every section with its port)."
-             .format(header, paths.PRINTER_CFG,
-                     ", ".join(e["section"] for e in sections
-                               if e.get("configured", True))
-                     or "no MCU section at all"))
-    target_section = [e for e in sections
-                      if e["mcu"] == name and e.get("configured", True)]
+        _die(
+            "No {} section in {}: nothing was written. Available: {} "
+            "(klipperformac serial --json gives every section with its port).".format(
+                header,
+                paths.PRINTER_CFG,
+                ", ".join(e["section"] for e in sections if e.get("configured", True))
+                or "no MCU section at all",
+            )
+        )
+    target_section = [e for e in sections if e["mcu"] == name and e.get("configured", True)]
     if target_section and target_section[0].get("canbus"):
         # mcu.py:780-791 - `canbus_uuid` WINS and the serial line is never even
         # read, so writing one into a CAN section is a config edit that does
         # nothing and looks like it did something. AGENTS.md rule 2: never change
         # printer.cfg semantics silently.
-        _die("{} connects over CAN (canbus_uuid: {}): a serial: line there is "
-             "read by nothing (klippy/mcu.py:780-791). Nothing was written to "
-             "{}.".format(header, target_section[0]["canbus"], header))
+        _die(
+            "{} connects over CAN (canbus_uuid: {}): a serial: line there is "
+            "read by nothing (klippy/mcu.py:780-791). Nothing was written to "
+            "{}.".format(header, target_section[0]["canbus"], header)
+        )
     holders = {}
     for e in sections:
         if e.get("claimed") and e.get("serial"):
@@ -1890,29 +2072,40 @@ def cmd_serial(args):
         # Two sections on one node is not advice, it is a dead printer: klippy
         # holds a port exclusively and the second board retries for 90 s and
         # then errors. Refusing the write is the only honest answer here.
-        _die("{} is already claimed by {} in printer.cfg: refusing to point "
-             "{} at the same port. One klippy can hold it, the other retries "
-             "for 90 s and then errors. Give {} its own port.".format(
-                 target, held[1], header, header))
+        _die(
+            "{} is already claimed by {} in printer.cfg: refusing to point "
+            "{} at the same port. One klippy can hold it, the other retries "
+            "for 90 s and then errors. Give {} its own port.".format(
+                target, held[1], header, header
+            )
+        )
     if not os.path.exists(target):
-        _die("{} is not a device that exists right now: nothing was written "
-             "to {}".format(target, paths.PRINTER_CFG))
+        _die(
+            "{} is not a device that exists right now: nothing was written to {}".format(
+                target, paths.PRINTER_CFG
+            )
+        )
     wrote, reason = _write_mcu_serial(paths.PRINTER_CFG, target, name)
     if wrote:
         if target not in [p["path"] for p in ports]:
-            note = ("[!] {} was not on the scanned list; a device node that "
-                    "exists is accepted anyway (the scanner only knows the "
-                    "common USB-serial name families)".format(target))
+            note = (
+                "[!] {} was not on the scanned list; a device node that "
+                "exists is accepted anyway (the scanner only knows the "
+                "common USB-serial name families)".format(target)
+            )
             print(note, file=sys.stderr if as_json else sys.stdout)
         if as_json:
-            print(_mcu_json_line(_mcu_entries(
-                cfg_path=paths.PRINTER_CFG, ports=ports, idents=idents)))
+            print(
+                _mcu_json_line(_mcu_entries(cfg_path=paths.PRINTER_CFG, ports=ports, idents=idents))
+            )
         else:
             print("Wrote serial to {} for {}".format(paths.PRINTER_CFG, header))
     else:
-        _die("Could not write the serial: line for {} in {}: {}".format(
-            header, paths.PRINTER_CFG,
-            reason or "no such section, or the file refused it"))
+        _die(
+            "Could not write the serial: line for {} in {}: {}".format(
+                header, paths.PRINTER_CFG, reason or "no such section, or the file refused it"
+            )
+        )
 
 
 def relocate_data(new):
@@ -1923,13 +2116,16 @@ def relocate_data(new):
     typed = str(new)
     new = Path(new).expanduser()
     if not typed.strip():
-        return ("Refusing to use a blank name as the data folder. Give a full "
-                "path, e.g. /Volumes/BigDrive/klipper-data.")
+        return (
+            "Refusing to use a blank name as the data folder. Give a full "
+            "path, e.g. /Volumes/BigDrive/klipper-data."
+        )
     if not new.is_absolute():
-        return ("Refusing to use the relative path '{}' as the data folder: "
-                "the stack is started from a different folder than this "
-                "terminal, so give a full path (starting with / or ~)."
-                .format(typed))
+        return (
+            "Refusing to use the relative path '{}' as the data folder: "
+            "the stack is started from a different folder than this "
+            "terminal, so give a full path (starting with / or ~).".format(typed)
+        )
     if paths.path_exists(new):
         new = new.resolve()
     old = paths.DATA
@@ -1939,37 +2135,39 @@ def relocate_data(new):
     if new == Path.home() or new.parent == new:
         return "Refusing to use {} as the data folder.".format(new)
     if paths.protected_data_dir(new):
-        return ("Refusing to use {} as the data folder: that is one of your "
-                "own document folders (or your home). `klipperformac "
-                "uninstall --data` deletes the data folder, and a top-level "
-                "folder holds far more than the printer. Give a folder of its "
-                "own, e.g. {}").format(new, paths.DEFAULT_DATA / "data")
+        return (
+            "Refusing to use {} as the data folder: that is one of your "
+            "own document folders (or your home). `klipperformac "
+            "uninstall --data` deletes the data folder, and a top-level "
+            "folder holds far more than the printer. Give a folder of its "
+            "own, e.g. {}"
+        ).format(new, paths.DEFAULT_DATA / "data")
     if paths.is_dir(new):
         try:
             entries = [p for p in new.iterdir() if not p.name.startswith(".")]
         except OSError as e:
-            _die("Invalid data folder {}: {}".format(
-                new, getattr(e, "strerror", None) or e))
+            _die("Invalid data folder {}: {}".format(new, getattr(e, "strerror", None) or e))
         if entries and not paths.looks_like_data_dir(new):
-            return ("Refusing to move the printer data into {}: it already "
-                    "holds {} item(s) and does not look like a Klipper-for-Mac "
-                    "data folder (no config/printer.cfg, no run/logs/gcodes). "
-                    "Create an empty folder for it first - `uninstall --data` "
-                    "would otherwise delete somebody else's files"
-                    .format(new, len(entries)))
+            return (
+                "Refusing to move the printer data into {}: it already "
+                "holds {} item(s) and does not look like a Klipper-for-Mac "
+                "data folder (no config/printer.cfg, no run/logs/gcodes). "
+                "Create an empty folder for it first - `uninstall --data` "
+                "would otherwise delete somebody else's files".format(new, len(entries))
+            )
         if entries:
-            print("[!] {}: already holds a Klipper-for-Mac data folder; "
-                  "merging into it".format(new))
-    if os.path.realpath(str(new)).startswith(
-            os.path.realpath(str(old)) + os.sep):
-        _die("Invalid data folder {}: it is inside the current data folder "
-             "{}. Move the folder you want to use out of it first."
-             .format(new, old))
+            print(
+                "[!] {}: already holds a Klipper-for-Mac data folder; merging into it".format(new)
+            )
+    if os.path.realpath(str(new)).startswith(os.path.realpath(str(old)) + os.sep):
+        _die(
+            "Invalid data folder {}: it is inside the current data folder "
+            "{}. Move the folder you want to use out of it first.".format(new, old)
+        )
     try:
         new.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError) as e:
-        _die("Invalid data folder {}: {}".format(
-            new, getattr(e, "strerror", None) or e))
+        _die("Invalid data folder {}: {}".format(new, getattr(e, "strerror", None) or e))
     was_running = process.running() is not None
     if was_running:
         process.stop()
@@ -1981,8 +2179,7 @@ def relocate_data(new):
             for p in sorted(old.iterdir()):
                 dest = new / p.name
                 if paths.path_exists(dest):
-                    print("[!] " + str(dest) + " already exists — left "
-                          + str(p) + " in place")
+                    print("[!] " + str(dest) + " already exists — left " + str(p) + " in place")
                     continue
                 shutil.move(str(p), str(dest))
                 moved += 1
@@ -1990,9 +2187,12 @@ def relocate_data(new):
     except (OSError, ValueError, shutil.Error) as e:
         if was_running:
             process.start()
-        _die("Could not move the data folder to {}: {} (some items may have "
-             "moved; the data folder is still {} and nothing was recorded)"
-             .format(new, getattr(e, "strerror", None) or e, old))
+        _die(
+            "Could not move the data folder to {}: {} (some items may have "
+            "moved; the data folder is still {} and nothing was recorded)".format(
+                new, getattr(e, "strerror", None) or e, old
+            )
+        )
 
     def _rollback(reason):
         problems = []
@@ -2003,27 +2203,33 @@ def relocate_data(new):
                 if src.exists() and not dest.exists():
                     shutil.move(str(src), str(dest))
             except (OSError, ValueError, shutil.Error) as e:
-                problems.append("could not move {} back: {}".format(
-                    src, getattr(e, "strerror", None) or e))
+                problems.append(
+                    "could not move {} back: {}".format(src, getattr(e, "strerror", None) or e)
+                )
         paths.set_data(old)
         try:
             paths.ensure_dirs()
         except (OSError, ValueError) as e:
-            problems.append("could not restore old paths: {}".format(
-                getattr(e, "strerror", None) or e))
+            problems.append(
+                "could not restore old paths: {}".format(getattr(e, "strerror", None) or e)
+            )
         try:
             if old_settings:
                 paths.save_settings(old_settings)
             elif paths.SETTINGS.exists():
                 paths.SETTINGS.unlink()
         except OSError as e:
-            problems.append("could not restore settings: {}".format(
-                getattr(e, "strerror", None) or e))
+            problems.append(
+                "could not restore settings: {}".format(getattr(e, "strerror", None) or e)
+            )
         if was_running and not process.start():
             problems.append("the previously running stack did not restart")
         detail = ("; rollback notes: " + "; ".join(problems)) if problems else ""
-        _die("Could not switch the data folder to {}: {}. Rolled back to {}{}"
-             .format(new, reason, old, detail))
+        _die(
+            "Could not switch the data folder to {}: {}. Rolled back to {}{}".format(
+                new, reason, old, detail
+            )
+        )
 
     paths.set_data(new)
     try:
@@ -2153,8 +2359,11 @@ def _copy_atomic(src, dst, what=None):
         except OSError:
             pass
         if what is not None:
-            _die("Cannot {}: {} (nothing was written)".format(
-                what, getattr(e, "strerror", None) or e))
+            _die(
+                "Cannot {}: {} (nothing was written)".format(
+                    what, getattr(e, "strerror", None) or e
+                )
+            )
         raise
 
 
@@ -2229,8 +2438,7 @@ def auto_serial(cfg_path):
     rows = _parse_mcu_sections(text)
     if not rows:
         return _auto_serial_single(cfg_path, text)
-    bare = [r for r in rows if not _real_serial(r.get("serial"))
-            and not r.get("canbus")]
+    bare = [r for r in rows if not _real_serial(r.get("serial")) and not r.get("canbus")]
     need = [r for r in bare if not r.get("bad_name")]
     lines = [_mcu_bad_section_line(r) for r in bare if r.get("bad_name")]
     if not need:
@@ -2239,9 +2447,11 @@ def auto_serial(cfg_path):
         return ["Serial port already set in printer.cfg."], True
     ports = detect.scan()
     if not ports:
-        return lines + ["No USB printer board detected. Plug it in, then pick "
-                        "it under Serial device (or: klipperformac serial "
-                        "--auto)."], False
+        return lines + [
+            "No USB printer board detected. Plug it in, then pick "
+            "it under Serial device (or: klipperformac serial "
+            "--auto)."
+        ], False
     claimed = {r["serial"] for r in rows if r.get("serial")}
     # one ioreg, and only for a config that actually binds a section to an
     # identity: without a marker there is nothing to resolve.
@@ -2259,52 +2469,72 @@ def auto_serial(cfg_path):
         hit = _mcu_ident_by_key(idents, key)
         label = _mcu_section_label(row["mcu"])
         if hit is None:
-            lines.append("[!] {} is bound to identity {}, which is not attached "
-                         "right now: nothing was guessed.".format(label, key))
+            lines.append(
+                "[!] {} is bound to identity {}, which is not attached "
+                "right now: nothing was guessed.".format(label, key)
+            )
             continue
         if hit["path"] in claimed or hit["path"] in used:
-            lines.append("[!] {}'s board {} is already claimed by another "
-                         "section: nothing was written for it.".format(
-                             label, hit["path"]))
+            lines.append(
+                "[!] {}'s board {} is already claimed by another "
+                "section: nothing was written for it.".format(label, hit["path"])
+            )
             continue
         wrote, why = _write_mcu_serial(cfg_path, hit["path"], row["mcu"])
         if wrote:
             used.add(hit["path"])
-            lines.append("Board connected: {}{} for {} (matched by identity "
-                         "{})".format(hit["path"],
-                                      _port_desc(ports, hit["path"]),
-                                      label, key))
+            lines.append(
+                "Board connected: {}{} for {} (matched by identity {})".format(
+                    hit["path"], _port_desc(ports, hit["path"]), label, key
+                )
+            )
         else:
-            lines.append("[!] could not write the serial: line for {}: {}"
-                         .format(label, why or "no such section, or it refused"))
-    free = [p for p in ports if p["path"] not in claimed
-            and p["path"] not in used]
+            lines.append(
+                "[!] could not write the serial: line for {}: {}".format(
+                    label, why or "no such section, or it refused"
+                )
+            )
+    free = [p for p in ports if p["path"] not in claimed and p["path"] not in used]
     if pending:
         if len(free) == 1 and len(pending) == 1:
             # The one guess this tool has always allowed: a single board and a
             # single section with no binding can only mean each other.
             row = pending[0]
-            wrote, why = _write_mcu_serial(cfg_path, free[0]["path"],
-                                           row["mcu"])
+            wrote, why = _write_mcu_serial(cfg_path, free[0]["path"], row["mcu"])
             if wrote:
-                lines.append("Board connected: {}{} for {}".format(
-                    free[0]["path"], _port_desc(ports, free[0]["path"]),
-                    _mcu_section_label(row["mcu"])))
+                lines.append(
+                    "Board connected: {}{} for {}".format(
+                        free[0]["path"],
+                        _port_desc(ports, free[0]["path"]),
+                        _mcu_section_label(row["mcu"]),
+                    )
+                )
             else:
-                lines.append("[!] could not write the serial: line for {}: {}"
-                             .format(_mcu_section_label(row["mcu"]),
-                                     why or "no such section, or it refused"))
+                lines.append(
+                    "[!] could not write the serial: line for {}: {}".format(
+                        _mcu_section_label(row["mcu"]), why or "no such section, or it refused"
+                    )
+                )
         elif not free:
-            lines.append("[!] no unclaimed USB board left for {}.".format(
-                ", ".join(_mcu_section_label(r["mcu"]) for r in pending)))
+            lines.append(
+                "[!] no unclaimed USB board left for {}.".format(
+                    ", ".join(_mcu_section_label(r["mcu"]) for r in pending)
+                )
+            )
         else:
-            out = ["Multiple USB devices found - pick one (then: "
-                   "klipperformac serial --set PATH MCUNAME):"]
-            out += ["  " + p["path"] + (" (" + p["description"] + ")"
-                                        if p["description"] else "")
-                    for p in free]
-            out.append("  {} still has no serial.".format(
-                ", ".join(_mcu_section_label(r["mcu"]) for r in pending)))
+            out = [
+                "Multiple USB devices found - pick one (then: "
+                "klipperformac serial --set PATH MCUNAME):"
+            ]
+            out += [
+                "  " + p["path"] + (" (" + p["description"] + ")" if p["description"] else "")
+                for p in free
+            ]
+            out.append(
+                "  {} still has no serial.".format(
+                    ", ".join(_mcu_section_label(r["mcu"]) for r in pending)
+                )
+            )
             lines.extend(out)
     return lines, not _mcu_sections_missing(cfg_path)
 
@@ -2316,16 +2546,17 @@ def _mcu_section_label(name):
 
 
 def _mcu_bad_section_line(row):
-    return ("[!] {} is not a section name this tool writes: klipper would read "
-            "a different object than you typed. Fix it by hand; nothing was "
-            "changed.".format(_mcu_section_label(row["mcu"])))
+    return (
+        "[!] {} is not a section name this tool writes: klipper would read "
+        "a different object than you typed. Fix it by hand; nothing was "
+        "changed.".format(_mcu_section_label(row["mcu"]))
+    )
 
 
 def _port_desc(ports, path):
     for p in ports:
         if p.get("path") == path:
-            return (" (" + p["description"] + ")") if p.get("description") \
-                else ""
+            return (" (" + p["description"] + ")") if p.get("description") else ""
     return ""
 
 
@@ -2343,8 +2574,7 @@ def _mcu_ident_by_key(idents, key):
         if str(ident.get("key") or "").strip().lower() == want:
             return ident
         vid_pid, serial = _mcu_key_parts(want)
-        if vid_pid and str(ident.get("vid_pid") or "").lower() == vid_pid \
-                and not serial:
+        if vid_pid and str(ident.get("vid_pid") or "").lower() == vid_pid and not serial:
             return ident
     return None
 
@@ -2357,8 +2587,10 @@ def _mcu_sections_missing(cfg_path):
     rows = _parse_mcu_sections(_cfg_text(cfg_path))
     if not rows:
         return True
-    return any(not r.get("bad_name") and not _real_serial(r.get("serial"))
-               and not r.get("canbus") for r in rows)
+    return any(
+        not r.get("bad_name") and not _real_serial(r.get("serial")) and not r.get("canbus")
+        for r in rows
+    )
 
 
 def _auto_serial_single(cfg_path, text):
@@ -2370,18 +2602,19 @@ def _auto_serial_single(cfg_path, text):
         return ["Serial port already set in printer.cfg."], True
     ports = detect.scan()
     if not ports:
-        return ["No USB printer board detected. Plug it in, then pick it "
-                "under Serial device (or: klipperformac serial --auto)."], False
+        return [
+            "No USB printer board detected. Plug it in, then pick it "
+            "under Serial device (or: klipperformac serial --auto)."
+        ], False
     if len(ports) > 1:
-        out = ["Multiple USB devices found - pick one (then: "
-               "klipperformac serial --set PATH):"]
-        out += ["  " + p["path"] + (" (" + p["description"] + ")"
-                                    if p["description"] else "")
-                for p in ports]
+        out = ["Multiple USB devices found - pick one (then: klipperformac serial --set PATH):"]
+        out += [
+            "  " + p["path"] + (" (" + p["description"] + ")" if p["description"] else "")
+            for p in ports
+        ]
         return out, False
     if detect.write_serial(cfg_path, ports[0]["path"]):
-        desc = (" (" + ports[0]["description"] + ")") \
-            if ports[0]["description"] else ""
+        desc = (" (" + ports[0]["description"] + ")") if ports[0]["description"] else ""
         return ["Board connected: " + ports[0]["path"] + desc], True
     return ["The config has no [mcu] section to put the serial port in."], False
 
@@ -2398,28 +2631,37 @@ def cmd_presets(args):
         names = catalog_names()
         src = names.get(args.use_library)
         if src is None:
-            _die("No library config '{}'. Browse them with: "
-                 "klipperformac presets --library".format(args.use_library))
+            _die(
+                "No library config '{}'. Browse them with: klipperformac presets --library".format(
+                    args.use_library
+                )
+            )
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-library")
-            _copy_atomic(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak",
-                         "keep the current config as printer.cfg.bak")
+            _copy_atomic(
+                paths.PRINTER_CFG,
+                paths.CONFIG / "printer.cfg.bak",
+                "keep the current config as printer.cfg.bak",
+            )
         name = args.use_library
-        _copy_atomic(src, paths.PRESETS / (name + ".cfg"),
-                     "stage library config '{}' as a preset".format(name))
-        _copy_atomic(src, paths.PRINTER_CFG,
-                     "apply library config '{}'".format(name))
+        _copy_atomic(
+            src,
+            paths.PRESETS / (name + ".cfg"),
+            "stage library config '{}' as a preset".format(name),
+        )
+        _copy_atomic(src, paths.PRINTER_CFG, "apply library config '{}'".format(name))
         print("Library config '{}' applied.".format(name))
         for line in auto_serial(paths.PRINTER_CFG)[0]:
             print(line)
         print("Restart to load it: klipperformac restart")
         return
     if args.history:
-        hist = sorted(_history_dir().glob("printer-*.cfg"),
-                      key=lambda p: p.name, reverse=True)
+        hist = sorted(_history_dir().glob("printer-*.cfg"), key=lambda p: p.name, reverse=True)
         if not hist:
-            print("No saved versions yet (they are created automatically "
-                  "when a config is applied or edited).")
+            print(
+                "No saved versions yet (they are created automatically "
+                "when a config is applied or edited)."
+            )
             return
         for p in hist:
             print("  " + p.name)
@@ -2431,29 +2673,29 @@ def cmd_presets(args):
         if not src.exists():
             cand = sorted(_history_dir().glob("*" + args.restore + "*"))
             if len(cand) != 1:
-                _die("No saved version matching '{}' (see: "
-                     "klipperformac presets --history)".format(args.restore))
+                _die(
+                    "No saved version matching '{}' (see: klipperformac presets --history)".format(
+                        args.restore
+                    )
+                )
             src = cand[0]
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-restore")
-        _copy_atomic(src, paths.PRINTER_CFG,
-                     "restore saved version '{}'".format(src.name))
-        print("Restored {} as the current config. "
-              "Restart to load it.".format(src.name))
+        _copy_atomic(src, paths.PRINTER_CFG, "restore saved version '{}'".format(src.name))
+        print("Restored {} as the current config. Restart to load it.".format(src.name))
         return
     if args.snapshot:
-        dest = snapshot_printer_cfg(args.snapshot if args.snapshot is True
-                                    else args.snapshot)
-        print("Version saved: " + (dest.name if dest
-                                   else "unchanged since the last one"))
+        dest = snapshot_printer_cfg(args.snapshot if args.snapshot is True else args.snapshot)
+        print("Version saved: " + (dest.name if dest else "unchanged since the last one"))
         return
     if args.save:
         if not paths.PRINTER_CFG.exists():
             _die("No printer.cfg to save")
         _safe_name(args.save, "preset name")
         dst = paths.PRESETS / (args.save + ".cfg")
-        _copy_atomic(paths.PRINTER_CFG, dst,
-                     "save the current config as preset '{}'".format(args.save))
+        _copy_atomic(
+            paths.PRINTER_CFG, dst, "save the current config as preset '{}'".format(args.save)
+        )
         print("Saved preset '{}' -> {}".format(args.save, dst))
         return
     if args.use:
@@ -2464,12 +2706,13 @@ def cmd_presets(args):
             _die("No preset '{}'. Available: {}".format(args.use, ", ".join(avail) or "none"))
         if paths.PRINTER_CFG.exists():
             snapshot_printer_cfg("before-preset")
-            _copy_atomic(paths.PRINTER_CFG, paths.CONFIG / "printer.cfg.bak",
-                         "keep the current config as printer.cfg.bak")
-        _copy_atomic(src, paths.PRINTER_CFG,
-                     "apply preset '{}'".format(args.use))
-        print("Preset '{}' applied (previous config kept as printer.cfg.bak)."
-              .format(args.use))
+            _copy_atomic(
+                paths.PRINTER_CFG,
+                paths.CONFIG / "printer.cfg.bak",
+                "keep the current config as printer.cfg.bak",
+            )
+        _copy_atomic(src, paths.PRINTER_CFG, "apply preset '{}'".format(args.use))
+        print("Preset '{}' applied (previous config kept as printer.cfg.bak).".format(args.use))
         if args.auto_serial:
             for line in auto_serial(paths.PRINTER_CFG)[0]:
                 print(line)
@@ -2487,15 +2730,18 @@ def cmd_presets(args):
         # network-served folder is not, so the source has to look like a config.
         size = os.path.getsize(src)
         if size > PRESET_IMPORT_MAX_BYTES:
-            _die("Refusing to import {}: it is {} bytes, over the {} byte "
-                 "limit for presets. A printer.cfg is a few kB; import the "
-                 "config, not the file it is not.".format(
-                     src, size, PRESET_IMPORT_MAX_BYTES))
+            _die(
+                "Refusing to import {}: it is {} bytes, over the {} byte "
+                "limit for presets. A printer.cfg is a few kB; import the "
+                "config, not the file it is not.".format(src, size, PRESET_IMPORT_MAX_BYTES)
+            )
         with open(src, "rb") as f:
             head = f.read(min(size, 8192))
         if b"\0" in head:
-            _die("Refusing to import {}: it is binary (contains a NUL byte), "
-                 "not a Klipper config.".format(src))
+            _die(
+                "Refusing to import {}: it is binary (contains a NUL byte), "
+                "not a Klipper config.".format(src)
+            )
         name = args.import_name or os.path.splitext(os.path.basename(src))[0]
         _safe_name(name, "preset name")
         dst = paths.PRESETS / (name + ".cfg")
@@ -2510,8 +2756,7 @@ def cmd_presets(args):
             for warn in _mcu_conflicts(dst):
                 print("[!] " + warn, file=sys.stderr)
         except Exception as e:
-            print("[!] multi-MCU check did not run: {}".format(e),
-                  file=sys.stderr)
+            print("[!] multi-MCU check did not run: {}".format(e), file=sys.stderr)
         return
     presets = sorted(paths.PRESETS.glob("*.cfg"))
     if not presets:
@@ -2522,8 +2767,7 @@ def cmd_presets(args):
     # Compared as bytes: a preset saved by an editor in cp1252 must still be
     # recognised, and read_text() would have crashed on that one byte (the
     # whole `presets` listing is a read-only view, so it never gets to choose).
-    current = paths.PRINTER_CFG.read_bytes() if paths.PRINTER_CFG.is_file() \
-        else None
+    current = paths.PRINTER_CFG.read_bytes() if paths.PRINTER_CFG.is_file() else None
     for p in presets:
         try:
             same = p.read_bytes() == current
@@ -2541,6 +2785,7 @@ def cmd_backup(args):
     backup is imported here rather than at module scope for the same reason tui
     is: cli.py must not need the whole module to parse `klipperformac status`."""
     from . import backup
+
     backup.dispatch(args)
 
 
@@ -2553,6 +2798,7 @@ def cmd_flash(args):
     module is imported here rather than at module scope so `klipperformac status`
     does not need it."""
     from . import flash
+
     code = flash.dispatch(args)
     if code:
         sys.exit(code)
@@ -2573,8 +2819,11 @@ def _klippy_console(cmd, timeout=6):
     except OSError as e:
         # A directory, an unreadable node or a unix socket is not a console:
         # same hint as "not there", never a traceback.
-        _die("No Klipper console at {} ({}) (is the stack up?)".format(
-            pty_path, getattr(e, "strerror", None) or e))
+        _die(
+            "No Klipper console at {} ({}) (is the stack up?)".format(
+                pty_path, getattr(e, "strerror", None) or e
+            )
+        )
     lines = []
     try:
         _os.write(fd, (cmd + "\n").encode())
@@ -2627,18 +2876,34 @@ def cmd_gcode(args):
             answer = _json.loads(out)
         except ValueError:
             # Whitespace flattened: a response body must never forge a CLI line.
-            _die("Moonraker's answer on port {} is not JSON (is another "
-                 "service using that port?): {}".format(
-                     paths.MOONRAKER_PORT,
-                     " ".join(out[:120].split()) or "(empty response)"))
+            _die(
+                "Moonraker's answer on port {} is not JSON (is another "
+                "service using that port?): {}".format(
+                    paths.MOONRAKER_PORT, " ".join(out[:120].split()) or "(empty response)"
+                )
+            )
         print(_json.dumps(answer, indent=2)[:1500])
         return
     script = " ".join(args.script)
     if not script.strip():
-        _die("Nothing to send. Usage: klipperformac gcode G1 X10 F600  "
-             "(or: klipperformac gcode STATUS / --status)")
-    if script.strip().upper() in ("STATUS", "RESTART", "FIRMWARE_RESTART", "HELP",
-                                  "QUERY_ENDSTOPS"):
+        _die(
+            "Nothing to send. Usage: klipperformac gcode G1 X10 F600  "
+            "(or: klipperformac gcode STATUS / --status)"
+        )
+    if script.strip().upper() in (
+        "STATUS",
+        "RESTART",
+        "FIRMWARE_RESTART",
+        "HELP",
+        "QUERY_ENDSTOPS",
+    ):
+        verb = script.strip().split()[0].upper() if script.strip() else ""
+        if verb in ("RESTART", "FIRMWARE_RESTART"):
+            # RESTART reloads printer.cfg; keep serial paths current before the
+            # host re-reads config (and for FIRMWARE_RESTART keep disk state in
+            # sync for the next reload/reconnect). Only serial: lines change.
+            for line in _sync_serials_best_effort(verb.lower()):
+                print(line)
         _klippy_console(script)
         return
     url = base + "/printer/gcode/script?script=" + quote(script, safe="")
@@ -2658,12 +2923,14 @@ def cmd_gcode(args):
         reason = body
         try:
             answer = json.loads(body)
-            reason = ((answer.get("error") or {}).get("message")
-                      or json.dumps(answer)[:200])
+            reason = (answer.get("error") or {}).get("message") or json.dumps(answer)[:200]
         except ValueError:
             pass
-        _die("Moonraker rejected the script (HTTP {}): {}".format(
-            e.code, " ".join(str(reason).split())[:300] or "(no reason given)"))
+        _die(
+            "Moonraker rejected the script (HTTP {}): {}".format(
+                e.code, " ".join(str(reason).split())[:300] or "(no reason given)"
+            )
+        )
     except Exception as e:
         _die("Moonraker not reachable (is it up?): " + str(e))
     print("sent: " + script + "  (output appears in: klipperformac logs)")
@@ -2686,9 +2953,12 @@ def cmd_cam(args):
         # the recording is written by the one camera process, since a Mac gives
         # each camera a single AVCaptureSession. cam.record() owns the whole
         # grammar, including the capability probe that refuses an old helper.
-        ok, lines = cam.record(args.path, secs=args.seconds, mic=args.mic,
-                               audio=None if args.audio is None
-                               else args.audio == "on")
+        ok, lines = cam.record(
+            args.path,
+            secs=args.seconds,
+            mic=args.mic,
+            audio=None if args.audio is None else args.audio == "on",
+        )
     elif action == "mics":
         ok, lines = cam.mics()
     elif action == "mic-permission":
@@ -2702,11 +2972,18 @@ def cmd_cam(args):
             if value is None:
                 continue
             if flag not in ("device", "mic"):
-                lo, hi = {"width": (160, 4096), "height": (120, 4096),
-                          "fps": (1, 60), "quality": (1, 100)}[flag]
+                lo, hi = {
+                    "width": (160, 4096),
+                    "height": (120, 4096),
+                    "fps": (1, 60),
+                    "quality": (1, 100),
+                }[flag]
                 if not lo <= value <= hi:
-                    _die("cam config: {} must be between {} and {} "
-                         "(got {})".format(flag, lo, hi, value))
+                    _die(
+                        "cam config: {} must be between {} and {} (got {})".format(
+                            flag, lo, hi, value
+                        )
+                    )
             kw[flag] = value
         if getattr(args, "audio", None) is not None:
             kw["audio"] = args.audio == "on"
@@ -2714,23 +2991,29 @@ def cmd_cam(args):
             try:
                 cam.save_prefs(**kw)
             except OSError as e:
-                _die("Could not write {} (your camera settings are "
-                     "unchanged): {}".format(
-                         paths.SETTINGS, getattr(e, "strerror", None) or e))
+                _die(
+                    "Could not write {} (your camera settings are unchanged): {}".format(
+                        paths.SETTINGS, getattr(e, "strerror", None) or e
+                    )
+                )
             ok = True
-            lines = ["Saved camera settings: " + ", ".join(
-                "{}={}".format(k, kw[k]) for k in sorted(kw)),
-                "Turn the camera off and on again to apply."]
+            lines = [
+                "Saved camera settings: " + ", ".join("{}={}".format(k, kw[k]) for k in sorted(kw)),
+                "Turn the camera off and on again to apply.",
+            ]
         else:
             ok = True
             p = cam.prefs()
             lines = ["Camera settings:"] + [
-                "  {:<9} {}".format(k, p.get(k)) for k in
-                ("device", "width", "height", "fps", "quality", "mic")]
-            lines.append("  {:<9} {}".format(
-                "audio", "on" if cam._as_bool(p.get("audio")) else "off"))
-            lines.append("Change with: klipperformac cam config --fps 20 "
-                         "--quality 90 --device <camera name>")
+                "  {:<9} {}".format(k, p.get(k))
+                for k in ("device", "width", "height", "fps", "quality", "mic")
+            ]
+            lines.append(
+                "  {:<9} {}".format("audio", "on" if cam._as_bool(p.get("audio")) else "off")
+            )
+            lines.append(
+                "Change with: klipperformac cam config --fps 20 --quality 90 --device <camera name>"
+            )
     print("\n".join(lines) if isinstance(lines, list) else str(lines))
     if not ok:
         sys.exit(1)
@@ -2750,13 +3033,16 @@ def cmd_batteryguard(args):
             return None
         if value in on_off:
             return on_off[value]
-        _die("batteryguard: --{} must be on or off (got '{}')".format(
-            name, value))
+        _die("batteryguard: --{} must be on or off (got '{}')".format(name, value))
 
     patch = {}
-    for flag, key in (("pause_at", "pauseAt"), ("critical_at", "criticalAt"),
-                      ("poll", "pollSec"), ("at_pause", "atPause"),
-                      ("at_critical", "atCritical")):
+    for flag, key in (
+        ("pause_at", "pauseAt"),
+        ("critical_at", "criticalAt"),
+        ("poll", "pollSec"),
+        ("at_pause", "atPause"),
+        ("at_critical", "atCritical"),
+    ):
         value = getattr(args, flag, None)
         if value is None:
             continue
@@ -2781,29 +3067,42 @@ def cmd_batteryguard(args):
         try:
             batteryguard.save_battery_settings(**checked)
         except OSError as e:
-            _die("Could not write {} (your settings are unchanged): {}".format(
-                paths.SETTINGS, getattr(e, "strerror", None) or e))
+            _die(
+                "Could not write {} (your settings are unchanged): {}".format(
+                    paths.SETTINGS, getattr(e, "strerror", None) or e
+                )
+            )
         cfg = batteryguard.battery_settings()
-        print("Battery settings: pause {}%, critical {}%, poll {}s, "
-              "at pause {}, at critical {}, resume on AC {}, "
-              "notifications {}, dry run {}.".format(
-                  cfg["pauseAt"], cfg["criticalAt"], cfg["pollSec"],
-                  cfg["atPause"], cfg["atCritical"],
-                  "on" if cfg["resumeOnAc"] else "off",
-                  "on" if cfg["notify"] else "off",
-                  "on" if cfg["dryRun"] else "off"))
+        print(
+            "Battery settings: pause {}%, critical {}%, poll {}s, "
+            "at pause {}, at critical {}, resume on AC {}, "
+            "notifications {}, dry run {}.".format(
+                cfg["pauseAt"],
+                cfg["criticalAt"],
+                cfg["pollSec"],
+                cfg["atPause"],
+                cfg["atCritical"],
+                "on" if cfg["resumeOnAc"] else "off",
+                "on" if cfg["notify"] else "off",
+                "on" if cfg["dryRun"] else "off",
+            )
+        )
         if action == "set":
-            print("Nothing was started or stopped. A running guard re-reads "
-                  "these on its next poll; turn it on with: klipperformac "
-                  "batteryguard on")
+            print(
+                "Nothing was started or stopped. A running guard re-reads "
+                "these on its next poll; turn it on with: klipperformac "
+                "batteryguard on"
+            )
             return
 
     if action == "on":
         with _cli_lock():
             ok, lines = batteryguard.start()
         if ok and process.running() is None:
-            lines.append("[!] The stack is down, so there is nothing to pause "
-                         "yet; `klipperformac up` starts the guard with it.")
+            lines.append(
+                "[!] The stack is down, so there is nothing to pause "
+                "yet; `klipperformac up` starts the guard with it."
+            )
         print("\n".join(lines))
         if not ok:
             sys.exit(1)
@@ -2813,8 +3112,11 @@ def cmd_batteryguard(args):
         try:
             batteryguard.save_battery_settings(enabled=False)
         except OSError as e:
-            _die("Could not write {} (your settings are unchanged): {}".format(
-                paths.SETTINGS, getattr(e, "strerror", None) or e))
+            _die(
+                "Could not write {} (your settings are unchanged): {}".format(
+                    paths.SETTINGS, getattr(e, "strerror", None) or e
+                )
+            )
         with _cli_lock():
             ok, lines = batteryguard.stop()
         print("\n".join(lines))
@@ -2831,16 +3133,17 @@ def cmd_batteryguard(args):
         percent = getattr(args, "percent", None)
         source = getattr(args, "source", None)
         if percent is not None and batteryguard.clean_percent(percent) is None:
-            _die("batteryguard check: --percent needs a battery percentage "
-                 "0-100 (got {!r})".format(percent))
+            _die(
+                "batteryguard check: --percent needs a battery percentage 0-100 (got {!r})".format(
+                    percent
+                )
+            )
         if percent is not None and source is None:
             # An injected level without a source would be a guess about whether
             # this Mac is even at risk: refuse instead of defaulting to battery.
-            _die("batteryguard check: --percent {} also needs --source "
-                 "battery|ac".format(percent))
+            _die("batteryguard check: --percent {} also needs --source battery|ac".format(percent))
         dry = bool(getattr(args, "dry_run", False))
-        ok, _lines, _episode = batteryguard.check(percent=percent,
-                                                 source=source, dry=dry)
+        ok, _lines, _episode = batteryguard.check(percent=percent, source=source, dry=dry)
         if not ok:
             sys.exit(1)
         return
@@ -2860,25 +3163,40 @@ def cmd_powerloss(args):
             wanted["intervalSec"] = args.interval
         cfg = _save_powerloss(**wanted)
         if action == "on":
-            print("Power-loss journal ON: every {}s a print is active, one line "
-                  "lands in\n  {}  (cap {} bytes, newest {} records kept)".format(
-                      cfg["intervalSec"], powerloss.journal_path(),
-                      cfg["maxBytes"], cfg["keepRecords"]))
-            print("Nothing writes while no print is running, and nothing is ever "
-                  "resumed automatically.")
-            print("To keep polling while you print, run in another terminal (or "
-                  "backgrounded):\n  klipperformac powerloss watch")
-            print("`up` does not start that loop on its own: a resident disk "
-                  "writer is yours to turn on.")
+            print(
+                "Power-loss journal ON: every {}s a print is active, one line "
+                "lands in\n  {}  (cap {} bytes, newest {} records kept)".format(
+                    cfg["intervalSec"],
+                    powerloss.journal_path(),
+                    cfg["maxBytes"],
+                    cfg["keepRecords"],
+                )
+            )
+            print(
+                "Nothing writes while no print is running, and nothing is ever "
+                "resumed automatically."
+            )
+            print(
+                "To keep polling while you print, run in another terminal (or "
+                "backgrounded):\n  klipperformac powerloss watch"
+            )
+            print(
+                "`up` does not start that loop on its own: a resident disk "
+                "writer is yours to turn on."
+            )
         else:
-            print("Power-loss journal OFF (snapshots stop; the journal file and "
-                  "the stop markers stay: {})".format(powerloss.folder()))
+            print(
+                "Power-loss journal OFF (snapshots stop; the journal file and "
+                "the stop markers stay: {})".format(powerloss.folder())
+            )
         return
     if action == "snapshot":
         record = powerloss.journal_tick(force=True)
         if record is None:
-            print("Nothing to journal: no print is running (the journal records "
-                  "only while klipper is printing or paused).")
+            print(
+                "Nothing to journal: no print is running (the journal records "
+                "only while klipper is printing or paused)."
+            )
             return
         print(powerloss.describe_record(record))
         return
@@ -2886,17 +3204,20 @@ def cmd_powerloss(args):
         cfg = powerloss.settings()
         if not cfg["journal"]:
             _die("The journal is off: klipperformac powerloss on")
-        print("Journaling every {}s until the stack stops answering "
-              "(Ctrl-C ends it).".format(cfg["intervalSec"]))
-        written = powerloss.watch(interval=getattr(args, "interval", None),
-                                  sweeps=getattr(args, "sweeps", None))
+        print(
+            "Journaling every {}s until the stack stops answering (Ctrl-C ends it).".format(
+                cfg["intervalSec"]
+            )
+        )
+        written = powerloss.watch(
+            interval=getattr(args, "interval", None), sweeps=getattr(args, "sweeps", None)
+        )
         print("Journaled {} snapshot(s).".format(written))
         return
     if action == "tail":
         lines = powerloss.tail_lines(getattr(args, "lines", 10))
         if not lines:
-            print("Journal is empty (klipperformac powerloss on, then print "
-                  "something).")
+            print("Journal is empty (klipperformac powerloss on, then print something).")
             return
         print("\n".join(lines))
         return
@@ -2912,41 +3233,51 @@ def cmd_powerloss_test(args):
     because it ends a print on purpose (AGENTS.md: nothing destructive by
     default) and it drives a real board."""
     if os.environ.get("KLIPPERFORMAC_ALLOW_LIVE") != "1":
-        _die("klipperformac powerloss-test SIGKILLs a printing klipper, then a "
-             "printing Moonraker, on the board attached to this Mac.\n"
-             "     That is what the test proves, so it only runs when you say "
-             "the board is yours to cut off:\n"
-             "         KLIPPERFORMAC_ALLOW_LIVE=1 klipperformac powerloss-test\n"
-             "     (offline evidence for the same sequence: "
-             "tests/powerloss/test_kill_sequence_machine.py)")
+        _die(
+            "klipperformac powerloss-test SIGKILLs a printing klipper, then a "
+            "printing Moonraker, on the board attached to this Mac.\n"
+            "     That is what the test proves, so it only runs when you say "
+            "the board is yours to cut off:\n"
+            "         KLIPPERFORMAC_ALLOW_LIVE=1 klipperformac powerloss-test\n"
+            "     (offline evidence for the same sequence: "
+            "tests/powerloss/test_kill_sequence_machine.py)"
+        )
     if not _powerloss_stack_up():
-        _die("The stack is not up (klipper and moonraker both have to be "
-             "running): klipperformac up, then wait for `klippy ready`")
+        _die(
+            "The stack is not up (klipper and moonraker both have to be "
+            "running): klipperformac up, then wait for `klippy ready`"
+        )
     # The one thing this command must never do is cut off a print the user cares
     # about. "the board is mine to kill" is not "this 9-hour print is mine to
     # ruin", so the live stack is asked what it is doing before anything starts.
     live = powerloss.query_stats() or {}
     if live.get("state") in ("printing", "paused"):
-        _die("A print is live ({}: {} at byte {}). `powerloss-test` SIGKILLs "
-             "klipper mid-print: finish, cancel or pause-and-decide on that job "
-             "first.".format(live.get("state"), live.get("filename"),
-                             live.get("file_position")))
+        _die(
+            "A print is live ({}: {} at byte {}). `powerloss-test` SIGKILLs "
+            "klipper mid-print: finish, cancel or pause-and-decide on that job "
+            "first.".format(live.get("state"), live.get("filename"), live.get("file_position"))
+        )
     try:
         harness = powerloss.LiveHarness()
     except Exception as e:
         _die("powerloss-test: cannot start ({})".format(e))
-    print("Power-loss kill sequence on the bench board. A G4-only test print is "
-          "started (no motion, no heat, no extrusion) and killed twice. The "
-          "journal is switched on for the run; nothing else in your settings is "
-          "touched.")
-    ok, _checks = powerloss.run_kill_sequence(harness,
-                                              ticks=getattr(args, "ticks", 3))
+    print(
+        "Power-loss kill sequence on the bench board. A G4-only test print is "
+        "started (no motion, no heat, no extrusion) and killed twice. The "
+        "journal is switched on for the run; nothing else in your settings is "
+        "touched."
+    )
+    ok, _checks = powerloss.run_kill_sequence(harness, ticks=getattr(args, "ticks", 3))
     if not ok:
-        print("[!] A check failed: the machine is left as the sequence found it. "
-              "Read: klipperformac powerloss status")
+        print(
+            "[!] A check failed: the machine is left as the sequence found it. "
+            "Read: klipperformac powerloss status"
+        )
         sys.exit(1)
-    print("Power-loss kill sequence: PASS (journal survived both SIGKILLs, the "
-          "marker told unclean from clean, the stack rebuilt).")
+    print(
+        "Power-loss kill sequence: PASS (journal survived both SIGKILLs, the "
+        "marker told unclean from clean, the stack rebuilt)."
+    )
 
 
 def cmd_login(args):
@@ -2966,12 +3297,10 @@ def cmd_login(args):
             print(line)
         return
     if getattr(args, "tick", None) is not None and action == "off":
-        print("[!] --tick is ignored by `login off` (it only rewrites the "
-              "agent it removes).")
+        print("[!] --tick is ignored by `login off` (it only rewrites the agent it removes).")
     with _cli_lock():
         if action == "on":
-            ok, lines = launchd.login_on(tick=args.tick,
-                                         dry_run=args.dry_run)
+            ok, lines = launchd.login_on(tick=args.tick, dry_run=args.dry_run)
         else:
             ok, lines = launchd.login_off()
     for line in lines:
@@ -2983,8 +3312,7 @@ def cmd_login(args):
 def cmd_supervise(args):
     """The LaunchAgent's own program. Typed by hand only to debug: it is a
     resident loop, and `klipperformac login on` is how it gets installed."""
-    sys.exit(launchd.run(tick=getattr(args, "tick", None),
-                         sweeps=getattr(args, "sweeps", None)))
+    sys.exit(launchd.run(tick=getattr(args, "tick", None), sweeps=getattr(args, "sweeps", None)))
 
 
 def cmd_selftest(args):
@@ -2997,19 +3325,27 @@ def cmd_selftest(args):
         running = {}
     live_ports = _our_listener_ports() if not running else set()
     answered = {paths.MOONRAKER_PORT, paths.WEB_PORT, paths.FLUIDD_PORT} & live_ports
-    if not any(running.get(name) for name in ("klipper", "moonraker",
-                                              "web_mainsail", "web_fluidd")) \
-            and not answered:
-        print("[i]  stack appears stopped: selftest will report connection "
-              "failures until `klipperformac up`.", flush=True)
+    if (
+        not any(
+            running.get(name) for name in ("klipper", "moonraker", "web_mainsail", "web_fluidd")
+        )
+        and not answered
+    ):
+        print(
+            "[i]  stack appears stopped: selftest will report connection "
+            "failures until `klipperformac up`.",
+            flush=True,
+        )
     try:
-        code = subprocess.call([str(paths.VENV_PY), "-m",
-                                "klipperformac.tests.selftest"], env=env)
+        code = subprocess.call([str(paths.VENV_PY), "-m", "klipperformac.tests.selftest"], env=env)
     except OSError as e:
         # No venv yet, or venv/bin/python without the exec bit or replaced by
         # a directory: one clean line naming the interpreter, never a traceback.
-        _die("Could not run the selftest with {}: {} (run: klipperformac "
-             "setup)".format(paths.VENV_PY, getattr(e, "strerror", None) or e))
+        _die(
+            "Could not run the selftest with {}: {} (run: klipperformac setup)".format(
+                paths.VENV_PY, getattr(e, "strerror", None) or e
+            )
+        )
     if code:
         # The child says what failed; its status is the answer AGENTS.md gates on.
         sys.exit(1 if code < 0 else code)
@@ -3061,12 +3397,11 @@ def cmd_tui(args):
 #     is why the only mitigation we ship is the QoS request in
 #     compat.SITECUSTOMIZE_SRC plus this telemetry.
 
-PRI_NORMAL = 31        # an unthrottled process reads 31 here (measured)
-PRI_THROTTLED = 20     # UTILITY-class QoS lands in 20..30 (measured)
-_THERM_TIMEOUT = 2.0   # `pmset -g therm` streams and never exits by itself
+PRI_NORMAL = 31  # an unthrottled process reads 31 here (measured)
+PRI_THROTTLED = 20  # UTILITY-class QoS lands in 20..30 (measured)
+_THERM_TIMEOUT = 2.0  # `pmset -g therm` streams and never exits by itself
 _LOG_BUDGET = 8 << 20  # at most 8 MiB of klippy.log: the command stays cheap
-_LOADED_MCU_RE = re.compile(
-    r"^Loaded MCU '([^']+)' \d+ commands \((.*)\)$")
+_LOADED_MCU_RE = re.compile(r"^Loaded MCU '([^']+)' \d+ commands \((.*)\)$")
 _MACOS_MAX_PID = 99999  # macOS pids stop here; see process.py's _MAX_PID note
 
 # The starvation error strings, as klippy prints them (extras/error_mcu.py:34-46
@@ -3085,8 +3420,15 @@ HOST_ERRORS = (
 # carry several MCUs, so each key is read across the whole line: the worst MCU
 # wins, and for rto the worst value is the lowest (its floor is MIN_RTO,
 # serialqueue.c:107).
-STAT_MAXIMA = ("srtt", "bytes_retransmit", "mcu_task_stddev", "sysload",
-               "print_stall", "buffer_time", "print_time")
+STAT_MAXIMA = (
+    "srtt",
+    "bytes_retransmit",
+    "mcu_task_stddev",
+    "sysload",
+    "print_stall",
+    "buffer_time",
+    "print_time",
+)
 STAT_MINIMA = ("rto",)
 STAT_FIELDS = STAT_MAXIMA + STAT_MINIMA
 
@@ -3255,12 +3597,10 @@ def _klippy_log_files(limit=8):
     """klippy.log newest-first, then the rotated ones. The live log leads
     because the evidence a user cares about is the print happening now."""
     try:
-        rotated = sorted((paths.KLIPPY_LOG.parent.glob(
-            paths.KLIPPY_LOG.name + "*")), reverse=True)
+        rotated = sorted((paths.KLIPPY_LOG.parent.glob(paths.KLIPPY_LOG.name + "*")), reverse=True)
     except OSError:
         rotated = []
-    files = [paths.KLIPPY_LOG] + [f for f in rotated
-                                  if f != paths.KLIPPY_LOG]
+    files = [paths.KLIPPY_LOG] + [f for f in rotated if f != paths.KLIPPY_LOG]
     return files[:limit]
 
 
@@ -3293,8 +3633,7 @@ def _parse_loaded_mcu_line(line):
     build_versions = build_versions.strip()
     if not version or not build_versions:
         return None
-    return {"mcu": m.group(1).strip(), "version": version,
-            "build_versions": build_versions}
+    return {"mcu": m.group(1).strip(), "version": version, "build_versions": build_versions}
 
 
 def _mcu_log_provenance(files=None, budget=_LOG_BUDGET):
@@ -3354,18 +3693,15 @@ def _host_budget(files=None, budget=_LOG_BUDGET):
             stats_lines += 1
             found = {}
             for key in STAT_FIELDS:
-                values = [float(v) for v in re.findall(
-                    r"\b%s=(-?[0-9.]+)" % key, line)]
+                values = [float(v) for v in re.findall(r"\b%s=(-?[0-9.]+)" % key, line)]
                 if not values:
                     continue
                 # A Stats line can carry several MCUs: the worst one is the
                 # answer, and for rto "worst" is the smallest floor.
-                found[key] = (min(values) if key in STAT_MINIMA
-                              else max(values))
+                found[key] = min(values) if key in STAT_MINIMA else max(values)
             if "print_time" not in found:
                 continue
-            advancing = (prev_print_time is None
-                         or found["print_time"] > prev_print_time)
+            advancing = prev_print_time is None or found["print_time"] > prev_print_time
             prev_print_time = found["print_time"]
             if not advancing:
                 found.pop("buffer_time", None)
@@ -3401,9 +3737,11 @@ def _power_warning():
     silent when this Mac does not say, because a guess is not a warning."""
     if _power_external() is not False:
         return
-    print("[!] On battery: caffeinate's system-sleep assertion is AC-only, so "
-          "lid-close still ends the print. Plug in before printing, and check "
-          "Low Power Mode (`klipperformac timing`).")
+    print(
+        "[!] On battery: caffeinate's system-sleep assertion is AC-only, so "
+        "lid-close still ends the print. Plug in before printing, and check "
+        "Low Power Mode (`klipperformac timing`)."
+    )
 
 
 def linux_only_options(text):
@@ -3483,14 +3821,12 @@ def _timing_report():
         "qos_env": _qos_env_state(pid) if pid is not None else "unknown",
     }
     caffeinate_pid = _tracked_pid("caffeinate")
-    if caffeinate_pid is None and state.get("caffeinate") is False \
-            and state.get("klipper"):
+    if caffeinate_pid is None and state.get("caffeinate") is False and state.get("klipper"):
         # The stack is up and running() says our guard is NOT: nothing to look
         # for in `pmset -g assertions`, the sleep prevention is simply gone.
         caffeinate_held = False
     else:
-        caffeinate_held = _caffeinate_assert_held(
-            [caffeinate_pid] if caffeinate_pid else [])
+        caffeinate_held = _caffeinate_assert_held([caffeinate_pid] if caffeinate_pid else [])
     custom = _timed_run(["pmset", "-g", "custom"])
     battery = _pmset_block(custom, "Battery Power:")
     thermal = _thermal()
@@ -3501,8 +3837,7 @@ def _timing_report():
         "caffeinate_pid": caffeinate_pid,
         "caffeinate_assert_held": caffeinate_held,
         "cpu_speed_limit": _int_or_none(thermal.get("CPU_Speed_Limit")),
-        "cpu_scheduler_limit": _int_or_none(
-            thermal.get("CPU_Scheduler_Limit")),
+        "cpu_scheduler_limit": _int_or_none(thermal.get("CPU_Scheduler_Limit")),
     }
     budget = _host_budget()
     printer_state = _klippy_state() if moonraker_live else None
@@ -3513,8 +3848,7 @@ def _timing_report():
         "klipper": klipper,
         "power": power,
         "host_budget": budget,
-        "linux_only_options": ["[%s] %s" % (s, o)
-                               for s, o in _printer_cfg_linux_only()],
+        "linux_only_options": ["[%s] %s" % (s, o) for s, o in _printer_cfg_linux_only()],
         "problems": [],
     }
     report["problems"] = _timing_problems(report)
@@ -3538,29 +3872,34 @@ def _timing_problems(report):
         problems.append(
             "klippy is at ps priority {} ({}) - macOS is App-Napping the "
             "process that talks to your MCU; start the stack from a Terminal "
-            "or check the app's sleep settings".format(klipper["pri"],
-                                                       klipper["class"]))
+            "or check the app's sleep settings".format(klipper["pri"], klipper["class"])
+        )
     counts = report["host_budget"]["counts"]
     if counts.get("timer_too_close"):
-        problems.append('{} "Timer too close" in klippy.log: the host missed a '
-                        "step deadline (upstream: this indicates the host "
-                        "computer is overloaded)".format(
-                            counts["timer_too_close"]))
+        problems.append(
+            '{} "Timer too close" in klippy.log: the host missed a '
+            "step deadline (upstream: this indicates the host "
+            "computer is overloaded)".format(counts["timer_too_close"])
+        )
     held = report["power"]["caffeinate_assert_held"]
     if klipper["running"] and held is False:
-        problems.append("no klipperformac caffeinate is holding "
-                        "PreventUserIdleSystemSleep (the guard died, or was "
-                        "started by another instance)")
+        problems.append(
+            "no klipperformac caffeinate is holding "
+            "PreventUserIdleSystemSleep (the guard died, or was "
+            "started by another instance)"
+        )
     on_battery = report["power"]["external_connected"] is False
     if on_battery and report["printer_state"] in ("printing", "paused"):
         problems.append(
             "printing on battery: caffeinate's system-sleep assertion is "
             "AC-only, so a lid close or an empty battery stops the print "
-            "- plug in")
+            "- plug in"
+        )
     if report["linux_only_options"]:
-        problems.append("printer.cfg has Linux-only option(s) {}: klippy "
-                        "rejects an unknown option and halts".format(
-                            ", ".join(report["linux_only_options"])))
+        problems.append(
+            "printer.cfg has Linux-only option(s) {}: klippy "
+            "rejects an unknown option and halts".format(", ".join(report["linux_only_options"]))
+        )
     return problems
 
 
@@ -3572,89 +3911,145 @@ def _timing_lines(report):
     power = report["power"]
     budget = report["host_budget"]
     if not klipper["running"]:
-        lines.append(("[i]", "klippy is not running: timing says nothing about "
-                             "a stopped stack (klipperformac up)"))
+        lines.append(
+            (
+                "[i]",
+                "klippy is not running: timing says nothing about "
+                "a stopped stack (klipperformac up)",
+            )
+        )
     else:
         posture = "klippy pid {} at ps pri {} ({})".format(
-            klipper["pid"], klipper["pri"], klipper["class"])
+            klipper["pid"], klipper["pri"], klipper["class"]
+        )
         if klipper["class"] == "normal":
             posture += " - as good as macOS gets without root"
         elif klipper["class"] == "unknown":
             posture += " - ps did not answer"
         else:
             posture += " - fix this before printing"
-        lines.append(("[ok]" if klipper["class"] == "normal" else
-                      ("[i]" if klipper["class"] == "unknown" else "[!]"),
-                      posture))
+        lines.append(
+            (
+                "[ok]"
+                if klipper["class"] == "normal"
+                else ("[i]" if klipper["class"] == "unknown" else "[!]"),
+                posture,
+            )
+        )
         qos = klipper["qos_env"]
-        lines.append(("[ok]" if qos == "on" else "[i]",
-                      "KLIPPERFORMAC_QOS in klippy's environment: {}{}".format(
-                          qos,
-                          "" if qos != "off" else
-                          " (the sitecustomize QoS shim is not active - run "
-                          "klipperformac restart)")))
-    source = "on AC" if power["external_connected"] is True else (
-        "on battery" if power["external_connected"] is False else
-        "power source unknown")
+        lines.append(
+            (
+                "[ok]" if qos == "on" else "[i]",
+                "KLIPPERFORMAC_QOS in klippy's environment: {}{}".format(
+                    qos,
+                    ""
+                    if qos != "off"
+                    else " (the sitecustomize QoS shim is not active - run klipperformac restart)",
+                ),
+            )
+        )
+    source = (
+        "on AC"
+        if power["external_connected"] is True
+        else ("on battery" if power["external_connected"] is False else "power source unknown")
+    )
     lpm = power["battery_lowpowermode"]
-    lines.append(("[!]" if (power["external_connected"] is False and lpm)
-                  else "[ok]",
-                  "{}; battery Low Power Mode {} (sleep {}), CPU speed limit "
-                  "{}%".format(source, "ON" if lpm else ("off" if lpm == 0
-                                                         else "unknown"),
-                               power["battery_sleep"],
-                               power["cpu_speed_limit"])))
+    lines.append(
+        (
+            "[!]" if (power["external_connected"] is False and lpm) else "[ok]",
+            "{}; battery Low Power Mode {} (sleep {}), CPU speed limit {}%".format(
+                source,
+                "ON" if lpm else ("off" if lpm == 0 else "unknown"),
+                power["battery_sleep"],
+                power["cpu_speed_limit"],
+            ),
+        )
+    )
     if power["caffeinate_assert_held"] is True:
-        lines.append(("[ok]", "caffeinate pid {} holds "
-                             "PreventUserIdleSystemSleep".format(
-                                 power["caffeinate_pid"])))
+        lines.append(
+            (
+                "[ok]",
+                "caffeinate pid {} holds PreventUserIdleSystemSleep".format(
+                    power["caffeinate_pid"]
+                ),
+            )
+        )
     elif power["caffeinate_assert_held"] is None:
-        lines.append(("[i]", "caffeinate assertion: not checked (no tracked "
-                             "caffeinate pid)"))
+        lines.append(("[i]", "caffeinate assertion: not checked (no tracked caffeinate pid)"))
     else:
-        lines.append(("[!]", "no caffeinate guard of ours is holding "
-                             "PreventUserIdleSystemSleep"))
-    if power["cpu_speed_limit"] is not None \
-            and power["cpu_speed_limit"] < 100:
-        lines.append(("[!]", "macOS is capping the CPU to {}% (thermal): QoS "
-                             "cannot outrun a speed limit - cool the Mac "
-                             "down".format(power["cpu_speed_limit"])))
-    errs = " ".join("{}={}".format(key, budget["counts"][key])
-                    for key, _ in HOST_ERRORS)
-    starved = sum(budget["counts"][k] for k, _ in HOST_ERRORS
-                  if k != "lost_communication")
-    lines.append(("[!]" if starved else "[ok]",
-                  "klippy.log over {} file(s){}: srtt max {}s, rto min {}s, "
-                  "bytes_retransmit max {}, mcu_task_stddev max {}, sysload "
-                  "max {}, print_stall max {}, buffer_time max {}s, last "
-                  "min_half_rtt {}s | {}".format(
-                      len(budget["log_files"]),
-                      " (budget-truncated)" if budget["truncated"] else "",
-                      budget["srtt_max"], budget["rto_min"],
-                      budget["bytes_retransmit_max"],
-                      budget["mcu_task_stddev_max"], budget["sysload_max"],
-                      budget["print_stall_max"], budget["buffer_time_max"],
-                      budget["min_half_rtt"], errs)))
+        lines.append(("[!]", "no caffeinate guard of ours is holding PreventUserIdleSystemSleep"))
+    if power["cpu_speed_limit"] is not None and power["cpu_speed_limit"] < 100:
+        lines.append(
+            (
+                "[!]",
+                "macOS is capping the CPU to {}% (thermal): QoS "
+                "cannot outrun a speed limit - cool the Mac "
+                "down".format(power["cpu_speed_limit"]),
+            )
+        )
+    errs = " ".join("{}={}".format(key, budget["counts"][key]) for key, _ in HOST_ERRORS)
+    starved = sum(budget["counts"][k] for k, _ in HOST_ERRORS if k != "lost_communication")
+    lines.append(
+        (
+            "[!]" if starved else "[ok]",
+            "klippy.log over {} file(s){}: srtt max {}s, rto min {}s, "
+            "bytes_retransmit max {}, mcu_task_stddev max {}, sysload "
+            "max {}, print_stall max {}, buffer_time max {}s, last "
+            "min_half_rtt {}s | {}".format(
+                len(budget["log_files"]),
+                " (budget-truncated)" if budget["truncated"] else "",
+                budget["srtt_max"],
+                budget["rto_min"],
+                budget["bytes_retransmit_max"],
+                budget["mcu_task_stddev_max"],
+                budget["sysload_max"],
+                budget["print_stall_max"],
+                budget["buffer_time_max"],
+                budget["min_half_rtt"],
+                errs,
+            ),
+        )
+    )
     if budget["counts"]["lost_communication"] and not starved:
-        lines.append(("[i]", "lost_communication is usually the USB link or the "
-                             "board, not the host scheduler (klippy/mcu.py:906)"))
-    lines.append(("[i]", "budget: the MCU owns every step edge "
-                         "(src/stepper.c:289 queue_step); the host only has to "
-                         "be scheduled every ~250-450 ms and pushes commands "
-                         "100 ms ahead with a 25 ms retransmit floor "
-                         "(klippy/chelper/serialqueue.c:110/:107)"))
+        lines.append(
+            (
+                "[i]",
+                "lost_communication is usually the USB link or the "
+                "board, not the host scheduler (klippy/mcu.py:906)",
+            )
+        )
+    lines.append(
+        (
+            "[i]",
+            "budget: the MCU owns every step edge "
+            "(src/stepper.c:289 queue_step); the host only has to "
+            "be scheduled every ~250-450 ms and pushes commands "
+            "100 ms ahead with a 25 ms retransmit floor "
+            "(klippy/chelper/serialqueue.c:110/:107)",
+        )
+    )
     if budget["srtt_max"] is not None and budget["srtt_max"] > 0.003:
-        lines.append(("[!]", "max srtt {}s is above the {}s this Mac measured "
-                             "when healthy: the serial link is being "
-                             "delayed".format(budget["srtt_max"], 0.003)))
+        lines.append(
+            (
+                "[!]",
+                "max srtt {}s is above the {}s this Mac measured "
+                "when healthy: the serial link is being "
+                "delayed".format(budget["srtt_max"], 0.003),
+            )
+        )
     for option in report["linux_only_options"]:
-        lines.append(("[!]", "printer.cfg carries '{}', which only a Linux "
-                             "Klipper knows: klippy rejects it as an unknown "
-                             "option (klippy/configfile.py:440) and halts. "
-                             "Remove it from your config - macOS cannot raise "
-                             "scheduler priority (no SCHED_FIFO, negative nice "
-                             "is root-only), and step timing is done by the "
-                             "MCU".format(option)))
+        lines.append(
+            (
+                "[!]",
+                "printer.cfg carries '{}', which only a Linux "
+                "Klipper knows: klippy rejects it as an unknown "
+                "option (klippy/configfile.py:440) and halts. "
+                "Remove it from your config - macOS cannot raise "
+                "scheduler priority (no SCHED_FIFO, negative nice "
+                "is root-only), and step timing is done by the "
+                "MCU".format(option),
+            )
+        )
     return lines
 
 
@@ -3672,8 +4067,7 @@ def cmd_timing(args):
     for problem in report["problems"]:
         print("[!] " + problem)
     if not report["problems"]:
-        print("[ok] nothing to fix: macOS is giving klippy the best scheduling "
-              "it has without root")
+        print("[ok] nothing to fix: macOS is giving klippy the best scheduling it has without root")
     sys.exit(0 if report["ok"] else 1)
 
 
@@ -3689,21 +4083,35 @@ def _doctor_scheduling_lines(report):
     power = report["power"]
     budget = report["host_budget"]
     if klipper["running"]:
-        lines.append(("[ok]" if klipper["class"] == "normal" else
-                      ("[i]" if klipper["class"] == "unknown" else "[!]"),
-                      "host scheduling posture: klippy pri {} ({}) , QoS shim "
-                      "{} in its environment".format(
-                          klipper["pri"], klipper["class"], klipper["qos_env"])))
+        lines.append(
+            (
+                "[ok]"
+                if klipper["class"] == "normal"
+                else ("[i]" if klipper["class"] == "unknown" else "[!]"),
+                "host scheduling posture: klippy pri {} ({}) , QoS shim "
+                "{} in its environment".format(
+                    klipper["pri"], klipper["class"], klipper["qos_env"]
+                ),
+            )
+        )
     else:
-        lines.append(("[i]", "host scheduling posture: klippy not running "
-                             "(klipperformac timing reads a live stack)"))
-    starved = sum(budget["counts"][key] for key, _ in HOST_ERRORS
-                  if key != "lost_communication")
-    lines.append(("[ok]" if not starved else "[!]",
-                  "klippy.log: {} starvation error(s), max srtt {}s, max "
-                  "buffer_time {}s over {} file(s)".format(
-                      starved, budget["srtt_max"], budget["buffer_time_max"],
-                      len(budget["log_files"]))))
+        lines.append(
+            (
+                "[i]",
+                "host scheduling posture: klippy not running "
+                "(klipperformac timing reads a live stack)",
+            )
+        )
+    starved = sum(budget["counts"][key] for key, _ in HOST_ERRORS if key != "lost_communication")
+    lines.append(
+        (
+            "[ok]" if not starved else "[!]",
+            "klippy.log: {} starvation error(s), max srtt {}s, max "
+            "buffer_time {}s over {} file(s)".format(
+                starved, budget["srtt_max"], budget["buffer_time_max"], len(budget["log_files"])
+            ),
+        )
+    )
     on_battery = power["external_connected"] is False
     lpm = power["battery_lowpowermode"]
     if on_battery:
@@ -3714,38 +4122,51 @@ def _doctor_scheduling_lines(report):
         # ends the print - and Low Power Mode is a second, quieter killer.
         # Informational like it always was: `doctor` on a laptop on the couch is
         # not a failed install, but printing there is (see `timing`).
-        lines.append(("[!]", "on battery: caffeinate's system-sleep assertion "
-                             "is AC-only, so only the idle-sleep assertion "
-                             "holds and lid-close still kills the print; Low "
-                             "Power Mode is {} (it clocks the CPU down and "
-                             "coalesces timers)".format(
-                                 "ON" if lpm else ("off" if lpm == 0
-                                                   else "unknown"))))
+        lines.append(
+            (
+                "[!]",
+                "on battery: caffeinate's system-sleep assertion "
+                "is AC-only, so only the idle-sleep assertion "
+                "holds and lid-close still kills the print; Low "
+                "Power Mode is {} (it clocks the CPU down and "
+                "coalesces timers)".format("ON" if lpm else ("off" if lpm == 0 else "unknown")),
+            )
+        )
     else:
-        lines.append(("[ok]" if power["external_connected"] is not None
-                      else "[i]",
-                      "power: {}, battery Low Power Mode {}, CPU speed limit "
-                      "{}%".format(
-                          "on AC" if power["external_connected"] else "unknown",
-                          "off" if lpm == 0 else ("ON" if lpm else "unknown"),
-                          power["cpu_speed_limit"])))
-    lines.append(("[ok]" if power["caffeinate_assert_held"] is not False
-                  else "[!]",
-                  "sleep guard: caffeinate {} holding "
-                  "PreventUserIdleSystemSleep".format(
-                      "is" if power["caffeinate_assert_held"] else
-                      ("was not checked"
-                       if power["caffeinate_assert_held"] is None
-                       else "is NOT"))))
+        lines.append(
+            (
+                "[ok]" if power["external_connected"] is not None else "[i]",
+                "power: {}, battery Low Power Mode {}, CPU speed limit {}%".format(
+                    "on AC" if power["external_connected"] else "unknown",
+                    "off" if lpm == 0 else ("ON" if lpm else "unknown"),
+                    power["cpu_speed_limit"],
+                ),
+            )
+        )
+    lines.append(
+        (
+            "[ok]" if power["caffeinate_assert_held"] is not False else "[!]",
+            "sleep guard: caffeinate {} holding PreventUserIdleSystemSleep".format(
+                "is"
+                if power["caffeinate_assert_held"]
+                else ("was not checked" if power["caffeinate_assert_held"] is None else "is NOT")
+            ),
+        )
+    )
     for option in report["linux_only_options"]:
         # Never rewritten, only named: printer.cfg is the user's (AGENTS.md 2).
-        lines.append(("[!]", "printer.cfg carries '{}': a Linux-only option "
-                             "this Klipper does not know, so klippy halts with "
-                             "\"Option ... is not valid in section ...\" "
-                             "(klippy/configfile.py:440). Remove it - macOS has "
-                             "no SCHED_FIFO and negative nice is root-only; "
-                             "step timing belongs to the MCU. See: "
-                             "klipperformac timing".format(option)))
+        lines.append(
+            (
+                "[!]",
+                "printer.cfg carries '{}': a Linux-only option "
+                "this Klipper does not know, so klippy halts with "
+                '"Option ... is not valid in section ..." '
+                "(klippy/configfile.py:440). Remove it - macOS has "
+                "no SCHED_FIFO and negative nice is root-only; "
+                "step timing belongs to the MCU. See: "
+                "klipperformac timing".format(option),
+            )
+        )
     lines += [("[!]", problem) for problem in report["problems"]]
     return lines
 
@@ -3785,16 +4206,18 @@ def cmd_doctor(args):
     # `timing` and the GUI.
     state = process.running()
     live_ports = _our_listener_ports() if state is None else set()
-    moonraker_live = bool(state and state.get("moonraker")) \
-        or paths.MOONRAKER_PORT in live_ports
+    moonraker_live = bool(state and state.get("moonraker")) or paths.MOONRAKER_PORT in live_ports
     stack_live = _powerloss_session_live(state=state, live_ports=live_ports)
     if state:
         down = [n for n, st in state.items() if not st and n != "caffeinate"]
         if down:
             print("[!] services not running: " + ", ".join(down))
     elif moonraker_live:
-        print("[i]  stack is not tracked, but Moonraker is answering on port {}"
-              .format(paths.MOONRAKER_PORT))
+        print(
+            "[i]  stack is not tracked, but Moonraker is answering on port {}".format(
+                paths.MOONRAKER_PORT
+            )
+        )
     if moonraker_live:
         # A live python process is not a working printer. With a wrong [mcu]
         # serial klippy sits in `startup` forever and with an invalid section
@@ -3804,11 +4227,13 @@ def cmd_doctor(args):
         if klippy == "ready":
             print("[ok] klipper state: ready")
         elif klippy is None:
-            print("[i]  klipper state: unknown (moonraker did not answer "
-                  "/printer/info)")
+            print("[i]  klipper state: unknown (moonraker did not answer /printer/info)")
         else:
-            print("[!] klipper state: {} - the printer cannot move "
-                  "(klipperformac logs)".format(klippy))
+            print(
+                "[!] klipper state: {} - the printer cannot move (klipperformac logs)".format(
+                    klippy
+                )
+            )
             ok = False
         # ... and "ready" is still only the printer as a whole. Upstream takes N
         # MCUs (klippy/mcu.py:1246), so ask about each one: a [mcu tool] klippy
@@ -3860,8 +4285,9 @@ def cmd_doctor(args):
     else:
         print("[ok] shaper: " + st_shaper["detail"])
     try:
-        cam_configured = bool(paths.cam_settings()) or cam.running() is not None \
-            or configgen.webcam_state()[0]
+        cam_configured = (
+            bool(paths.cam_settings()) or cam.running() is not None or configgen.webcam_state()[0]
+        )
     except Exception:
         # An unreadable moonraker.conf is an unknown camera config, not a
         # reason for `doctor` to die before printing a single camera line.
@@ -3902,8 +4328,8 @@ def cmd_doctor(args):
     # command's exit code is the install-correctness gate (AGENTS.md 4).
     try:
         for pl_ok, pl_msg in powerloss.doctor(
-                query=bool(state and state.get("moonraker")),
-                stack_up=stack_live):
+            query=bool(state and state.get("moonraker")), stack_up=stack_live
+        ):
             print(("[ok] " if pl_ok else "[!] ") + pl_msg)
     except Exception as e:
         print("[i]  power loss: not reported ({})".format(e))
@@ -3917,7 +4343,8 @@ def cmd_doctor(args):
     # The [!] tag is still the honest signal the user acts on. LAST, too, which
     # tests/backup/test_backup_doctor_wired.py pins: the restore question is the
     # one a person reads on the way out of the report.
-    from . import backup as _backup          # local: cli.py must not need it
+    from . import backup as _backup  # local: cli.py must not need it
+
     try:
         for bak_ok, bak_msg in _backup.doctor_lines():
             print(("[ok] " if bak_ok else "[!] ") + bak_msg)
@@ -3927,9 +4354,27 @@ def cmd_doctor(args):
     sys.exit(0 if ok else 1)
 
 
-SYSTEM_DIRS = ("/", "/usr", "/bin", "/sbin", "/etc", "/var", "/tmp", "/private",
-               "/opt", "/Volumes", "/Applications", "/System", "/Library",
-               "/Users", "/home", "/root", "/dev", "/proc", "/Network")
+SYSTEM_DIRS = (
+    "/",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/etc",
+    "/var",
+    "/tmp",
+    "/private",
+    "/opt",
+    "/Volumes",
+    "/Applications",
+    "/System",
+    "/Library",
+    "/Users",
+    "/home",
+    "/root",
+    "/dev",
+    "/proc",
+    "/Network",
+)
 
 
 def _deletable_tree(path, looks, what):
@@ -3945,23 +4390,27 @@ def _deletable_tree(path, looks, what):
     if not path.exists():
         return None  # nothing to delete either way
     if not path.is_absolute():
-        return ("{} '{}' is not an absolute path; refusing to delete it. "
-                "Set KLIPPERFORMAC_HOME/KLIPPERFORMAC_DATA to a full path."
-                .format(what, path))
+        return (
+            "{} '{}' is not an absolute path; refusing to delete it. "
+            "Set KLIPPERFORMAC_HOME/KLIPPERFORMAC_DATA to a full path.".format(what, path)
+        )
     resolved = Path(os.path.realpath(str(path)))
     if resolved in (Path.home(), Path("/")) or str(resolved) in SYSTEM_DIRS:
-        return ("[!] Refusing to delete {}: it is {} , not a Klipper-for-Mac "
-                "folder.".format(path, "your home folder"
-                                 if resolved == Path.home()
-                                 else "a system folder"))
+        return "[!] Refusing to delete {}: it is {} , not a Klipper-for-Mac folder.".format(
+            path, "your home folder" if resolved == Path.home() else "a system folder"
+        )
     if resolved != path and path.is_symlink():
-        return ("[!] Refusing to delete {}: it is a symbolic link, not the "
-                "folder itself.".format(path))
+        return "[!] Refusing to delete {}: it is a symbolic link, not the folder itself.".format(
+            path
+        )
     if not looks(path):
-        return ("[!] Refusing to delete {}: it does not look like {} "
-                "(no venv/klipper/moonraker install layout). Remove it by hand "
-                "if you really meant to.".format(
-                    path, "an app folder" if "app" in what else "a data folder"))
+        return (
+            "[!] Refusing to delete {}: it does not look like {} "
+            "(no venv/klipper/moonraker install layout). Remove it by hand "
+            "if you really meant to.".format(
+                path, "an app folder" if "app" in what else "a data folder"
+            )
+        )
     return None
 
 
@@ -3979,10 +4428,8 @@ def cmd_uninstall(args):
         for line in agent_lines:
             print(line)
         if not agent_ok:
-            agent_problem = ("login agent at {} was left in place".format(
-                launchd.plist_path()))
-        killed = process.kill_all() + cam.kill_orphans() \
-            + batteryguard.kill_orphans()
+            agent_problem = "login agent at {} was left in place".format(launchd.plist_path())
+        killed = process.kill_all() + cam.kill_orphans() + batteryguard.kill_orphans()
     if killed:
         print(f"Stopped {len(killed)} process(es).")
 
@@ -4038,8 +4485,7 @@ def cmd_uninstall(args):
         print("[!] " + agent_problem)
         refused.append(agent_problem)
     for home in (paths.APP_HOME, Path("~/.maklipper").expanduser()):
-        problem = _deletable_tree(home, paths.looks_like_app_home,
-                                  "the app folder")
+        problem = _deletable_tree(home, paths.looks_like_app_home, "the app folder")
         if problem:
             print(problem)
             if home == paths.APP_HOME and home.exists():
@@ -4052,8 +4498,11 @@ def cmd_uninstall(args):
         except OSError as e:
             # No ignore_errors=True: a half-removed install must not read as
             # "Uninstalled." while files (and a running venv) are still there.
-            print("[!] Could not fully remove {}: {} (leftover files remain)"
-                  .format(home, getattr(e, "strerror", None) or e))
+            print(
+                "[!] Could not fully remove {}: {} (leftover files remain)".format(
+                    home, getattr(e, "strerror", None) or e
+                )
+            )
             refused.append(str(home))
             continue
         print("Removed app folder: " + str(home))
@@ -4065,17 +4514,20 @@ def cmd_uninstall(args):
         problem = None
         if not data.exists():
             if inside_app and not paths.APP_HOME.exists():
-                print("Removed data folder (it sat inside the app folder): "
-                      + str(data))
+                print("Removed data folder (it sat inside the app folder): " + str(data))
         elif paths.protected_data_dir(data):
-            problem = ("[!] Refusing to delete: {} (your own documents/home "
-                       "folder is not a data folder)".format(data))
+            problem = (
+                "[!] Refusing to delete: {} (your own documents/home "
+                "folder is not a data folder)".format(data)
+            )
         elif not paths.looks_like_data_dir(data):
-            problem = ("[!] Refusing to delete the data folder {}: it does not "
-                       "have a Klipper-for-Mac data layout (no "
-                       "config/printer.cfg, no config/run/logs/gcodes set), so "
-                       "it was never made here. Delete it yourself if you "
-                       "meant to.".format(data))
+            problem = (
+                "[!] Refusing to delete the data folder {}: it does not "
+                "have a Klipper-for-Mac data layout (no "
+                "config/printer.cfg, no config/run/logs/gcodes set), so "
+                "it was never made here. Delete it yourself if you "
+                "meant to.".format(data)
+            )
         if problem:
             print(problem)
             refused.append(problem)
@@ -4083,21 +4535,27 @@ def cmd_uninstall(args):
             try:
                 shutil.rmtree(data)
             except OSError as e:
-                print("[!] Could not fully remove {}: {} (leftover files "
-                      "remain)".format(data, getattr(e, "strerror", None) or e))
+                print(
+                    "[!] Could not fully remove {}: {} (leftover files remain)".format(
+                        data, getattr(e, "strerror", None) or e
+                    )
+                )
                 refused.append(str(data))
             else:
                 print("Removed data folder: " + str(data))
     elif kept is not None:
-        print("Kept data folder: {} (point a fresh install at it with "
-              "klipperformac data --set {})".format(kept, kept))
+        print(
+            "Kept data folder: {} (point a fresh install at it with "
+            "klipperformac data --set {})".format(kept, kept)
+        )
     else:
         print("Kept data folder: {} (delete it yourself if you want)".format(data))
-    print("Uninstalled. Reload your shell or open a new terminal to clear the "
-          "command from PATH cache: hash -r")
+    print(
+        "Uninstalled. Reload your shell or open a new terminal to clear the "
+        "command from PATH cache: hash -r"
+    )
     if refused:
-        _die("uninstall: {} folder(s) were refused, not deleted".format(
-            len(refused)))
+        _die("uninstall: {} folder(s) were refused, not deleted".format(len(refused)))
 
 
 def main(argv=None):
@@ -4116,10 +4574,16 @@ def main(argv=None):
     sub.required = True
 
     p = sub.add_parser("setup", help="fetch upstream components + verify build")
-    p.add_argument("--with-shaper", action="store_true",
-                   help="also build the Python 3.14 venv for SHAPER_CALIBRATE")
-    p.add_argument("--install-python", action="store_true",
-                   help="let setup install python@3.14 via Homebrew if missing")
+    p.add_argument(
+        "--with-shaper",
+        action="store_true",
+        help="also build the Python 3.14 venv for SHAPER_CALIBRATE",
+    )
+    p.add_argument(
+        "--install-python",
+        action="store_true",
+        help="let setup install python@3.14 via Homebrew if missing",
+    )
     p = sub.add_parser("up", help="start klipper + moonraker + mainsail")
     p.add_argument("--open", action="store_true", help="open browser")
     sub.add_parser("down", help="stop everything")
@@ -4130,84 +4594,142 @@ def main(argv=None):
     sub.add_parser("status", help="show state, pins, available updates")
     p = sub.add_parser("lan", help="open/close the stack to your local network")
     p.add_argument("state", nargs="?", choices=("on", "off"))
-    p = sub.add_parser("batteryguard",
-                       help="pause/cancel the print before the laptop battery "
-                            "dies (localhost REST only, upstream untouched)")
+    p = sub.add_parser(
+        "batteryguard",
+        help="pause/cancel the print before the laptop battery "
+        "dies (localhost REST only, upstream untouched)",
+    )
     p.add_argument("action", choices=("on", "off", "status", "set", "check"))
-    p.add_argument("--pause-at", type=int, metavar="PCT",
-                   help="battery percent that pauses the print (default 15)")
-    p.add_argument("--critical-at", type=int, metavar="PCT",
-                   help="battery percent that cancels and stops the stack "
-                        "(default 7, must not be above --pause-at)")
-    p.add_argument("--poll", type=int, metavar="SEC",
-                   help="seconds between battery reads (5-3600, default 30)")
-    p.add_argument("--at-pause", choices=batteryguard.AT_PAUSE,
-                   help="what to do at --pause-at (default pause)")
-    p.add_argument("--at-critical", choices=batteryguard.AT_CRITICAL,
-                   help="what to do at --critical-at (default cancel)")
-    p.add_argument("--resume-on-ac", choices=("on", "off"),
-                   help="resume the print when the cable comes back "
-                        "(OPT-IN, default off): only a print this guard "
-                        "paused is ever resumed")
-    p.add_argument("--notify", choices=("on", "off"),
-                   help="desktop notification + speech for each action")
-    p.add_argument("--percent", metavar="PCT",
-                   help="with check: judge this battery percent instead of "
-                        "reading this Mac (needs --source)")
-    p.add_argument("--source", choices=("battery", "ac"),
-                   help="with check --percent: which power that percent is on")
-    p.add_argument("--dry-run", action="store_true",
-                   help="check: say what would happen and touch nothing "
-                        "(no POST, no notification, no state write)")
-    p = sub.add_parser("powerloss",
-                       help="what a power loss costs on macOS: the unclean-stop "
-                            "truth + a bounded journal of the print's byte offset "
-                            "(localhost REST only, upstream untouched, never "
-                            "auto-resumes)")
-    p.add_argument("action", nargs="?", default="status",
-                   choices=("status", "on", "off", "snapshot", "watch", "tail"))
-    p.add_argument("--interval", type=float, metavar="SEC",
-                   help="with on/watch: seconds between snapshots "
-                        "({}-{}, default {})".format(
-                            int(powerloss.MIN_INTERVAL),
-                            int(powerloss.MAX_INTERVAL),
-                            int(powerloss.DEFAULTS["intervalSec"])))
-    p.add_argument("--sweeps", type=int, metavar="N",
-                   help="with watch: stop after N polls instead of running "
-                        "until the stack answers no more")
-    p.add_argument("-n", "--lines", type=int, default=10,
-                   help="with tail: how many snapshots to print (1-500)")
-    p = sub.add_parser("powerloss-test",
-                       help="LIVE: start a G4-only print, SIGKILL klipper then "
-                            "moonraker, prove the journal and markers survive it "
-                            "and the stack rebuilds. Needs "
-                            "KLIPPERFORMAC_ALLOW_LIVE=1.")
-    p.add_argument("--ticks", type=int, default=3,
-                   help="journal polls while the first print is running")
+    p.add_argument(
+        "--pause-at",
+        type=int,
+        metavar="PCT",
+        help="battery percent that pauses the print (default 15)",
+    )
+    p.add_argument(
+        "--critical-at",
+        type=int,
+        metavar="PCT",
+        help="battery percent that cancels and stops the stack "
+        "(default 7, must not be above --pause-at)",
+    )
+    p.add_argument(
+        "--poll", type=int, metavar="SEC", help="seconds between battery reads (5-3600, default 30)"
+    )
+    p.add_argument(
+        "--at-pause", choices=batteryguard.AT_PAUSE, help="what to do at --pause-at (default pause)"
+    )
+    p.add_argument(
+        "--at-critical",
+        choices=batteryguard.AT_CRITICAL,
+        help="what to do at --critical-at (default cancel)",
+    )
+    p.add_argument(
+        "--resume-on-ac",
+        choices=("on", "off"),
+        help="resume the print when the cable comes back "
+        "(OPT-IN, default off): only a print this guard "
+        "paused is ever resumed",
+    )
+    p.add_argument(
+        "--notify", choices=("on", "off"), help="desktop notification + speech for each action"
+    )
+    p.add_argument(
+        "--percent",
+        metavar="PCT",
+        help="with check: judge this battery percent instead of reading this Mac (needs --source)",
+    )
+    p.add_argument(
+        "--source",
+        choices=("battery", "ac"),
+        help="with check --percent: which power that percent is on",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="check: say what would happen and touch nothing "
+        "(no POST, no notification, no state write)",
+    )
+    p = sub.add_parser(
+        "powerloss",
+        help="what a power loss costs on macOS: the unclean-stop "
+        "truth + a bounded journal of the print's byte offset "
+        "(localhost REST only, upstream untouched, never "
+        "auto-resumes)",
+    )
+    p.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=("status", "on", "off", "snapshot", "watch", "tail"),
+    )
+    p.add_argument(
+        "--interval",
+        type=float,
+        metavar="SEC",
+        help="with on/watch: seconds between snapshots ({}-{}, default {})".format(
+            int(powerloss.MIN_INTERVAL),
+            int(powerloss.MAX_INTERVAL),
+            int(powerloss.DEFAULTS["intervalSec"]),
+        ),
+    )
+    p.add_argument(
+        "--sweeps",
+        type=int,
+        metavar="N",
+        help="with watch: stop after N polls instead of running until the stack answers no more",
+    )
+    p.add_argument(
+        "-n", "--lines", type=int, default=10, help="with tail: how many snapshots to print (1-500)"
+    )
+    p = sub.add_parser(
+        "powerloss-test",
+        help="LIVE: start a G4-only print, SIGKILL klipper then "
+        "moonraker, prove the journal and markers survive it "
+        "and the stack rebuilds. Needs "
+        "KLIPPERFORMAC_ALLOW_LIVE=1.",
+    )
+    p.add_argument(
+        "--ticks", type=int, default=3, help="journal polls while the first print is running"
+    )
     p = sub.add_parser("logs", help="view logs")
     p.add_argument("service", choices=("klipper", "moonraker"), default="klipper", nargs="?")
     p.add_argument("-n", "--lines", type=int, default=40)
     p.add_argument("-f", "--follow", action="store_true")
-    p = sub.add_parser("serial", help="list USB ports and [mcu*] sections / "
-                                      "set one section's serial / add a board")
+    p = sub.add_parser(
+        "serial", help="list USB ports and [mcu*] sections / set one section's serial / add a board"
+    )
     p.add_argument("--set", metavar="PATH")
     p.add_argument("--auto", action="store_true")
-    p.add_argument("--add-mcu", metavar="NAME",
-                   help="add an [mcu NAME] stub first, then --set its port: gives "
-                        "a board a slot when the config did not have one yet "
-                        "(still requires --set PATH)")
-    p.add_argument("--sync", action="store_true",
-                   help="resolve every USB [mcu*] section's port via the board's "
-                        "USB identity and update printer.cfg in place")
+    p.add_argument(
+        "--add-mcu",
+        metavar="NAME",
+        help="add an [mcu NAME] stub first, then --set its port: gives "
+        "a board a slot when the config did not have one yet "
+        "(still requires --set PATH)",
+    )
+    p.add_argument(
+        "--sync",
+        action="store_true",
+        help="resolve every USB [mcu*] section's port via the board's "
+        "USB identity and update printer.cfg in place",
+    )
 
-    p.add_argument("--json", action="store_true",
-                   help="machine-readable: {\"mcus\": [...], \"single\": bool} "
-                        "for every [mcu*] section with its port, USB identity "
-                        "and conflict; always exits 0 in read-only mode")
-    p.add_argument("mcu", nargs="?", metavar="MCUNAME",
-                   help="the [mcu ...] section to write with --set/--auto "
-                        "(default: mcu, the timing master). With --add-mcu, "
-                        "ignored: --add-mcu's name wins.")
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help='machine-readable: {"mcus": [...], "single": bool} '
+        "for every [mcu*] section with its port, USB identity "
+        "and conflict; always exits 0 in read-only mode",
+    )
+    p.add_argument(
+        "mcu",
+        nargs="?",
+        metavar="MCUNAME",
+        help="the [mcu ...] section to write with --set/--auto "
+        "(default: mcu, the timing master). With --add-mcu, "
+        "ignored: --add-mcu's name wins.",
+    )
     p = sub.add_parser("data", help="show or move the user data folder")
     p.add_argument("--set", metavar="PATH")
     p = sub.add_parser("update", help="check (or apply) upstream component updates")
@@ -4220,106 +4742,163 @@ def main(argv=None):
     p = sub.add_parser("presets", help="list / save / use / import printer.cfg presets")
     p.add_argument("--save", metavar="NAME")
     p.add_argument("--use", metavar="NAME")
-    p.add_argument("--auto-serial", action="store_true",
-                   help="with --use/--use-library: fill [mcu] serial from "
-                        "the detected USB board")
-    p.add_argument("--library", action="store_true",
-                   help="list upstream example configs (klipper/config)")
-    p.add_argument("--use-library", metavar="NAME",
-                   help="apply an upstream example config as a preset")
-    p.add_argument("--history", action="store_true",
-                   help="list saved config versions (last 10)")
-    p.add_argument("--restore", metavar="NAME",
-                   help="restore a saved version as the current config")
-    p.add_argument("--snapshot", nargs="?", const="manual", metavar="REASON",
-                   help="save the current config as a version")
+    p.add_argument(
+        "--auto-serial",
+        action="store_true",
+        help="with --use/--use-library: fill [mcu] serial from the detected USB board",
+    )
+    p.add_argument(
+        "--library", action="store_true", help="list upstream example configs (klipper/config)"
+    )
+    p.add_argument(
+        "--use-library", metavar="NAME", help="apply an upstream example config as a preset"
+    )
+    p.add_argument("--history", action="store_true", help="list saved config versions (last 10)")
+    p.add_argument(
+        "--restore", metavar="NAME", help="restore a saved version as the current config"
+    )
+    p.add_argument(
+        "--snapshot",
+        nargs="?",
+        const="manual",
+        metavar="REASON",
+        help="save the current config as a version",
+    )
     p.add_argument("--import", dest="import_", metavar="PATH")
     p.add_argument("--import-name", metavar="NAME")
-    p = sub.add_parser("backup",
-                       help="archive / verify / restore the whole data folder")
-    p.add_argument("action", choices=("create", "list", "verify", "restore",
-                                      "prune"))
-    p.add_argument("--from", dest="from_", metavar="NAME",
-                   help="with verify/restore: a name from "
-                        "'klipperformac backup list', or 'latest'")
-    p.add_argument("--with-logs", "--include-logs", dest="with_logs",
-                   action="store_true",
-                   help="with create: also archive data/logs (big; off by "
-                        "default)")
-    p.add_argument("--allow-running", action="store_true",
-                   help="with create: snapshot a running stack anyway (its "
-                        "sqlite database may be copied half-written)")
-    p.add_argument("--keep", type=int, metavar="N",
-                   help="with prune: keep the newest N backups (default 10)")
-    p.add_argument("--dry-run", action="store_true",
-                   help="with prune: show what would be deleted")
+    p = sub.add_parser("backup", help="archive / verify / restore the whole data folder")
+    p.add_argument("action", choices=("create", "list", "verify", "restore", "prune"))
+    p.add_argument(
+        "--from",
+        dest="from_",
+        metavar="NAME",
+        help="with verify/restore: a name from 'klipperformac backup list', or 'latest'",
+    )
+    p.add_argument(
+        "--with-logs",
+        "--include-logs",
+        dest="with_logs",
+        action="store_true",
+        help="with create: also archive data/logs (big; off by default)",
+    )
+    p.add_argument(
+        "--allow-running",
+        action="store_true",
+        help="with create: snapshot a running stack anyway (its "
+        "sqlite database may be copied half-written)",
+    )
+    p.add_argument(
+        "--keep", type=int, metavar="N", help="with prune: keep the newest N backups (default 10)"
+    )
+    p.add_argument("--dry-run", action="store_true", help="with prune: show what would be deleted")
     p = sub.add_parser("gcode", help="send gcode to Klipper or query status")
     p.add_argument("script", nargs="*")
     p.add_argument("--status", action="store_true")
-    p = sub.add_parser("cam", help="Mac webcam for the printer dashboard "
-                                   "(localhost-only MJPEG stream)")
-    p.add_argument("action", choices=("on", "off", "status", "list",
-                                      "snapshot", "build", "config",
-                                      "record", "mics", "mic-permission"))
-    p.add_argument("path", nargs="?",
-                   help="snapshot output file (default: data folder timelapse); "
-                        "with record: the video name or path under "
-                        "data/recordings, or off | status")
+    p = sub.add_parser(
+        "cam", help="Mac webcam for the printer dashboard (localhost-only MJPEG stream)"
+    )
+    p.add_argument(
+        "action",
+        choices=(
+            "on",
+            "off",
+            "status",
+            "list",
+            "snapshot",
+            "build",
+            "config",
+            "record",
+            "mics",
+            "mic-permission",
+        ),
+    )
+    p.add_argument(
+        "path",
+        nargs="?",
+        help="snapshot output file (default: data folder timelapse); "
+        "with record: the video name or path under "
+        "data/recordings, or off | status",
+    )
     p.add_argument("--device", metavar="NAME", help="camera name or index")
     p.add_argument("--width", type=int)
     p.add_argument("--height", type=int)
     p.add_argument("--fps", type=int)
     p.add_argument("--quality", type=int, help="JPEG quality 1-100")
-    p.add_argument("--seconds", metavar="N",
-                   help="with record: close the file and stop by itself after "
-                        "N seconds (the helper does this, not a timer here)")
-    p.add_argument("--mic", metavar="NAME", nargs="?", const="", default=None,
-                   help="with config: the microphone to record with; with "
-                        "record: add sound now - bare for the one macOS picks, "
-                        "or a name from 'klipperformac cam mics'")
-    p.add_argument("--audio", choices=("on", "off"),
-                   help="with config: let recordings carry sound; with "
-                        "record: insist on (or take back) sound for this one")
-    p.add_argument("--show", action="store_true",
-                   help="with config: show current settings")
+    p.add_argument(
+        "--seconds",
+        metavar="N",
+        help="with record: close the file and stop by itself after "
+        "N seconds (the helper does this, not a timer here)",
+    )
+    p.add_argument(
+        "--mic",
+        metavar="NAME",
+        nargs="?",
+        const="",
+        default=None,
+        help="with config: the microphone to record with; with "
+        "record: add sound now - bare for the one macOS picks, "
+        "or a name from 'klipperformac cam mics'",
+    )
+    p.add_argument(
+        "--audio",
+        choices=("on", "off"),
+        help="with config: let recordings carry sound; with "
+        "record: insist on (or take back) sound for this one",
+    )
+    p.add_argument("--show", action="store_true", help="with config: show current settings")
     sub.add_parser("selftest", help="verify web + moonraker + klippy links")
     sub.add_parser("doctor", help="environment + build + power checks")
-    p = sub.add_parser("login",
-                       help="start the stack at macOS login (LaunchAgent + "
-                            "supervisor); `down` always wins over it")
+    p = sub.add_parser(
+        "login",
+        help="start the stack at macOS login (LaunchAgent + "
+        "supervisor); `down` always wins over it",
+    )
     p.add_argument("action", choices=("on", "off", "status"))
-    p.add_argument("--tick", type=float, metavar="SEC",
-                   help="seconds between supervisor sweeps (agent plist; "
-                        "default {}s, floor {})".format(int(launchd.DEFAULT_TICK),
-                                                        int(launchd.MIN_TICK)))
-    p.add_argument("--dry-run", action="store_true",
-                   help="on: show the agent that would be written and loaded, "
-                        "touch and launch-load nothing")
-    p.add_argument("--json", action="store_true",
-                   help="status: one machine-readable object (the GUI reads "
-                        "this)")
-    p = sub.add_parser("supervise",
-                       help="internal: the resident loop the login agent runs "
-                            "(see: klipperformac login on)")
-    p.add_argument("--tick", type=float, metavar="SEC",
-                   help="seconds between sweeps (default {})".format(
-                       int(launchd.DEFAULT_TICK)))
+    p.add_argument(
+        "--tick",
+        type=float,
+        metavar="SEC",
+        help="seconds between supervisor sweeps (agent plist; default {}s, floor {})".format(
+            int(launchd.DEFAULT_TICK), int(launchd.MIN_TICK)
+        ),
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="on: show the agent that would be written and loaded, touch and launch-load nothing",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="status: one machine-readable object (the GUI reads this)",
+    )
+    p = sub.add_parser(
+        "supervise",
+        help="internal: the resident loop the login agent runs (see: klipperformac login on)",
+    )
+    p.add_argument(
+        "--tick",
+        type=float,
+        metavar="SEC",
+        help="seconds between sweeps (default {})".format(int(launchd.DEFAULT_TICK)),
+    )
     p.add_argument("--sweeps", type=int, metavar="N", help=argparse.SUPPRESS)
-    p = sub.add_parser("timing",
-                       help="read-only scheduling + power telemetry: what "
-                            "macOS is doing to klippy right now")
-    p.add_argument("--json", action="store_true",
-                   help="one machine-readable object (the GUI reads this)")
+    p = sub.add_parser(
+        "timing",
+        help="read-only scheduling + power telemetry: what macOS is doing to klippy right now",
+    )
+    p.add_argument(
+        "--json", action="store_true", help="one machine-readable object (the GUI reads this)"
+    )
     sub.add_parser("tui", help="interactive dashboard (default with no args)")
-    p = sub.add_parser("uninstall", help="remove the app; asks before deleting "
-                                         "the data folder")
-    p.add_argument("--data", action="store_true",
-                   help="also delete the data folder without asking")
-    p.add_argument("--keep-data", action="store_true",
-                   help="never delete the data folder")
+    p = sub.add_parser("uninstall", help="remove the app; asks before deleting the data folder")
+    p.add_argument("--data", action="store_true", help="also delete the data folder without asking")
+    p.add_argument("--keep-data", action="store_true", help="never delete the data folder")
     # `flash` keeps its whole flag surface in flash.py (add_parser) so this file
     # gains one call here and one handler entry below, and nothing else.
     from . import flash as _flash
+
     _flash.add_parser(sub)
 
     args = ap.parse_args(argv)
@@ -4337,13 +4916,20 @@ def main(argv=None):
         "powerloss": cmd_powerloss,
         "powerloss-test": cmd_powerloss_test,
         "data": cmd_data,
-        "update": cmd_update, "open": cmd_open, "doctor": cmd_doctor,
+        "update": cmd_update,
+        "open": cmd_open,
+        "doctor": cmd_doctor,
         "timing": cmd_timing,
-        "ui": cmd_ui, "presets": cmd_presets, "gcode": cmd_gcode,
+        "ui": cmd_ui,
+        "presets": cmd_presets,
+        "gcode": cmd_gcode,
         "backup": cmd_backup,
         "cam": cmd_cam,
         "flash": cmd_flash,
-        "selftest": cmd_selftest, "tui": cmd_tui, "uninstall": cmd_uninstall,
-        "login": cmd_login, "supervise": cmd_supervise,
+        "selftest": cmd_selftest,
+        "tui": cmd_tui,
+        "uninstall": cmd_uninstall,
+        "login": cmd_login,
+        "supervise": cmd_supervise,
     }
     handlers[args.cmd](args)

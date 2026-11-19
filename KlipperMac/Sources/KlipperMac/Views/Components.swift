@@ -137,8 +137,57 @@ extension View {
     }
 }
 
-func compatNSColor(_ color: NSColor) -> Color {
-    Color(color)
+/// Clickable control that never draws the macOS focus ring/highlight box.
+/// Used for small glyph actions (e.g. Refresh) where the blue focus ring is noisy.
+struct NoFocusButton<Label: View>: NSViewRepresentable {
+    let help: String
+    let label: Label
+    let action: () -> Void
+
+    init(help: String = "", @ViewBuilder label: () -> Label, action: @escaping () -> Void) {
+        self.help = help
+        self.label = label()
+        self.action = action
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton()
+        button.title = ""
+        button.bezelStyle = .regularSquare
+        button.isBordered = false
+        button.setButtonType(.momentaryChange)
+        button.focusRingType = .none
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.invoke)
+        button.toolTip = help.isEmpty ? nil : help
+
+        let host = NSHostingView(rootView: label)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            host.topAnchor.constraint(equalTo: button.topAnchor),
+            host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+        ])
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        nsView.toolTip = help.isEmpty ? nil : help
+        if let host = nsView.subviews.compactMap({ $0 as? NSHostingView<Label> }).first {
+            host.rootView = label
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func invoke() { action() }
+    }
 }
 
 /// Notion-style card section used by Settings and Dashboard.
