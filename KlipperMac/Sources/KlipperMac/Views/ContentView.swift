@@ -19,7 +19,7 @@ final class KeyCaptureNSView: NSView {
     var onKey: ((String) -> Void)?
     private var monitor: Any?
 
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { false }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -74,22 +74,21 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 VStack(spacing: 2) {
                     ForEach(Pane.allCases) { p in
-                        Button(action: { pane = p }) {
-                            HStack(spacing: 8) {
-                                FlatIcon(kind: p.icon, size: 16, color: pane == p ? .primary : p.tint)
-                                Text(p.rawValue)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(pane == p ? Color.secondary.opacity(0.18) : Color.clear)
-                            )
+                        HStack(spacing: 8) {
+                            FlatIcon(kind: p.icon, size: 16, color: pane == p ? .primary : p.tint)
+                            Text(p.rawValue)
+                                .foregroundColor(.primary)
+                            Spacer()
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(pane == p ? Color.secondary.opacity(0.18) : Color.clear)
+                        )
+                        .onTapGesture { pane = p }
                     }
                 }
                 .padding(8)
