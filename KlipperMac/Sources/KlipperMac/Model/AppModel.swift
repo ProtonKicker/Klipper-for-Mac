@@ -166,6 +166,8 @@ final class AppModel: ObservableObject {
                 if p.isRunning { p.terminate() }
             }
         }
+        // Background check so Settings > About can surface an available app update.
+        Task { await checkForAppUpdate() }
     }
 
     private func startPolling() {

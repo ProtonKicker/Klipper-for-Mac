@@ -35,12 +35,14 @@ pane, and press Start. Fluidd is at **http://localhost:8081** (Mainsail :8080).
 `printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
 with your printer's real config (the Presets picker can import one).
 
-The app includes Printer, Recording, and Settings panes. **Settings → About**
-can check for app updates from GitHub Releases and install them in-app. When an
-update is installed, the app restarts to finish applying it — restart only
-happens when the Klipper stack is not running (stop the stack first if it is).
-Closing the window hides the UI while the stack keeps running if a Klipper
-instance is started; the app fully quits only when the stack is stopped.
+The app includes Printer, Recording, and Settings panes (Recording includes
+camera controls with a live preview in the Camera section when turned on).
+**Settings → About** can check for app updates from GitHub Releases and install
+them in-app. When an update is available you can install and restart to finish
+applying it — the restart only happens when the Klipper stack is not running
+(stop the stack first if it is). Closing the window hides the UI while the stack
+keeps running if a Klipper instance is started; the app fully quits only when
+the stack is stopped.
 
 The app is ad-hoc signed (notarization planned), so right-click → **Open**
 works around the first-launch warning. It resolves its bundled CLI from inside

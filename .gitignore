@@ -11,3 +11,5 @@ KlipperMac/dist/*
 
 .venv-test/
 .pytest_cache/
+.commandcode/
+/.commandcode/

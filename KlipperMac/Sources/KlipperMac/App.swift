@@ -56,6 +56,8 @@ struct KlipperForMacMain {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var model: AppModel?
+    /// Set when an in-app update is staged and the app should restart to apply it.
+    var allowTerminateForUpdate = false
 
     nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
         // Delegate callbacks are non-isolated but always run on the main
@@ -106,9 +108,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let stackRunning = StackReader.readSync(env: KEnvironment.shared).anyUp
+        // A staged app update should relaunch the app; only allow it when the stack is not running.
+        if allowTerminateForUpdate && !stackRunning {
+            NSApp.setActivationPolicy(.regular)
+            return .terminateNow
+        }
         // If a Klipper instance/service is running, hide UI but keep services on.
         // Fully quit only when nothing is running.
-        if StackReader.readSync(env: KEnvironment.shared).anyUp {
+        if stackRunning {
             if let w = window ?? NSApp.windows.first {
                 w.orderOut(nil)
             }
