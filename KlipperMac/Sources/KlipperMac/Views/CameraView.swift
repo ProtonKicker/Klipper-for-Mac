@@ -99,6 +99,9 @@ struct CameraView: View {
                     }
                 }
                 Card { cameraSection }
+                if camOn {
+                    Card { cameraPreviewSection }
+                }
                 Card { recordingSection }
                 Card { snapshotSection }
                 Card { settingsSection }
@@ -146,16 +149,16 @@ struct CameraView: View {
                 .disabled(model.busy || !env.isCLIInstalled)
             }
 
-            if camOn {
-                CamStreamView(address: streamURL)
-                    .frame(maxWidth: .infinity)
-                    .frame(maxHeight: 320)
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-
             if !env.isCLIInstalled { installHint }
         }
+    }
+
+    private var cameraPreviewSection: some View {
+        CamStreamView(address: streamURL)
+            .frame(maxWidth: .infinity)
+            .frame(maxHeight: 320)
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - record
@@ -172,18 +175,6 @@ struct CameraView: View {
                 }
             }
             .pickerStyle(.segmented)
-
-            HStack {
-                Button(action: { Task { await startRecording() } }) {
-                    Text(recordingButtonLabel)
-                        .font(.callout)
-                        .frame(minWidth: 140)
-                        .compatBorderedProminent(tint: statusTint)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.busy || !env.isCLIInstalled)
-                Spacer()
-            }
 
             if style == .videos {
                 Picker("Media", selection: Binding(
@@ -216,6 +207,18 @@ struct CameraView: View {
                      + "Klipper data folder — audio is always off for timelapse.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Button(action: { Task { await startRecording() } }) {
+                    Text(recordingButtonLabel)
+                        .font(.callout)
+                        .frame(minWidth: 140)
+                        .compatBorderedProminent(tint: statusTint)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.busy || !env.isCLIInstalled)
+                Spacer()
             }
         }
     }

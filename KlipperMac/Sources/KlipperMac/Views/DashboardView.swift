@@ -85,7 +85,7 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
                 if !model.env.installed {
                     Card { setupSection }
                 }
@@ -98,8 +98,8 @@ struct DashboardView: View {
                 }
                 Card { lanSection }
             }
-            .padding(16)
-            .frame(maxWidth: 760, alignment: .leading)
+            .padding(12)
+            .frame(maxWidth: 720, alignment: .leading)
         }
         .sheet(isPresented: $model.showSheet) {
             SetupSheet(title: model.sheetTitle, lines: model.sheetLines,
@@ -115,7 +115,7 @@ struct DashboardView: View {
     // MARK: - first run (stack never set up)
 
     private var setupSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Setup")
             HStack(spacing: 8) {
                 FlatIcon(kind: .warning, size: 16, color: FlatPalette.amber)
@@ -165,7 +165,7 @@ struct DashboardView: View {
     // MARK: - stack controls
 
     private var stackSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 sectionHeader("Stack")
                 Spacer()
@@ -204,7 +204,7 @@ struct DashboardView: View {
                         .compatBordered()
                 }
                 .buttonStyle(.plain)
-                .disabled(model.busy || !model.snapshot.tracked)
+                .disabled(model.busy || !model.snapshot.anyUp)
 
                 Button(action: { Task { await model.restartStack() } }) {
                     Text("Restart")
@@ -212,7 +212,7 @@ struct DashboardView: View {
                         .compatBordered()
                 }
                 .buttonStyle(.plain)
-                .disabled(model.busy || !model.env.installed)
+                .disabled(model.busy || !model.snapshot.anyUp)
 
                 Button(action: { Task { await model.killAll() } }) {
                     Text("Kill all")
@@ -225,26 +225,30 @@ struct DashboardView: View {
                 Spacer()
             }
 
-            if model.snapshot.tracked { serviceRow }
+            if model.snapshot.anyUp { serviceRow }
 
-            Picker("Default interface", selection: Binding(
-                get: { model.uiName },
-                set: { name in
-                    model.uiName = name
-                    if name != model.env.uiName {
-                        Task { await model.switchUI(name) }
-                    }
-                }
-            )) {
-                Text("Fluidd").tag("fluidd")
-                Text("Mainsail").tag("mainsail")
-            }
-            .pickerStyle(.segmented)
-
-            BrowserLink(label: model.uiName == "mainsail" ? "Mainsail" : "Fluidd",
-                        url: model.env.uiURL(model.uiName))
             if model.snapshot.anyUp {
+                Picker("Default interface", selection: Binding(
+                    get: { model.uiName },
+                    set: { name in
+                        model.uiName = name
+                        if name != model.env.uiName {
+                            Task { await model.switchUI(name) }
+                        }
+                    }
+                )) {
+                    Text("Fluidd").tag("fluidd")
+                    Text("Mainsail").tag("mainsail")
+                }
+                .pickerStyle(.segmented)
+
+                BrowserLink(label: model.uiName == "mainsail" ? "Mainsail" : "Fluidd",
+                            url: model.env.uiURL(model.uiName))
                 BrowserLink(label: "Moonraker API", url: model.env.moonrakerURL)
+            } else if model.env.installed {
+                Text("Start the stack to open the web interface.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -277,7 +281,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerSection: some View {
         if let p = model.printer {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Printer")
                 FieldRow(label: "Klipper", value: p.connectivityLabel)
                 if let note = AppFeedback.inlineWarning(message: p.readinessNote) {
@@ -327,7 +331,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Printer config")
                 // `serial --json` answered: one row per [mcu] section, because
                 // the pane has to show what printer.cfg actually holds. An empty
@@ -493,7 +497,7 @@ struct DashboardView: View {
     // MARK: - LAN
 
     private var lanSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("LAN access")
             Toggle("Reachable from other devices on your network", isOn: Binding(
                 get: { model.env.lanEnabled },
