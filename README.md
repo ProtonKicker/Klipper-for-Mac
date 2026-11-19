@@ -16,9 +16,9 @@ Download `Klipper-for-Mac.zip` from
 drag **Klipper for Mac.app** into Applications, and launch it. The ZIP contains
 a working `klipperformac` CLI **and its own Python 3.12 runtime** for both
 architectures — no separate CLI installer, no separate Python, no Homebrew
-Python, and no `scripts/install.sh` are needed. The universal GUI targets
-**macOS 13+** (Ventura or newer); the bundled CLI runtimes keep older floors
-(**10.15+ Intel / 11+ Apple Silicon**).
+Python, and no `scripts/install.sh` are needed. The universal GUI supports
+**macOS 10.15+ on Intel** and **macOS 11.0+ on Apple Silicon** (per-arch
+floors); the bundled CLI runtimes keep matching floors.
 
 In the app choose **Printer → Setup → Install stack**. That first-time step
 still requires these *system* prerequisites (the app shows a checklist and
@@ -64,9 +64,10 @@ A full clone is needed: `./scripts/fetch-python-runtimes.sh` downloads the two
 relocatable CPython runtimes into `.build/pythons` (requires `uv`), then
 `KlipperMac/build-app.sh` bundles them with the CLI; `KLIPPERFORMAC_ZIP=1` also
 emits the ZIP. Command Line Tools are the only compiler requirement. The build
-compiles a universal GUI binary against the macOS 10.15 target — the compiler
-rejects any API newer than 10.15 (`-warnings-as-errors`), so the minimum OS is
-enforced by construction. `scripts/verify_bundle.py` checks the app and ZIP.
+compiles universal GUI and camera-helper binaries per arch: **x86_64 targets
+macOS 10.15** and **arm64 targets macOS 11.0** (`-warnings-as-errors`), so API
+floors are enforced by construction. `scripts/verify_bundle.py` checks the app
+and ZIP.
 
 ![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
 

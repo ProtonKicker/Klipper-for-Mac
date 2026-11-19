@@ -5,10 +5,11 @@ import SwiftUI
 /// to the detected board — the whole "start from a real config" flow.
 struct LibrarySheet: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
     @State private var all: [String] = []
     @State private var search = ""
     @State private var loading = true
+    @State private var didLoad = false
 
     private var filtered: [String] {
         search.isEmpty ? all : all.filter { $0.localizedCaseInsensitiveContains(search) }
@@ -19,7 +20,7 @@ struct LibrarySheet: View {
             HStack {
                 Text("Printer configs").font(.headline)
                 Spacer()
-                Button("Close") { dismiss() }
+                Button("Close") { isPresented = false }
             }
             .padding(12)
 
@@ -30,31 +31,31 @@ struct LibrarySheet: View {
 
             List {
                 if !model.presetNames.isEmpty {
-                    Section("Your saved configs") {
+                    Section(header: Text("Your saved configs")) {
                         ForEach(model.presetNames, id: \.self) { name in
-                            Button {
-                                dismiss()
+                            Button(action: {
+                                isPresented = false
                                 Task { await model.usePreset(name) }
-                            } label: {
+                            }) {
                                 Text(Self.readable(name)).lineLimit(1)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                 }
-                Section("Printer library") {
+                Section(header: Text("Printer library")) {
                     if loading {
                         Text("Loading…")
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                     } else if filtered.isEmpty {
                         Text("No matches — try a shorter word.")
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                     } else {
                         ForEach(filtered, id: \.self) { name in
-                            Button {
-                                dismiss()
+                            Button(action: {
+                                isPresented = false
                                 Task { await model.applyLibrary(name) }
-                            } label: {
+                            }) {
                                 Text(Self.readable(name))
                                     .lineLimit(1)
                             }
@@ -65,9 +66,16 @@ struct LibrarySheet: View {
             }
         }
         .frame(width: 480, height: 540)
-        .task {
-            all = await model.libraryConfigs()
-            loading = false
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            Task {
+                let items = await model.libraryConfigs()
+                await MainActor.run {
+                    all = items
+                    loading = false
+                }
+            }
         }
     }
 

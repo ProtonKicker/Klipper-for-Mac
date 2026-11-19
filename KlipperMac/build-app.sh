@@ -18,16 +18,24 @@ CAM_FLAGS="-O -sdk $SDK"
 
 mkdir -p dist
 
+target_for_arch() {
+    # Per-arch floors: Intel can run macOS 10.15; Apple Silicon cannot, so the
+    # arm64 slice targets 11.0. The bundled CLI runtimes keep matching floors.
+    case "$1" in
+        x86_64) echo "$1-apple-macos10.15" ;;
+        arm64)  echo "$1-apple-macos11.0" ;;
+        *)      echo "$1-apple-macos11.0" ;;
+    esac
+}
+
 build_arch() {
-    # macOS 13 (Ventura) is the GUI floor: the merged experimental app uses
-    # SwiftUI NavigationSplitView, @AppStorage, .task and AVCaptureDevice.
-    # The bundled CLI keeps its own 10.15/11.0 floor (see bundle-cli.sh).
-    xcrun swiftc $FLAGS -warnings-as-errors -target "$1-apple-macos13.0" $SRCS -o "dist/KlipperMac-$1"
+    xcrun swiftc $FLAGS -warnings-as-errors -target "$(target_for_arch "$1")" \
+        $SRCS -o "dist/KlipperMac-$1"
 }
 
 # KlipperCam is a bare CLI, so its Info.plist goes into __TEXT for TCC.
 build_cam_arch() {
-    xcrun swiftc $CAM_FLAGS -target "$1-apple-macos13.0" $CAM_SRCS \
+    xcrun swiftc $CAM_FLAGS -target "$(target_for_arch "$1")" $CAM_SRCS \
         -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
         -Xlinker "$CAM_PLIST" -o "dist/KlipperCam-$1"
 }

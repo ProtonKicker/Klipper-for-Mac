@@ -15,7 +15,14 @@
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>10.15</string>
+    <key>LSMinimumSystemVersionByArchitecture</key>
+    <dict>
+        <key>x86_64</key>
+        <string>10.15</string>
+        <key>arm64</key>
+        <string>11.0</string>
+    </dict>
     <key>NSCameraUsageDescription</key>
     <string>KlipperCam shows your camera in your own printer dashboard on this Mac only. Nobody else can see the picture.</string>
 </dict>

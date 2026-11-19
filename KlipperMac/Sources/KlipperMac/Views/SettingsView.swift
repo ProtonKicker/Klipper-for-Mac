@@ -25,10 +25,8 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("About")
             FieldRow(label: "App version", value: appVersion)
-            Button {
+            Button("Project on GitHub") {
                 model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
-            } label: {
-                Text("Project on GitHub")
             }
         }
     }
@@ -40,10 +38,10 @@ struct SettingsView: View {
             sectionHeader("Components")
             if env.installed {
                 let pins = env.pins
-                LabeledContent("Klipper", value: SettingsPresentation.pinText(pins, component: "klipper"))
-                LabeledContent("Moonraker", value: SettingsPresentation.pinText(pins, component: "moonraker"))
-                LabeledContent("Mainsail", value: SettingsPresentation.pinText(pins, component: "mainsail"))
-                LabeledContent("Fluidd", value: SettingsPresentation.pinText(pins, component: "fluidd"))
+                FieldRow(label: "Klipper", value: SettingsPresentation.pinText(pins, component: "klipper"))
+                FieldRow(label: "Moonraker", value: SettingsPresentation.pinText(pins, component: "moonraker"))
+                FieldRow(label: "Mainsail", value: SettingsPresentation.pinText(pins, component: "mainsail"))
+                FieldRow(label: "Fluidd", value: SettingsPresentation.pinText(pins, component: "fluidd"))
             }
             HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }

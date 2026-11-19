@@ -10,6 +10,8 @@ let camInfoPlist = packageDir + "/Resources/KlipperCam-Info.plist"
 
 let package = Package(
     name: "KlipperMac",
+    // SwiftPM floor stays 10.15-compatible; the packaged GUI/helper binaries
+    // are built per-arch (x86_64 10.15, arm64 11.0) by build-app.sh.
     platforms: [.macOS(.v10_15)],
     targets: [
         .executableTarget(

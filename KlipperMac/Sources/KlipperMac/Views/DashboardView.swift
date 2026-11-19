@@ -107,7 +107,7 @@ struct DashboardView: View {
                        onClose: { model.showSheet = false })
         }
         .sheet(isPresented: $showLibrary) {
-            LibrarySheet()
+            LibrarySheet(isPresented: $showLibrary)
                 .environmentObject(model)
         }
     }
@@ -147,15 +147,16 @@ struct DashboardView: View {
                     }
                 }
             }
-            Button {
+            Button(action: {
                 Task { await model.runSetup() }
-            } label: {
+            }) {
                 HStack(spacing: 6) {
                     FlatIcon(kind: .download, size: 14, color: FlatPalette.blue)
                     Text(model.busy ? "Working…" : "Install stack")
                 }
+                .compatBordered()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
             .disabled(model.busy)
         }
         .onAppear { prerequisites = Prerequisites.check() }
@@ -168,11 +169,9 @@ struct DashboardView: View {
             HStack {
                 sectionHeader("Stack")
                 Spacer()
-                Button {
+                Button(action: {
                     Task { await model.refresh(reloadEnv: true) }
-                } label: {
-                    // Image(systemName:) needs macOS 11+; the stack has its own
-                    // FlatIcons, so the refresh glyph is just a typed character.
+                }) {
                     Text("↻").font(.system(size: 15, weight: .medium))
                 }
                 .buttonStyle(.plain)
@@ -184,45 +183,45 @@ struct DashboardView: View {
                 Spacer()
             }
             if let warning = AppFeedback.inlineWarning(message: model.printer?.stackWarning) {
-                Label {
-                    Text(warning.message)
-                } icon: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
+                    Text(warning.message)
                 }
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
             }
             HStack(spacing: 8) {
-                Button {
-                    Task { await model.startStack() }
-                } label: {
-                    Text("Start").frame(width: stackButtonWidth)
+                Button(action: { Task { await model.startStack() } }) {
+                    Text("Start")
+                        .frame(width: stackButtonWidth)
+                        .compatBordered()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .disabled(model.busy || model.snapshot.anyUp || !model.env.installed)
 
-                Button {
-                    Task { await model.stopStack() }
-                } label: {
-                    Text("Stop").frame(width: stackButtonWidth)
+                Button(action: { Task { await model.stopStack() } }) {
+                    Text("Stop")
+                        .frame(width: stackButtonWidth)
+                        .compatBordered()
                 }
+                .buttonStyle(.plain)
                 .disabled(model.busy || !model.snapshot.tracked)
 
-                Button {
-                    Task { await model.restartStack() }
-                } label: {
-                    Text("Restart").frame(width: stackButtonWidth)
+                Button(action: { Task { await model.restartStack() } }) {
+                    Text("Restart")
+                        .frame(width: stackButtonWidth)
+                        .compatBordered()
                 }
+                .buttonStyle(.plain)
                 .disabled(model.busy || !model.env.installed)
 
-                Button {
-                    Task { await model.killAll() }
-                } label: {
-                    Text("Kill all").frame(width: stackButtonWidth)
+                Button(action: { Task { await model.killAll() } }) {
+                    Text("Kill all")
+                        .frame(width: stackButtonWidth)
                         .foregroundColor(FlatPalette.red)
+                        .compatBorderedProminent(tint: .red)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.plain)
                 .disabled(model.busy || !model.snapshot.anyUp)
                 Spacer()
             }
@@ -279,25 +278,26 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerSection: some View {
         if let p = model.printer {
-            Section("Printer") {
-                LabeledContent("Klipper", value: p.connectivityLabel)
+            VStack(alignment: .leading, spacing: 10) {
+                sectionHeader("Printer")
+                FieldRow(label: "Klipper", value: p.connectivityLabel)
                 if let note = AppFeedback.inlineWarning(message: p.readinessNote) {
-                    Label {
-                        Text(note.message)
-                    } icon: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         FlatIcon(kind: .warning, size: 14, color: FlatPalette.amber)
+                        Text(note.message)
                     }
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
                 }
                 if let st = p.printState {
                     FieldRow(label: "State", value: st.capitalized)
                 }
                 if let file = p.filename, !file.isEmpty {
-                    LabeledContent("File", value: file)
+                    FieldRow(label: "File", value: file)
                     if let prog = AppFeedback.progressPresentation(p.progress) {
                         VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: prog.fraction)
+                            CompatProgressBar(value: prog.fraction)
+                                .frame(height: 6)
                             Text(prog.label)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -328,7 +328,8 @@ struct DashboardView: View {
 
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
-            Section("Printer config") {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionHeader("Printer config")
                 // `serial --json` answered: one row per [mcu] section, because
                 // the pane has to show what printer.cfg actually holds. An empty
                 // list (a config with no MCU section — the contract says that is
@@ -354,11 +355,11 @@ struct DashboardView: View {
                 // printer.cfg in place. Triggered on demand — not automatic —
                 // so cable changes are still the user's call.
                 HStack(spacing: 8) {
-                    Button {
-                        Task { await model.syncSerial() }
-                    } label: {
-                        Label("Sync Serial", systemImage: "arrow.triangle.2.circlepath")
+                    Button(action: { Task { await model.syncSerial() } }) {
+                        Text("↻ Sync Serial")
+                            .compatBordered()
                     }
+                    .buttonStyle(.plain)
                     .disabled(model.busy)
                     if let status = syncCheckStatus {
                         HStack(spacing: 4) {
@@ -367,24 +368,22 @@ struct DashboardView: View {
                             Text(verbatim: status.text)
                         }
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                     } else {
                         Text("Match printer.cfg to the board plugged in")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                     }
                     Spacer()
                 }
 
-                LabeledContent("Current config") {
-                    Button {
+                LabeledRow(label: "Current config") {
+                    Button("Change printer config") {
                         showLibrary = true
-                    } label: {
-                        Text("Change printer config")
                     }
                 }
 
-                LabeledContent("Config versions") {
+                LabeledRow(label: "Config versions") {
                     Button("Show") { model.showConfigHistoryFolder() }
                 }
             }
@@ -394,33 +393,30 @@ struct DashboardView: View {
     // MARK: serial device, two ways
 
     /// The single-board picker: one "Serial device" row that talks to the
-    /// non-multi-MCUIT CLI path. The button label is read from model state so
+    /// non-multi-MCU CLI path. The button label is read from model state so
     /// a pick survives the refresh that `setSerial` triggers — that refresh
     /// otherwise reverts the button to "Select device…" for one poll tick.
     private var serialPicker: some View {
-        Menu {
+        Picker(serialPickerLabel, selection: Binding(
+            get: { serialConfigured ?? model.pendingSerials[McuRow.masterName] ?? "" },
+            set: { path in
+                guard !path.isEmpty else { return }
+                Task { await model.setSerial(path) }
+            }
+        )) {
             if model.serialPorts.isEmpty {
-                Text("No USB serial devices found")
+                Text("No USB serial devices found").tag("")
             } else {
                 ForEach(model.serialPorts) { port in
                     let owner = claimants[port.path]
-                    let claimed = owner != nil
-                    Button {
-                        Task { await model.setSerial(port.path) }
-                    } label: {
-                        if claimed, let who = owner {
-                            Label("\(port.path)   ·   used by \(who)",
-                                  systemImage: "checkmark")
-                        } else {
-                            Text("\(port.path)   ·   \(portName(port.path))")
-                        }
-                    }
+                    let label = owner.map { "✓ \(port.path)   ·   used by \($0)" }
+                        ?? "\(port.path)   ·   \(portName(port.path))"
+                    Text(label).tag(port.path)
                 }
             }
-        } label: {
-            Text(serialPickerLabel)
-                .foregroundStyle(serialPlaceholder ? .secondary : .primary)
         }
+        .pickerStyle(DefaultPickerStyle())
+        .foregroundColor(serialPlaceholder ? .secondary : .primary)
         .disabled(model.busy || model.serialPorts.isEmpty)
     }
 
@@ -491,7 +487,7 @@ struct DashboardView: View {
                  + "syncs to it, so each one needs a port of its own — the same "
                  + "path twice keeps klipper from starting.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
         }
     }
 
@@ -560,8 +556,8 @@ private struct McuSerialRow: View {
                 // Name + badges ride the left; the picker rides the right.
                 HStack(spacing: 6) {
                     Text(verbatim: row.displayName)
-                        .font(.callout.weight(.medium))
-                        .help(row.section)
+                        .font(.system(size: NSFont.systemFontSize, weight: .medium))
+                        .helpIfAvailable(row.section)
                     ForEach(Array(row.badgePresentations.enumerated()),
                             id: \.offset) { _, badge in
                         pill(badge)
@@ -573,8 +569,8 @@ private struct McuSerialRow: View {
                 } else if let status = row.pickerStatusPresentation {
                     Text(status.label)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help(status.help)
+                        .foregroundColor(.secondary)
+                        .helpIfAvailable(status.help)
                 }
             }
             HStack(spacing: 10) {
@@ -604,25 +600,22 @@ private struct McuSerialRow: View {
                 if let usbSerial = row.identity?.serial,
                    !usbSerial.isEmpty,
                    row.serial?.hasPrefix("/dev/") == true {
-                    Button {
-                        model.copyToPasteboard(usbSerial)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption2)
+                    Button(action: { model.copyToPasteboard(usbSerial) }) {
+                        Text("⎘").font(.caption)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
+                    .buttonStyle(.plain)
+                    .helpIfAvailable("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
                           + "every replug — this ID stays with the board so you "
                           + "can update printer.cfg by hand.")
                 }
                 if let footer = row.footerPresentation {
                     Text(footer.message)
-                        .foregroundStyle(footer.tone == .warning
+                        .foregroundColor(footer.tone == .warning
                                          ? FlatPalette.amber : .secondary)
                 }
             }
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundColor(.secondary)
         }
         .padding(.vertical, 2)
     }
@@ -633,37 +626,32 @@ private struct McuSerialRow: View {
     /// cannot address keeps its row — and loses its write button, because
     /// silently editing [mcu] instead would be the worse failure.
     private var portPicker: some View {
-        Menu {
+        Picker(portPickerButtonText, selection: Binding(
+            get: { row.serial ?? model.pendingSerials[row.mcu] ?? "" },
+            set: { path in
+                guard !path.isEmpty, !claimants.contains(where: { $0.key == path && $0.value != row.section }) else { return }
+                Task { await model.setSerial(path, mcu: row.mcu) }
+            }
+        )) {
             if ports.isEmpty {
-                Text("No USB serial devices found")
+                Text("No USB serial devices found").tag("")
             } else {
                 ForEach(ports) { port in
-                    let path = port.path
-                    let owner = claimants[path]
+                    let owner = claimants[port.path]
                     let claimedByOther = owner != nil && owner != row.section
-                    Button {
-                        Task { await model.setSerial(path, mcu: row.mcu) }
-                    } label: {
-                        if port.path == row.serial {
-                            Label("\(port.path)   \(portName(port.path))",
-                                  systemImage: "checkmark")
-                        } else if claimedByOther, let who = owner {
-                            Text("\(port.path)   ·   used by \(who)")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("\(port.path)   ·   \(portName(port.path))")
-                        }
-                    }
-                    .disabled(claimedByOther)
+                    let label = port.path == row.serial
+                        ? "✓ \(port.path)   \(portName(port.path))"
+                        : (claimedByOther ? "\(port.path)   ·   used by \(owner ?? "another MCU")"
+                                          : "\(port.path)   ·   \(portName(port.path))")
+                    Text(label).tag(port.path)
                 }
             }
-        } label: {
-            Text(portPickerButtonText)
-                .foregroundStyle(portPlaceholder ? .secondary : .primary)
         }
+        .pickerStyle(DefaultPickerStyle())
+        .foregroundColor(portPlaceholder ? .secondary : .primary)
         .frame(maxWidth: 320)
         .disabled(model.busy || !row.isAddressable || ports.isEmpty)
-        .help(row.pickerHelpText)
+        .helpIfAvailable(row.pickerHelpText)
     }
 
     /// Resolved picker label for one /dev/cu.* node. The identity "name" (e.g.
@@ -726,13 +714,13 @@ private struct McuSerialRow: View {
                 FlatIcon(kind: .warning, size: 12, color: FlatPalette.amber)
             }
             Text(badge.text)
-                .font(.caption2.weight(.medium))
+                .font(.caption)
         }
-        .foregroundStyle(badgeForeground(badge.tone))
+        .foregroundColor(badgeForeground(badge.tone))
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Capsule().fill(badgeBackground(badge.tone)))
-        .help(badge.help ?? "")
+        .helpIfAvailable(badge.help ?? "")
     }
 
     private func badgeForeground(_ tone: RowBadgeTone) -> Color {
@@ -766,32 +754,45 @@ private struct AddBoardRow: View {
 
     var body: some View {
         HStack {
-            Button {
+            Button(action: {
                 name = ""
                 prompt = true
-            } label: {
+            }) {
                 HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.body)
+                    Text("+").font(.body)
                     Text("Add another board")
                     Spacer()
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
         }
-        .alert("Add another board", isPresented: $prompt) {
-            TextField("Section name (e.g. tool, display)", text: $name)
-            Button("Cancel", role: .cancel) { name = "" }
-            Button("Add") {
-                let chosen = name
-                name = ""
-                Task { await model.addBoard(chosen) }
+        .sheet(isPresented: $prompt) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Add another board").font(.headline)
+                Text("Adds an \"[mcu <name>]\" slot to printer.cfg. Plug the new "
+                     + "board in first, then use the new row's dropdown to assign "
+                     + "it a port. One word — no ':' or ']'.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                TextField("Section name (e.g. tool, display)", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        prompt = false
+                        name = ""
+                    }
+                    Button("Add") {
+                        let chosen = name
+                        prompt = false
+                        name = ""
+                        Task { await model.addBoard(chosen) }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
-            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-        } message: {
-            Text("Adds an \"[mcu <name>]\" slot to printer.cfg. Plug the new "
-                 + "board in first, then use the new row's dropdown to assign "
-                 + "it a port. One word — no ':' or ']'.")
+            .padding(16)
+            .frame(width: 420)
         }
     }
 }

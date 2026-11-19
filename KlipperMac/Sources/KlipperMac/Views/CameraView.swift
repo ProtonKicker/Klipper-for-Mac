@@ -87,25 +87,26 @@ struct CameraView: View {
     }
 
     var body: some View {
-        Form {
-            cameraSection
-            recordingSection
-            previewSection
-            snapshotSection
-            settingsSection
-            privacySection
-        }
-        .formStyle(.grouped)
-        .navigationTitle("Recording")
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await reloadCamera() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("Recording").font(.system(size: 22, weight: .bold))
+                    Spacer()
+                    Button(action: { Task { await reloadCamera() } }) {
+                        Text("↻").font(.system(size: 15, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .helpIfAvailable("Refresh")
                 }
-                .help("Refresh")
+                Card { cameraSection }
+                Card { recordingSection }
+                Card { previewSection }
+                Card { snapshotSection }
+                Card { settingsSection }
+                Card { privacySection }
             }
+            .padding(16)
+            .frame(maxWidth: 760, alignment: .leading)
         }
         .onAppear {
             loadPrefs()
@@ -116,23 +117,24 @@ struct CameraView: View {
     // MARK: - what this is, and the one button
 
     private var cameraSection: some View {
-        Section("Camera") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Camera")
             Text("Watch your printer while it works — use the camera built into this Mac, or an iPhone next to the printer.")
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
 
             HStack(spacing: 6) {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
                 Text(statePresentation.text)
-                    .font(.callout.weight(.medium))
-                if model.busy { ProgressView().controlSize(.small) }
+                    .font(.callout)
+                if model.busy { ActivityIndicator() }
                 Spacer()
             }
 
             HStack(spacing: 8) {
-                Button {
+                Button(action: {
                     // Only a start attempt can mean "macOS is waiting for approval".
                     triedStarting = !camOn
                     if camOn {
@@ -140,10 +142,11 @@ struct CameraView: View {
                     } else {
                         Task { await model.startCamera() }
                     }
-                } label: {
+                }) {
                     Text(camOn ? "Turn off camera" : "Turn on camera")
+                        .compatBorderedProminent(tint: camOn ? FlatPalette.amber : FlatPalette.blue)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.plain)
                 .disabled(model.busy || !env.isCLIInstalled)
                 Spacer()
             }
@@ -155,7 +158,8 @@ struct CameraView: View {
     // MARK: - record
 
     private var recordingSection: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Recording")
             // Between video-style "save" clips and timelapse interval
             // snapshots: the CLIs `cam record` takes either a bounded clip or
             // an interval trigger — never both at once.
@@ -167,29 +171,36 @@ struct CameraView: View {
             .pickerStyle(.segmented)
 
             HStack(spacing: 8) {
-                Button {
-                    Task { await startRecording() }
-                } label: {
-                    Label(recordingButtonLabel, systemImage: "record.circle")
-                        .frame(maxWidth: .infinity)
+                Button(action: { Task { await startRecording() } }) {
+                    HStack {
+                        Spacer()
+                        Text(recordingButtonLabel)
+                        Spacer()
+                    }
+                    .compatBorderedProminent(tint: statusTint)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(statusTint)
+                .buttonStyle(.plain)
                 .disabled(model.busy || !env.isCLIInstalled)
             }
 
             if style == .videos {
-                Picker("Media", selection: $medium) {
+                Picker("Media", selection: Binding(
+                    get: { medium },
+                    set: { v in
+                        let previous = medium
+                        medium = v
+                        if previous != v { Task { await pushAudioFlag(v) } }
+                    }
+                )) {
                     ForEach(CaptureMedium.allCases) { m in
                         Text(m.label).tag(m)
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: medium) { v in Task { await pushAudioFlag(v) } }
                 Text("Audio records only the microphone — the camera stays quiet. "
                      + "Audio + Video records both at once.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
             }
 
             if style == .timelapse {
@@ -202,7 +213,7 @@ struct CameraView: View {
                 Text("Each frame is saved on its own at this interval to your "
                      + "Klipper data folder — audio is always off for timelapse.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -278,10 +289,9 @@ struct CameraView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Klipper CLI not found — install it first:")
                 .font(.callout)
-                .foregroundStyle(.secondary)
-            Text(AppModel.installCommand)
-                .font(.system(size: 11, design: .monospaced))
-                .textSelection(.enabled)
+                .foregroundColor(.secondary)
+            SelectableText(text: AppModel.installCommand, monospaced: true, fontSize: 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -289,7 +299,8 @@ struct CameraView: View {
     // MARK: - live picture
 
     @ViewBuilder private var previewSection: some View {
-        Section("Preview") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Preview")
             if camOn {
                 CamStreamView(address: streamURL)
                     .frame(maxWidth: .infinity)
@@ -300,7 +311,7 @@ struct CameraView: View {
                     FlatIcon(kind: .camera, size: 34, color: FlatPalette.blue)
                     Text(placeholderText)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
@@ -317,12 +328,11 @@ struct CameraView: View {
     // MARK: - snapshots
 
     private var snapshotSection: some View {
-        Section("Snapshots") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Snapshots")
             HStack(spacing: 8) {
-                Button {
+                Button("Take a snapshot") {
                     Task { await model.runCam(["cam", "snapshot"]) }
-                } label: {
-                    Text("Take a snapshot")
                 }
                 .disabled(model.busy || !env.isCLIInstalled)
                 Spacer()
@@ -330,12 +340,10 @@ struct CameraView: View {
             Text("Saves a photo into your Klipper data folder — the camera works "
                  + "whether it is on or off. Great for timelapses.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
             HStack(spacing: 8) {
-                Button {
+                Button("Show snapshot folder") {
                     model.revealSnapshots()
-                } label: {
-                    Text("Show snapshot folder")
                 }
                 Spacer()
             }
@@ -345,68 +353,82 @@ struct CameraView: View {
     // MARK: - settings (nothing restarts on its own)
 
     private var settingsSection: some View {
-        Section("Camera settings") {
-            Picker("Camera", selection: $selectedDevice) {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Camera settings")
+            Picker("Camera", selection: Binding(
+                get: { selectedDevice },
+                set: { value in
+                    let previousApplied = savedDevice
+                    selectedDevice = value
+                    guard value != previousApplied else { return }
+                    savedDevice = value
+                    Task { await model.runCam(["cam", "config", "--device", value]) }
+                }
+            )) {
                 Text("Default camera").tag("")
                 if devices.isEmpty && !devicesHint.isEmpty {
-                    Text(devicesHint).disabled(true).tag(" ")
+                    Text(devicesHint).tag(" ")
                 }
                 ForEach(devices, id: \.self) { name in
                     Text(name).tag(name)
                 }
             }
             .disabled(!env.isCLIInstalled)
-            .onChange(of: selectedDevice) { value in
-                guard value != savedDevice else { return }
-                savedDevice = value
-                Task { await model.runCam(["cam", "config", "--device", value]) }
-            }
 
-            Picker("FPS (smoothness)", selection: $fps) {
+            Picker("FPS (smoothness)", selection: Binding(
+                get: { fps },
+                set: { value in
+                    let previousApplied = savedFps
+                    fps = value
+                    guard value != previousApplied else { return }
+                    savedFps = value
+                    Task { await model.runCam(["cam", "config", "--fps", String(value)]) }
+                }
+            )) {
                 ForEach(fpsOptions, id: \.self) { ticks in
                     Text("\(ticks)").tag(ticks)
                 }
             }
             .pickerStyle(.segmented)
-            .onChange(of: fps) { value in
-                guard value != savedFps else { return }
-                savedFps = value
-                Task { await model.runCam(["cam", "config", "--fps", String(value)]) }
-            }
 
-            Picker("Resolution", selection: $resolution) {
+            Picker("Resolution", selection: Binding(
+                get: { resolution },
+                set: { value in
+                    let previousApplied = savedResolution
+                    resolution = value
+                    guard value != previousApplied,
+                          let pick = resolutionOptions.first(where: { $0.label == value })
+                    else { return }
+                    savedResolution = value
+                    Task { await model.runCam(["cam", "config",
+                                               "--width", String(pick.width),
+                                               "--height", String(pick.height)]) }
+                }
+            )) {
                 ForEach(resolutionOptions, id: \.label) { option in
                     Text(option.label).tag(option.label)
                 }
             }
             .pickerStyle(.segmented)
-            .onChange(of: resolution) { value in
-                guard value != savedResolution,
-                      let pick = resolutionOptions.first(where: { $0.label == value })
-                else { return }
-                savedResolution = value
-                Task { await model.runCam(["cam", "config",
-                                           "--width", String(pick.width),
-                                           "--height", String(pick.height)]) }
-            }
 
             Text("FPS is how smooth the motion looks; resolution is how large and "
                  + "sharp the picture is. Higher values use more of your Mac. Some "
                  + "built-in cameras cap at 1280 x 720 — the best supported picture "
                  + "is used automatically. Turn the camera off and on again to apply.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
         }
     }
 
     // MARK: - privacy footnote
 
     private var privacySection: some View {
-        Section("Privacy") {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Privacy")
             Text("The camera only runs when you turn it on, and quitting this app turns it off. "
                  + "Only this Mac can see the stream (localhost).")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundColor(.secondary)
 
             // Shown after any start attempt that did not end with a confirmed
             // live stream. When macOS is still holding the one-time prompt the
@@ -416,9 +438,13 @@ struct CameraView: View {
                 Text("macOS asks once whether Klipper for Mac may use the camera. "
                      + "If the camera stays off, allow it in System Settings > Privacy & Security > Camera.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.secondary)
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).font(.headline)
     }
 
     // MARK: - prefs + devices

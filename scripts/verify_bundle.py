@@ -19,10 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "KlipperMac" / "dist" / "Klipper for Mac.app"
 ZIP = ROOT / "KlipperMac" / "dist" / "Klipper-for-Mac.zip"
 EXPECTED_RUNTIME_FLOORS = {"x86_64": "10.15", "arm64": "11.0"}
-# The merged experimental GUI uses SwiftUI APIs that need macOS 13, so its
-# universal slices are both built at 13.0; the bundled CLI runtimes keep the
-# older 10.15/11.0 floors.
-EXPECTED_GUI_FLOORS = {"x86_64": "13.0", "arm64": "13.0"}
+# GUI and camera helper are universal with per-arch deployment floors:
+# Intel Catalina is supported (10.15) while Apple Silicon targets 11.0.
+# Bundled CLI Python runtimes keep the same per-arch floors.
+EXPECTED_GUI_FLOORS = {"x86_64": "10.15", "arm64": "11.0"}
 
 
 def check(ok, message):
@@ -130,7 +130,7 @@ def verify_app(app):
                     f"{arch}: {label} links only system libraries {external}",
                 )
 
-    # GUI stays universal with the merged experimental app's deployment floor.
+    # GUI and camera helper are universal with per-arch deployment floors.
     gui = app / "Contents" / "MacOS" / "KlipperMac"
     check(gui.is_file(), "universal GUI binary exists")
     if shutil.which("lipo"):
@@ -140,11 +140,16 @@ def verify_app(app):
         info = run(["file", str(gui)]).stdout.strip()
         check("universal" in info, f"file(1) reports {info}")
     check(
-        sorted(minos(gui)) == sorted(set(EXPECTED_GUI_FLOORS.values())),
-        f"GUI slices keep floors {sorted(set(EXPECTED_GUI_FLOORS.values()))}: {minos(gui)}",
+        sorted(minos(gui)) == sorted(EXPECTED_GUI_FLOORS.values()),
+        f"GUI slices keep floors {sorted(EXPECTED_GUI_FLOORS.values())}: {minos(gui)}",
     )
     camera_helper = app / "Contents" / "Resources" / "KlipperCam"
     check(camera_helper.is_file(), "bundled KlipperCam camera helper exists")
+    check(
+        sorted(minos(camera_helper)) == sorted(EXPECTED_GUI_FLOORS.values()),
+        "KlipperCam slices keep floors "
+        f"{sorted(EXPECTED_GUI_FLOORS.values())}: {minos(camera_helper)}",
+    )
 
     if shutil.which("codesign"):
         signed = run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)])

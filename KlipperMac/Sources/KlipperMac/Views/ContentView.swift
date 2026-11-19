@@ -67,36 +67,52 @@ enum Pane: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var pane: Pane = .printer
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var didOpenOnce = UserDefaults.standard.bool(forKey: "didOpenOnce")
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(selection: $pane) {
-                ForEach(Pane.allCases) { p in
-                    Label {
-                        Text(p.rawValue)
-                    } icon: {
-                        FlatIcon(kind: p.icon, size: 16, color: pane == p ? .primary : p.tint)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                VStack(spacing: 2) {
+                    ForEach(Pane.allCases) { p in
+                        Button(action: { pane = p }) {
+                            HStack(spacing: 8) {
+                                FlatIcon(kind: p.icon, size: 16, color: pane == p ? .primary : p.tint)
+                                Text(p.rawValue)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(pane == p ? Color.secondary.opacity(0.18) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .tag(p)
                 }
-            }
-            .navigationSplitViewColumnWidth(170)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+                .padding(8)
+                Spacer(minLength: 0)
                 MessageBanner(notifier: model.notifier)
             }
-        } detail: {
-            switch pane {
-            case .printer:
-                DashboardView()
-            case .camera:
-                CameraView()
-            case .settings:
-                SettingsView()
+            .frame(width: 170)
+            .background(compatNSColor(.windowBackgroundColor))
+
+            Divider()
+
+            Group {
+                switch pane {
+                case .printer:
+                    DashboardView()
+                case .camera:
+                    CameraView()
+                case .settings:
+                    SettingsView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .animation(.easeInOut(duration: 0.22), value: columnVisibility)
         .frame(minWidth: 820, minHeight: 560)
         .overlay(
             KeyCaptureView { key in
@@ -111,7 +127,7 @@ struct ContentView: View {
             .opacity(0)
             .allowsHitTesting(false)
         )
-        .task {
+        .onAppear {
             // First run only: land on Settings so the data folder, CLI and
             // printer config are where a new user starts. Later runs open on
             // the Printer pane.

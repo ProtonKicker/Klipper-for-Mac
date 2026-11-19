@@ -613,7 +613,12 @@ private func _syncNamesFromReport(_ report: SerialReport) {
     func startCamera() async {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .notDetermined:
-            guard await AVCaptureDevice.requestAccess(for: .video) else {
+            let granted = await withCheckedContinuation { cont in
+                AVCaptureDevice.requestAccess(for: .video) { ok in
+                    cont.resume(returning: ok)
+                }
+            }
+            guard granted else {
                 say("Camera access declined. To allow it later: System Settings > Privacy & Security > Camera.",
                     error: true)
                 return
