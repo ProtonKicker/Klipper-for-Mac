@@ -5,7 +5,7 @@ RUFF := $(VENV)/ruff
 PYTEST := $(VENV)/pytest
 PY ?= python3
 
-.PHONY: all lint lint-fix format test build zip smoke
+.PHONY: all lint lint-fix format test build zip verify smoke
 
 all: lint test build
 
@@ -25,6 +25,9 @@ build:
 
 zip:
 	cd KlipperMac && KLIPPERFORMAC_ZIP=1 ./build-app.sh
+
+verify: zip
+	$(PY) scripts/verify_bundle.py
 
 smoke:
 	@$(PY) -c "from klipperformac import cli, paths, versions; print('imports ok')"

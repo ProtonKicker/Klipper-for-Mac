@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build KlipperMac.app — works with Command Line Tools only (no Xcode needed).
 # Compiles every Swift source with swiftc, produces a universal (arm64 +
-# x86_64) binary, assembles the .app bundle, ad-hoc signs it.
+# x86_64) binary, assembles the .app bundle, bundles a per-arch Python runtime
+# + CLI sources, then ad-hoc signs it.
 # Output: dist/Klipper for Mac.app
 set -e
 cd "$(dirname "$0")"
@@ -41,6 +42,17 @@ if [ -f Resources/AppIcon.icns ]; then
 fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+echo "==> bundling CLI (per-arch CPython + sources)"
+APP_ABS="$PWD/$APP"
+cd ..
+RUNTIMES=.build/pythons
+if [ ! -x "$RUNTIMES/cpython-3.12-macos-x86_64-none/bin/python3.12" ] ||
+   [ ! -x "$RUNTIMES/cpython-3.12-macos-aarch64-none/bin/python3.12" ]; then
+    ./scripts/fetch-python-runtimes.sh
+fi
+./scripts/bundle-cli.sh "$APP_ABS"
+cd KlipperMac
+
 echo "==> ad-hoc codesign"
 codesign --force --sign - "$APP"
 
@@ -48,7 +60,7 @@ if [ -n "${KLIPPERFORMAC_ZIP:-}" ]; then
     echo "==> zipping"
     ZIP="dist/Klipper-for-Mac.zip"
     rm -f "$ZIP"
-    ditto -c -k --keepParent "$APP" "$ZIP"
+    ditto --norsrc -c -k --keepParent "$APP" "$ZIP"
     echo "    zip: $ZIP"
 fi
 

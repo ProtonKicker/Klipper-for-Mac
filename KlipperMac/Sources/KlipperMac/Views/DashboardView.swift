@@ -4,6 +4,7 @@ struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var selectedSerial = ""
     @State private var selectedPreset = ""
+    @State private var prerequisites = Prerequisites.check()
 
     private let stackButtonWidth: CGFloat = 92
 
@@ -37,9 +38,32 @@ struct DashboardView: View {
                 FlatIcon(kind: .warning, size: 16, color: FlatPalette.amber)
                 Text("Klipper stack is not installed on this Mac")
             }
-            Text("Installs pristine Klipper, Moonraker, Mainsail and Fluidd from GitHub. Takes a few minutes and needs internet.")
+            Text("Installs pristine Klipper, Moonraker, Mainsail and Fluidd from GitHub. Takes a few minutes and needs internet. The CLI and its Python runtime are already bundled in this app.")
                 .font(.callout)
                 .foregroundColor(.secondary)
+            Text("Checklist below is a quick preflight; setup performs the authoritative checks.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ForEach(prerequisites) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(item.satisfied ? "✓" : "•")
+                        .foregroundColor(item.satisfied ? .green : FlatPalette.amber)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name).font(.callout)
+                        Text(item.detail)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if !item.satisfied && !item.installCommand.isEmpty {
+                            HStack(spacing: 6) {
+                                Text(item.installCommand)
+                                    .font(.system(size: 11, design: .monospaced))
+                                Button("Copy") { model.copyToPasteboard(item.installCommand) }
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
             Button {
                 Task { await model.runSetup() }
             } label: {
@@ -51,6 +75,7 @@ struct DashboardView: View {
             .buttonStyle(.bordered)
             .disabled(model.busy)
         }
+        .onAppear { prerequisites = Prerequisites.check() }
     }
 
     // MARK: - stack controls

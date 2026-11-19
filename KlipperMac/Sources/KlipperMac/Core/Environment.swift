@@ -106,18 +106,17 @@ final class KEnvironment {
 
     static func resolveCLI() -> URL? {
         let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        var dirs = [home.appendingPathComponent(".local/bin"),
-                    URL(fileURLWithPath: "/usr/local/bin"),
-                    URL(fileURLWithPath: "/opt/homebrew/bin")]
-        if let p = ProcessInfo.processInfo.environment["PATH"] {
-            dirs += p.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
+        // Development escape hatch only: a release app never looks outside its
+        // own bundle (no PATH scan, no separately installed CLI needed).
+        if let override = ProcessInfo.processInfo.environment["KLIPPERFORMAC_CLI"],
+           fm.isExecutableFile(atPath: override) {
+            return URL(fileURLWithPath: override)
         }
-        for d in dirs {
-            let u = d.appendingPathComponent("klipperformac")
-            if fm.isExecutableFile(atPath: u.path) { return u }
-        }
-        return nil
+        // Bundle.main is the *running* app's bundle, so this works from any
+        // install location — not just /Applications.
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let bundled = resources.appendingPathComponent("CLI/bin/klipperformac")
+        return fm.isExecutableFile(atPath: bundled.path) ? bundled : nil
     }
 
     // MARK: - public (cache-backed)

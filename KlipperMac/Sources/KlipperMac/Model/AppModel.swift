@@ -141,7 +141,7 @@ final class AppModel: ObservableObject {
                                      : r.output, error: true)
             }
         } catch {
-            say("Klipper CLI not found — install it first:\ncurl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh",
+            say("Bundled CLI unavailable — reinstall Klipper for Mac.app from the release ZIP.",
                 error: true)
             exit = -1
         }
@@ -168,7 +168,7 @@ final class AppModel: ObservableObject {
                 say(r.output.isEmpty ? "Could not change LAN access." : r.output, error: true)
             }
         } catch {
-            say("Klipper CLI not found.", error: true)
+            say("Bundled CLI unavailable — reinstall the app.", error: true)
         }
         busy = false
         await refresh(reloadEnv: true)
@@ -203,7 +203,7 @@ final class AppModel: ObservableObject {
                 .filter { !$0.isEmpty }
             updateLines = lines.isEmpty ? ["All components at newest pinned tags."] : lines
         } catch {
-            updateLines = ["Klipper CLI not found."]
+            updateLines = ["Bundled CLI unavailable — reinstall the app."]
         }
     }
 

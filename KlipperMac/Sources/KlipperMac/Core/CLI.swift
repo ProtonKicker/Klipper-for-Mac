@@ -10,7 +10,7 @@ enum CLIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notFound:
-            return "Klipper CLI not found. Install it with the one-liner from the project README."
+            return "The CLI bundled inside Klipper for Mac.app is missing. Reinstall the app from the release ZIP."
         }
     }
 }

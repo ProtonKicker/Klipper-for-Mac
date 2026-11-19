@@ -9,7 +9,40 @@ files are never edited (`klipperformac doctor` proves it with `git status`).
 
 ![alt text]( https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/cli%20-%20oct%203%202026.png )
 
-## Quick start
+## Quick start — GUI app
+
+Download `Klipper-for-Mac.zip` from
+[Releases](https://github.com/ProtonKicker/Klipper-for-Mac/releases), unzip it,
+drag **Klipper for Mac.app** into Applications, and launch it. The ZIP contains
+a working `klipperformac` CLI **and its own Python 3.12 runtime** for both
+architectures — no separate CLI installer, no separate Python, no Homebrew
+Python, and no `scripts/install.sh` are needed. The universal GUI still targets
+**macOS 10.15+ (Intel)** and **11+ (Apple Silicon)**; the bundled Intel runtime
+targets 10.15 and the Apple Silicon runtime targets 11.0.
+
+In the app choose **Printer → Setup → Install stack**. That first-time step
+still requires these *system* prerequisites (the app shows a checklist and
+setup performs the authoritative checks; the app does not install them for
+you):
+
+- **git + a C compiler** — install Xcode Command Line Tools: `xcode-select --install`
+- **libsodium** — required by Moonraker's authentication: `brew install libsodium` (or install it from another source)
+- **internet access** — setup fetches the pinned pristine upstream Klipper,
+  Moonraker, Mainsail and Fluidd components
+
+After setup, plug in the printer board, pick its serial device in the Printer
+pane, and press Start. Fluidd is at **http://localhost:8081** (Mainsail :8080).
+`printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
+with your printer's real config (the Presets picker can import one).
+
+The app is ad-hoc signed (notarization planned), so right-click → **Open**
+works around the first-launch warning. It resolves its bundled CLI from inside
+its own bundle, so it works from any install location, not just /Applications.
+
+## Terminal CLI (optional)
+
+The command-line/TUI installer is still available for scripting, but is **not**
+needed for the GUI:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ProtonKicker/Klipper-for-Mac/main/scripts/install.sh | sh
@@ -20,34 +53,20 @@ klipperformac serial --auto  # plug in the printer board first
 klipperformac up             # start everything, keep the Mac awake
 ```
 
-Fluidd dashboard: **http://localhost:8081** (Mainsail :8080). Bare
-`klipperformac` opens the interactive TUI.
+That installer needs **macOS 10.15+ (Apple Silicon 11+)**, Xcode Command Line
+Tools, a **Python ≥ 3.10 you provide** (python.org works on 10.15), and
+libsodium. The GUI does not have these Python/CLI requirements because it ships
+its own. Bare `klipperformac` opens the interactive TUI.
 
-Requirements: **macOS 10.15 (Catalina) or newer** (Intel; Apple Silicon needs
-11+), Xcode Command Line Tools (`xcode-select --install`), Python ≥ 3.10
-(python.org installer works on 10.15), libsodium (`brew install python@3.12 libsodium`).
+## Building the GUI from source
 
-`printer.cfg` starts as upstream's `generic-rambo.cfg` example — replace it
-with your printer's real config (`klipperformac presets` can import one).
-
-## GUI app
-
-A native SwiftUI app wrapping the same CLI — same data folder, same running
-stack. The universal build targets **macOS 10.15+ (Intel)** and 11+ (Apple
-Silicon); the GUI only speaks to the already-installed
-[CLI](https://github.com/ProtonKicker/Klipper-for-Mac/releases) — no bundled
-stack. Install the CLI first, then get the GUI from
-[Releases](https://github.com/ProtonKicker/Klipper-for-Mac/releases): unzip
-`Klipper-for-Mac.zip` and drag **Klipper for Mac.app** into Applications,
-Chrome-style. It's ad-hoc signed (notarization planned), so right-click →
-**Open** works around the first-launch warning. The CLI installer never
-downloads or builds the GUI — they're fully separate.
-
-Building from source (full clone needed): `KlipperMac/build-app.sh`, Command
-Line Tools only; `KLIPPERFORMAC_ZIP=1` also emits the zip. It compiles a
-universal binary against the macOS 10.15 SDK target — the compiler rejects any
-API newer than 10.15 (`-warnings-as-errors`), so the minimum OS is enforced by
-construction. A prebuilt zip is committed at `KlipperMac/dist/` as a fallback.
+A full clone is needed: `./scripts/fetch-python-runtimes.sh` downloads the two
+relocatable CPython runtimes into `.build/pythons` (requires `uv`), then
+`KlipperMac/build-app.sh` bundles them with the CLI; `KLIPPERFORMAC_ZIP=1` also
+emits the ZIP. Command Line Tools are the only compiler requirement. The build
+compiles a universal GUI binary against the macOS 10.15 target — the compiler
+rejects any API newer than 10.15 (`-warnings-as-errors`), so the minimum OS is
+enforced by construction. `scripts/verify_bundle.py` checks the app and ZIP.
 
 ![alt text](https://github.com/ProtonKicker/Klipper-for-Mac/blob/main/screenshots/gui%20-%20oct%2012%202026%20-%202.png)
 
@@ -128,6 +147,7 @@ make test       # pytest — offline CLI unit/integration suite
 make build      # universal GUI build, macOS 10.15 floor (swiftc
                 #   -warnings-as-errors rejects newer APIs by construction)
 make zip        # build + emit dist/Klipper-for-Mac.zip
+make verify     # build + verify app, ZIP, both runtimes, CLI --help
 make smoke      # import + CLI sanity
 ```
 
