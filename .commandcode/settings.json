@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Shell(mdfind:*)"
-    ],
-    "deny": [],
-    "defaultMode": "default"
-  }
-}
