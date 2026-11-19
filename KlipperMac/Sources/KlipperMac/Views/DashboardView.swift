@@ -499,6 +499,7 @@ struct DashboardView: View {
                 get: { model.env.lanEnabled },
                 set: { on in Task { await model.setLAN(on) } }
             ))
+            .toggleStyle(SwitchToggleStyle())
             if model.env.lanEnabled {
                 if let ip = Net.lanIP() {
                     BrowserLink(label: "LAN UI",

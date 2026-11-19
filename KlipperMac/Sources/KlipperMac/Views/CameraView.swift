@@ -88,12 +88,12 @@ struct CameraView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Recording").font(.system(size: 22, weight: .bold))
+                    Text("Recording").font(.system(size: 20, weight: .bold))
                     Spacer()
                     NoFocusButton(help: "Refresh") {
-                        Text("↻").font(.system(size: 15, weight: .medium))
+                        Text("↻").font(.system(size: 14, weight: .medium))
                     } action: {
                         Task { await reloadCamera() }
                     }
@@ -104,8 +104,8 @@ struct CameraView: View {
                 Card { settingsSection }
                 Card { privacySection }
             }
-            .padding(16)
-            .frame(maxWidth: 760, alignment: .leading)
+            .padding(12)
+            .frame(maxWidth: 720, alignment: .leading)
         }
         .onAppear {
             loadPrefs()
@@ -116,23 +116,19 @@ struct CameraView: View {
     // MARK: - what this is, and the one button
 
     private var cameraSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Camera")
-            Text("Watch your printer while it works — use the camera built into this Mac, or an iPhone next to the printer.")
-                .font(.callout)
-                .foregroundColor(.secondary)
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 8, height: 8)
-                Text(statePresentation.text)
-                    .font(.callout)
-                if model.busy { ActivityIndicator() }
-                Spacer()
-            }
 
             HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 8, height: 8)
+                    Text(statePresentation.text)
+                        .font(.callout)
+                    if model.busy { ActivityIndicator() }
+                }
+                Spacer()
                 Button(action: {
                     // Only a start attempt can mean "macOS is waiting for approval".
                     triedStarting = !camOn
@@ -143,28 +139,19 @@ struct CameraView: View {
                     }
                 }) {
                     Text(camOn ? "Turn off camera" : "Turn on camera")
+                        .font(.callout)
                         .compatBorderedProminent(tint: camOn ? FlatPalette.amber : FlatPalette.blue)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.busy || !env.isCLIInstalled)
-                Spacer()
             }
 
             if camOn {
                 CamStreamView(address: streamURL)
                     .frame(maxWidth: .infinity)
+                    .frame(maxHeight: 320)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                VStack(spacing: 10) {
-                    FlatIcon(kind: .camera, size: 34, color: FlatPalette.blue)
-                    Text(placeholderText)
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 24)
             }
 
             if !env.isCLIInstalled { installHint }
@@ -174,7 +161,7 @@ struct CameraView: View {
     // MARK: - record
 
     private var recordingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Recording")
             // Between video-style "save" clips and timelapse interval
             // snapshots: the CLIs `cam record` takes either a bounded clip or
@@ -186,17 +173,16 @@ struct CameraView: View {
             }
             .pickerStyle(.segmented)
 
-            HStack(spacing: 8) {
+            HStack {
                 Button(action: { Task { await startRecording() } }) {
-                    HStack {
-                        Spacer()
-                        Text(recordingButtonLabel)
-                        Spacer()
-                    }
-                    .compatBorderedProminent(tint: statusTint)
+                    Text(recordingButtonLabel)
+                        .font(.callout)
+                        .frame(minWidth: 140)
+                        .compatBorderedProminent(tint: statusTint)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.busy || !env.isCLIInstalled)
+                Spacer()
             }
 
             if style == .videos {
@@ -312,40 +298,32 @@ struct CameraView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var placeholderText: String {
-        CameraFeedback.placeholderText(isCLIInstalled: env.isCLIInstalled,
-                                       camOnline: model.camOnline)
-    }
-
     // MARK: - snapshots
 
     private var snapshotSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Snapshots")
             HStack(spacing: 8) {
                 Button("Take a snapshot") {
                     Task { await model.runCam(["cam", "snapshot"]) }
                 }
                 .disabled(model.busy || !env.isCLIInstalled)
+                Button("Show snapshot folder") {
+                    model.revealSnapshots()
+                }
                 Spacer()
             }
             Text("Saves a photo into your Klipper data folder — the camera works "
                  + "whether it is on or off. Great for timelapses.")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            HStack(spacing: 8) {
-                Button("Show snapshot folder") {
-                    model.revealSnapshots()
-                }
-                Spacer()
-            }
         }
     }
 
     // MARK: - settings (nothing restarts on its own)
 
     private var settingsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Camera settings")
             Picker("Camera", selection: Binding(
                 get: { selectedDevice },
@@ -415,7 +393,7 @@ struct CameraView: View {
     // MARK: - privacy footnote
 
     private var privacySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Privacy")
             Text("The camera only runs when you turn it on, and quitting this app turns it off. "
                  + "Only this Mac can see the stream (localhost).")
