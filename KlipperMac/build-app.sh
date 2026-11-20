@@ -88,16 +88,27 @@ echo "==> embedding Swift Concurrency runtime (Catalina/10.15 back-deploy)"
 FRAMEWORKS="$APP/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"
 SWIFTC=$(xcrun -f swiftc)
-CONC_LIB="$(dirname "$(dirname "$SWIFTC")")/lib/swift/macosx/libswift_Concurrency.dylib"
-if [ ! -f "$CONC_LIB" ]; then
-    # Command Line Tools layout (no full Xcode): legacy concurrency lib location
-    CONC_LIB=/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx/libswift_Concurrency.dylib
-fi
-if [ -f "$CONC_LIB" ]; then
+TOOLCHAIN_ROOT="$(dirname "$(dirname "$SWIFTC")")"
+CONC_LIB=""
+for candidate in \
+    "$TOOLCHAIN_ROOT/lib/swift/macosx/libswift_Concurrency.dylib" \
+    "$TOOLCHAIN_ROOT/usr/lib/swift/macosx/libswift_Concurrency.dylib" \
+    "/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx/libswift_Concurrency.dylib" \
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx/libswift_Concurrency.dylib"
+do
+    if [ -f "$candidate" ]; then
+        CONC_LIB="$candidate"
+        break
+    fi
+done
+if [ -n "$CONC_LIB" ]; then
+    echo "    using $CONC_LIB"
     cp "$CONC_LIB" "$FRAMEWORKS/libswift_Concurrency.dylib"
     codesign --force --sign - "$FRAMEWORKS/libswift_Concurrency.dylib"
 else
-    echo "WARNING: libswift_Concurrency.dylib not found in toolchain; Catalina will still crash" >&2
+    echo "ERROR: libswift_Concurrency.dylib not found; Catalina (10.15) needs the Swift 5.5 back-deploy runtime." >&2
+    echo "       Install Xcode Command Line Tools or a full Xcode that provides libswift_Concurrency.dylib." >&2
+    exit 1
 fi
 
 echo "==> building KlipperCam"

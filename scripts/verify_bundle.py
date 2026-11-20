@@ -143,6 +143,21 @@ def verify_app(app):
         sorted(minos(gui)) == sorted(EXPECTED_GUI_FLOORS.values()),
         f"GUI slices keep floors {sorted(EXPECTED_GUI_FLOORS.values())}: {minos(gui)}",
     )
+
+    # Catalina (10.15) has no Swift Concurrency runtime in /usr/lib/swift.
+    # The GUI weak-links @rpath/libswift_Concurrency.dylib and must ship the
+    # back-deploy library so it can launch on Intel 10.15.
+    conc = app / "Contents" / "Frameworks" / "libswift_Concurrency.dylib"
+    check(conc.is_file(), "bundled Swift Concurrency back-deploy runtime for Catalina")
+    if shutil.which("otool"):
+        linked = run(["otool", "-L", str(gui)]).stdout
+        check(
+            "@rpath/libswift_Concurrency.dylib" in linked,
+            "GUI weak-links @rpath/libswift_Concurrency.dylib",
+        )
+        rpaths = run(["otool", "-l", str(gui)]).stdout
+        check("@executable_path/../Frameworks" in rpaths, "GUI has Frameworks rpath")
+
     camera_helper = app / "Contents" / "Resources" / "KlipperCam"
     check(camera_helper.is_file(), "bundled KlipperCam camera helper exists")
     check(

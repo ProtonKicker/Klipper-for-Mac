@@ -6,6 +6,7 @@ packaging script must stage both supported architectures.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -153,6 +154,73 @@ def test_camera_helper_is_bundled_and_not_installed_globally():
     assert 'install_cam "$HOME/.klipperformac/bin/KlipperCam"' not in source
     assert "swift build -c release --product KlipperCam" not in source
     assert "if build_cam_arch arm64 && build_cam_arch x86_64" in source
+
+
+INFO_PLIST = ROOT / "KlipperMac" / "Resources" / "Info.plist"
+VERIFY_SCRIPT = ROOT / "scripts" / "verify_bundle.py"
+BUILD_SCRIPT = ROOT / "KlipperMac" / "build-app.sh"
+SWIFT_ROOT = ROOT / "KlipperMac" / "Sources" / "KlipperMac"
+
+
+def test_info_plist_declares_catalina_floor():
+    """The app must advertise Intel 10.15 (Catalina) as its minimum OS."""
+    import plistlib
+
+    with INFO_PLIST.open("rb") as f:
+        info = plistlib.load(f)
+    assert info["LSMinimumSystemVersion"] == "10.15"
+    per_arch = info["LSMinimumSystemVersionByArchitecture"]
+    assert per_arch["x86_64"] == "10.15"
+    assert per_arch["arm64"] == "11.0"
+
+
+def test_build_targets_per_arch_floors_with_warnings_as_errors():
+    """Both Swift slices are compiled against their floor so new APIs cannot
+    silently raise the minimum OS (-warnings-as-errors makes availability
+    warnings a hard build failure)."""
+    source = BUILD_SCRIPT.read_text()
+    # target_for_arch() builds "<arch>-apple-macos<floor>" from these branches.
+    assert re.search(r"x86_64\)\s*echo\s+.*macos10\.15", source)
+    assert re.search(r"arm64\)\s*echo\s+.*macos11\.0", source)
+    assert "-warnings-as-errors" in source
+
+
+def test_build_bundles_concurrency_backdeploy_runtime():
+    """Swift Concurrency is not in /usr/lib/swift on Catalina; the GUI must
+    ship the back-deploy dylib in Frameworks and add the matching rpath, and a
+    missing dylib must fail the build rather than ship a crashing app."""
+    source = BUILD_SCRIPT.read_text()
+    assert "$FRAMEWORKS/libswift_Concurrency.dylib" in source
+    assert "@executable_path/../Frameworks" in source
+    assert "libswift_Concurrency.dylib not found" in source  # hard-fail, no fallback
+
+
+def test_swift_sources_avoid_macos12_only_urlsession_async():
+    """URLSession's async data(for:)/data(from:) need macOS 12+ and crash on
+    10.15. All network calls must go through a completion-handler + continuation
+    shim (Moonraker, CamProbe) so the GUI runs on the declared floor."""
+    offenders = []
+    for path in SWIFT_ROOT.rglob("*.swift"):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if "URLSession" in line and re.search(r"\.data\(for:|\.data\(from:", line):
+                offenders.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+    assert not offenders, "macOS 12+ URLSession async API found:\n" + "\n".join(offenders)
+    # The two shims must still be present so a future refactor cannot remove
+    # them and reintroduce the crash through a different call site.
+    moonraker = (SWIFT_ROOT / "Core" / "Moonraker.swift").read_text()
+    appmodel = (SWIFT_ROOT / "Model" / "AppModel.swift").read_text()
+    assert "withCheckedContinuation" in moonraker and "dataTask(with:" in moonraker
+    assert "withCheckedContinuation" in appmodel and "dataTask(with:" in appmodel
+
+
+def test_bundle_verifier_checks_catalina_backdeploy():
+    """The post-build verifier must keep asserting the back-deploy dylib, the
+    weak link and the Frameworks rpath, so CI catches a broken bundle."""
+    source = VERIFY_SCRIPT.read_text()
+    assert "libswift_Concurrency.dylib" in source
+    assert "@rpath/libswift_Concurrency.dylib" in source
+    assert "@executable_path/../Frameworks" in source
+    assert "EXPECTED_GUI_FLOORS" in source
 
 
 @pytest.mark.skipif(not os.environ.get("KLIPPERFORMAC_TEST_APP"), reason="no built app under test")

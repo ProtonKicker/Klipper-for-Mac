@@ -19,9 +19,13 @@ private enum CamProbe {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.timeoutInterval = 0.7
-        guard let (_, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse
-        else { return false }
+        let response: URLResponse? = await withCheckedContinuation { cont in
+            let task = URLSession.shared.dataTask(with: req) { _, resp, error in
+                cont.resume(returning: error == nil ? resp : nil)
+            }
+            task.resume()
+        }
+        guard let http = response as? HTTPURLResponse else { return false }
         return (200..<300).contains(http.statusCode)
     }
 }
