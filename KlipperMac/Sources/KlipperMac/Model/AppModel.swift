@@ -74,6 +74,7 @@ final class AppModel: ObservableObject {
     @Published var componentLog: [String] = []
     @Published var componentTaskRunning = false
     @Published var componentTaskTitle = ""
+    @Published var componentUpdatesAvailable = false
 
     // in-app app update (GitHub releases)
     private static let includePreviewReleasesKey = "KlipperForMac.includePreviewReleases"
@@ -682,14 +683,23 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         componentTaskRunning = true
         componentTaskTitle = "Checking for component updates"
         componentLog = ["Checking upstream tags…"]
+        componentUpdatesAvailable = false
         defer { componentTaskRunning = false }
         do {
             let r = try await CLIRunner.shared.run(["update"],
                                                    timeout: Self.timeout(for: ["update"]))
+            guard r.exit == 0 else {
+                componentLog = [r.output.isEmpty ? "Update check failed" : r.output]
+                return
+            }
             let lines = r.output
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
+            let joined = lines.joined(separator: "\n").lowercased()
+            componentUpdatesAvailable = !lines.isEmpty
+                && !joined.contains("all components at newest")
+                && (joined.contains("updates available") || lines.contains { $0.contains("->") })
             componentLog = lines.isEmpty ? ["All components at newest pinned tags."] : lines
         } catch {
             componentLog = [Self.cliErrorMessage(error, notFound: "Klipper CLI not found.")]
@@ -703,6 +713,7 @@ private func _syncNamesFromReport(_ report: SerialReport) {
             return
         }
         guard !componentTaskRunning else { return }
+        componentUpdatesAvailable = false
         await streamComponents(["update", "--apply"], title: "Applying component updates")
         await refresh()
     }
@@ -825,10 +836,6 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         return r.prerelease ? "\(v) (pre-release)" : v
     }
 
-    var appUpdateButtonTitle: String {
-        availableAppUpdate == nil ? "Check for updates" : "Update and Restart"
-    }
-
     func checkForAppUpdate() async {
         guard !appUpdateBusy else { return }
         appUpdateBusy = true
@@ -858,7 +865,7 @@ private func _syncNamesFromReport(_ report: SerialReport) {
             if let release {
                 availableAppUpdate = release
                 let label = availableAppUpdateLabel ?? release.tag
-                appUpdateStatus = "Update available: \(label). Restart to install (stop the Klipper stack first if it’s running)."
+                appUpdateStatus = "Update available: \(label). Click Update to install; the app restarts when finished."
             } else {
                 availableAppUpdate = nil
                 appUpdateStatus = includePreviewReleases
@@ -877,10 +884,7 @@ private func _syncNamesFromReport(_ report: SerialReport) {
     }
 
     func installAppUpdate() async {
-        guard let release = availableAppUpdate else {
-            await checkForAppUpdate()
-            return
-        }
+        guard let release = availableAppUpdate else { return }
         guard !appUpdateBusy else { return }
         let stackRunning = StackReader.readSync(env: env).anyUp || snapshot.anyUp
         if stackRunning {
@@ -900,17 +904,6 @@ private func _syncNamesFromReport(_ report: SerialReport) {
             appUpdateStatus = "Restarting to finish update…"
         } catch {
             appUpdateStatus = "Update failed: \(error.localizedDescription)"
-        }
-    }
-
-    /// One-click flow: check for an update, then install and restart if available
-    /// (only when the Klipper stack is not running).
-    func updateApp() async {
-        if availableAppUpdate == nil {
-            await checkForAppUpdate()
-        }
-        if availableAppUpdate != nil {
-            await installAppUpdate()
         }
     }
 

@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showLibrary = false
+    @State private var showConfigTools = false
     @State private var prerequisites = Prerequisites.check()
 
     /// Resolved product name for a USB path: model-backed identity name wins,
@@ -332,62 +333,56 @@ struct DashboardView: View {
     @ViewBuilder private var printerConfigSection: some View {
         if model.env.installed {
             VStack(alignment: .leading, spacing: 8) {
-                sectionHeader("Printer config")
-                // `serial --json` answered: one row per [mcu] section, because
-                // the pane has to show what printer.cfg actually holds. An empty
-                // list (a config with no MCU section — the contract says that is
-                // not a multi-MCU config) and a CLI that has no --json at all
-                // both keep the single-board picker exactly as it was: one
-                // honest row beats an empty pane, and single-board users must
-                // not see a regression.
+                HStack {
+                    sectionHeader("Printer config")
+                    Spacer(minLength: 8)
+                    Button(showConfigTools ? "Done" : "Manage") {
+                        showConfigTools.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundColor(.accentColor)
+                }
                 if let report = model.mcuReport, !report.isEmpty {
                     mcuRows(report)
                 } else {
                     serialPicker
                 }
 
-                // "+ Add another board": drops a new ``[mcu <name>]`` stub into
-                // printer.cfg via `serial --add-mcu`, then the new row's own port
-                // picker assigns the port. A stub from a config that had no
-                // slot for this board is how you go from 2 MCUs to 3 (or N).
-                AddBoardRow()
+                if showConfigTools {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Button(action: { Task { await model.syncSerial() } }) {
+                                Text("Sync serial").compatBordered()
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(model.busy)
 
-                // "Sync Serial": resolves every USB [mcu*] section's port via the
-                // board's USB identity (the same VID:PID + serial number macOS
-                // rewrites the /dev/cu.* node for on every replug) and rewrites
-                // printer.cfg in place. Triggered on demand — not automatic —
-                // so cable changes are still the user's call.
-                HStack(spacing: 8) {
-                    Button(action: { Task { await model.syncSerial() } }) {
-                        Text("↻ Sync Serial")
+                            AddBoardRow()
+
+                            Button("Change config") {
+                                showLibrary = true
+                            }
                             .compatBordered()
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(model.busy)
-                    if let status = syncCheckStatus {
-                        HStack(spacing: 4) {
-                            FlatIcon(kind: .warning, size: 14,
-                                     color: status.isWarning ? FlatPalette.amber : FlatPalette.green)
-                            Text(verbatim: status.text)
+
+                            Button("History") {
+                                model.showConfigHistoryFolder()
+                            }
+                            .compatBordered()
+
+                            Spacer(minLength: 0)
                         }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    } else {
-                        Text("Match printer.cfg to the board plugged in")
+                        if let status = syncCheckStatus {
+                            HStack(spacing: 4) {
+                                FlatIcon(kind: .warning, size: 13,
+                                         color: status.isWarning ? FlatPalette.amber : FlatPalette.green)
+                                Text(verbatim: status.text)
+                            }
                             .font(.caption)
                             .foregroundColor(.secondary)
+                        }
                     }
-                    Spacer()
-                }
-
-                LabeledRow(label: "Current config") {
-                    Button("Change printer config") {
-                        showLibrary = true
-                    }
-                }
-
-                LabeledRow(label: "Config versions") {
-                    Button("Show") { model.showConfigHistoryFolder() }
+                    .padding(.top, 2)
                 }
             }
         }
@@ -400,7 +395,7 @@ struct DashboardView: View {
     /// a pick survives the refresh that `setSerial` triggers — that refresh
     /// otherwise reverts the button to "Select device…" for one poll tick.
     private var serialPicker: some View {
-        Picker(serialPickerLabel, selection: Binding(
+        Picker("", selection: Binding(
             get: { serialConfigured ?? model.pendingSerials[McuRow.masterName] ?? "" },
             set: { path in
                 guard !path.isEmpty else { return }
@@ -419,6 +414,7 @@ struct DashboardView: View {
             }
         }
         .pickerStyle(DefaultPickerStyle())
+        .labelsHidden()
         .foregroundColor(serialPlaceholder ? .secondary : .primary)
         .disabled(model.busy || model.serialPorts.isEmpty)
     }
@@ -453,17 +449,6 @@ struct DashboardView: View {
         return model.pendingSerials[McuRow.masterName]
     }
 
-    private var serialPickerLabel: String {
-        if let s = serialConfigured, !s.isEmpty {
-            return("\(s)   ·   \(portName(s))")
-        }
-
-        if model.serialPorts.count == 1 {
-            let p = model.serialPorts[0]
-            return "\(p.path)   ·   \(portName(p.path))"
-        }
-        return model.serialPorts.isEmpty ? "No USB serial devices" : "Select device…"
-    }
     @ViewBuilder private func mcuRows(_ report: SerialReport) -> some View {
         let singlePickableRow = report.mcus.filter { $0.offersPortPicker }.count == 1
         // Ports that belong to OTHER sections — showing these as live would let a
@@ -654,7 +639,7 @@ private struct McuSerialRow: View {
     /// cannot address keeps its row — and loses its write button, because
     /// silently editing [mcu] instead would be the worse failure.
     private var portPicker: some View {
-        Picker(portPickerButtonText, selection: Binding(
+        Picker("", selection: Binding(
             get: { row.serial ?? model.pendingSerials[row.mcu] ?? "" },
             set: { path in
                 guard !path.isEmpty, !claimants.contains(where: { $0.key == path && $0.value != row.section }) else { return }
@@ -676,6 +661,7 @@ private struct McuSerialRow: View {
             }
         }
         .pickerStyle(DefaultPickerStyle())
+        .labelsHidden()
         .foregroundColor(portPlaceholder ? .secondary : .primary)
         .frame(maxWidth: 320)
         .disabled(model.busy || !row.isAddressable || ports.isEmpty)
@@ -704,14 +690,6 @@ private struct McuSerialRow: View {
             return "\(headline) · \(short)"
         }
         return headline
-    }
-
-    /// The picker button shows only the device path. The long product name
-    /// lives in its own two-line block below the row so it cannot stretch the
-    /// mcu label or the picker into an unreadable wrapped line.
-    private var portPickerButtonText: String {
-        if let path = selectedPortPath { return path }
-        return ports.isEmpty ? "No USB serial devices" : "Select device…"
     }
 
     private var portPlaceholder: Bool {
@@ -772,11 +750,7 @@ private struct AddBoardRow: View {
                 name = ""
                 prompt = true
             }) {
-                HStack(spacing: 4) {
-                    Text("+").font(.body)
-                    Text("Add another board")
-                    Spacer()
-                }
+                Text("Add board").compatBordered()
             }
             .buttonStyle(.plain)
         }

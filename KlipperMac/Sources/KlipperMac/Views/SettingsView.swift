@@ -23,43 +23,47 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("About")
-            FieldRow(label: "App version", value: appVersion)
+            HStack {
+                sectionHeader("About")
+                Spacer()
+                Button("GitHub") {
+                    model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.accentColor)
+                .helpIfAvailable("Open the project on GitHub")
+            }
             HStack(spacing: 8) {
-                Button(model.appUpdateButtonTitle) { Task { await model.updateApp() } }
-                    .disabled(model.appUpdateBusy || (model.availableAppUpdate != nil && model.snapshot.anyUp))
-                if model.availableAppUpdate != nil && !model.appUpdateBusy {
-                    Button("Check again") { Task { await model.checkForAppUpdate() } }
-                        .disabled(model.appUpdateBusy)
+                Text("App version")
+                Text(appVersion)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Button("Check for updates") { Task { await model.checkForAppUpdate() } }
+                    .disabled(model.appUpdateBusy)
+                if model.availableAppUpdate != nil {
+                    Button("Update") { Task { await model.installAppUpdate() } }
+                        .disabled(model.appUpdateBusy || model.snapshot.anyUp)
                 }
                 if model.appUpdateBusy { ActivityIndicator() }
-                Spacer()
+                Toggle("Previews", isOn: Binding(
+                    get: { model.includePreviewReleases },
+                    set: { model.setIncludePreviewReleases($0) }
+                ))
+                .toggleStyle(SwitchToggleStyle())
+                .helpIfAvailable("When off, only official releases are offered. "
+                                 + "When on, the newest release including previews is offered.")
             }
             if model.availableAppUpdate != nil && model.snapshot.anyUp {
-                Text("Stop the Klipper stack to install the update. The app will restart to finish when the stack is not running.")
-                    .font(.callout)
+                Text("Stop the Klipper stack before installing the update. Checking still works while it runs.")
+                    .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Toggle("Include preview releases", isOn: Binding(
-                get: { model.includePreviewReleases },
-                set: { model.setIncludePreviewReleases($0) }
-            ))
-            .toggleStyle(SwitchToggleStyle())
-            Text(model.includePreviewReleases
-                 ? "Updates may install the newest release, including previews."
-                 : "Updates install only official releases, even if a newer preview exists.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
             if !model.appUpdateStatus.isEmpty {
                 Text(model.appUpdateStatus)
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Button("Project on GitHub") {
-                model.openURL("https://github.com/ProtonKicker/Klipper-for-Mac")
             }
         }
     }
@@ -79,8 +83,10 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 Button("Check") { Task { await model.checkUpdates() } }
                     .disabled(model.busy || model.componentTaskRunning)
-                Button("Update") { Task { await model.applyUpdates() } }
-                    .disabled(model.busy || model.componentTaskRunning || model.snapshot.anyUp || !env.installed)
+                if model.componentUpdatesAvailable {
+                    Button("Update") { Task { await model.applyUpdates() } }
+                        .disabled(model.busy || model.componentTaskRunning || model.snapshot.anyUp || !env.installed)
+                }
                 if model.componentTaskRunning { ActivityIndicator() }
                 Spacer()
             }
@@ -110,7 +116,10 @@ struct SettingsView: View {
                     if !model.componentTaskRunning && !model.componentLog.isEmpty {
                         HStack {
                             Spacer()
-                            Button("Clear") { model.componentLog = [] }
+                            Button("Clear") {
+                                model.componentLog = []
+                                model.componentUpdatesAvailable = false
+                            }
                                 .buttonStyle(.plain)
                         }
                     }
