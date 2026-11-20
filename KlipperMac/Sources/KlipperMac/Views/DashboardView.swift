@@ -360,15 +360,15 @@ struct DashboardView: View {
 
                             AddBoardRow()
 
-                            Button("Change config") {
-                                showLibrary = true
+                            Button(action: { showLibrary = true }) {
+                                Text("Change config").compatBordered()
                             }
-                            .compatBordered()
+                            .buttonStyle(.plain)
 
-                            Button("History") {
-                                model.showConfigHistoryFolder()
+                            Button(action: { model.showConfigHistoryFolder() }) {
+                                Text("History").compatBordered()
                             }
-                            .compatBordered()
+                            .buttonStyle(.plain)
 
                             Spacer(minLength: 0)
                         }
