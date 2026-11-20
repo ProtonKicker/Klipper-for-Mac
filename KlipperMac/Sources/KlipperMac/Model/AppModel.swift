@@ -76,6 +76,15 @@ final class AppModel: ObservableObject {
     @Published var componentTaskTitle = ""
 
     // in-app app update (GitHub releases)
+    private static let includePreviewReleasesKey = "KlipperForMac.includePreviewReleases"
+    @Published var includePreviewReleases: Bool = UserDefaults.standard.bool(
+        forKey: AppModel.includePreviewReleasesKey
+    ) {
+        didSet {
+            UserDefaults.standard.set(includePreviewReleases,
+                                      forKey: AppModel.includePreviewReleasesKey)
+        }
+    }
     @Published var appUpdateStatus = ""
     @Published var appUpdateBusy = false
 
@@ -841,19 +850,30 @@ private func _syncNamesFromReport(_ report: SerialReport) {
                 appUpdateStatus = "Could not read release info."
                 return
             }
-            let release = arr.compactMap { parseRelease($0) }.first { isNewer($0.version, than: current) }
+            let candidates = arr.compactMap { parseRelease($0) }
+            let release = candidates.first { candidate in
+                isNewer(candidate.version, than: current)
+                    && (includePreviewReleases || !candidate.prerelease)
+            }
             if let release {
                 availableAppUpdate = release
                 let label = availableAppUpdateLabel ?? release.tag
                 appUpdateStatus = "Update available: \(label). Restart to install (stop the Klipper stack first if it’s running)."
             } else {
                 availableAppUpdate = nil
-                appUpdateStatus = "You're up to date (v\(current))."
+                appUpdateStatus = includePreviewReleases
+                    ? "You're up to date (v\(current))."
+                    : "You're up to date (v\(current)). Preview releases are off."
             }
         } catch {
             availableAppUpdate = nil
             appUpdateStatus = "Update check failed: \(error.localizedDescription)"
         }
+    }
+
+    func setIncludePreviewReleases(_ enabled: Bool) {
+        includePreviewReleases = enabled
+        Task { await checkForAppUpdate() }
     }
 
     func installAppUpdate() async {

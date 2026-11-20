@@ -41,6 +41,17 @@ struct SettingsView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            Toggle("Include preview releases", isOn: Binding(
+                get: { model.includePreviewReleases },
+                set: { model.setIncludePreviewReleases($0) }
+            ))
+            .toggleStyle(SwitchToggleStyle())
+            Text(model.includePreviewReleases
+                 ? "Updates may install the newest release, including previews."
+                 : "Updates install only official releases, even if a newer preview exists.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if !model.appUpdateStatus.isEmpty {
                 Text(model.appUpdateStatus)
                     .font(.callout)

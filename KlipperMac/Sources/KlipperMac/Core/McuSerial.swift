@@ -212,6 +212,20 @@ struct McuRow: Identifiable, Equatable {
         return bits.joined(separator: "  ") + "  ·  present: \(identity.present ? "y" : "n")"
     }
 
+    var compactIdentityLine: String {
+        guard let identity else { return "identity: not detected" }
+        var bits: [String] = []
+        if let vidPid = identity.vidPid { bits.append("USB \(vidPid)") }
+        if let serial = identity.serial {
+            let shown = serial.count > 8 ? String(serial.prefix(8)) + "…" : serial
+            bits.append("SER \(shown)")
+        }
+        if bits.isEmpty, let key = identity.key { bits.append(key) }
+        if bits.isEmpty { bits.append("identity") }
+        bits.append(identity.present ? "present" : "not present")
+        return bits.joined(separator: " · ")
+    }
+
     var isPresent: Bool? { identity?.present }
 
     /// Tooltip for the badge, or nil when there is nothing to warn about.

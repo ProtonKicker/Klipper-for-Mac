@@ -192,6 +192,9 @@ enum SwiftLogicChecks {
                     text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
                     present: false),
                "identity presentation should keep the offline text and presence flag")
+        expect(master?.compactIdentityLine
+               == "USB 1d50:614e · SER 50445061… · present",
+               "compact identity should shorten the long USB serial")
         expect(missing?.identityIndicatorPresentation
                == IdentityIndicatorPresentation(
                     text: "USB 1a86:7523  SER FFFF0001  ·  present: n",
@@ -433,6 +436,10 @@ enum SwiftLogicChecks {
         let error = PrinterStatus(connected: false, klippyState: "error")
         expect(error.readinessNote?.contains("reported an error") == true,
                "error printer should show a stronger degraded note")
+        let handshake = PrinterStatus(connected: false, klippyState: "error",
+                                      message: "mcu 'mcu': Unable to connect")
+        expect(handshake.readinessNote?.contains("firmware handshake") == true,
+               "MCU handshake errors should explain that a connected USB cable is not enough")
         expect(error.stackWarning?.contains("Printer not ready (error)") == true,
                "error printer should expose a stack-level degraded summary")
 

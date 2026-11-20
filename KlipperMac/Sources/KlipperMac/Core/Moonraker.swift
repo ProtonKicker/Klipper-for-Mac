@@ -33,7 +33,11 @@ struct PrinterStatus: Equatable {
         case "startup":
             return "Klippy is still starting up. The stack can be running before the printer is actually ready."
         case "error":
-            return "Klippy reported an error. Check the printer message below or the logs."
+            let detail = (message ?? "").lowercased()
+            if detail.contains("unable to connect") || detail.contains("identify_response") {
+                return "Klippy reported an error: the USB board did not answer the Klipper firmware handshake. A connected cable alone is not enough — check that the board has Klipper firmware flashed and that printer.cfg matches that board. See klippy.log."
+            }
+            return "Klippy reported an error. Check the printer message below or the logs. A USB board can be connected while Klippy waits for a firmware handshake."
         case "shutdown":
             return "Klippy is shut down and needs a restart or firmware recovery."
         default:

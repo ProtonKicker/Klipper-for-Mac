@@ -555,9 +555,8 @@ private struct McuSerialRow: View {
     let claimants: [String: String]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                // Name + badges ride the left; the picker rides the right.
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 HStack(spacing: 6) {
                     Text(verbatim: row.displayName)
                         .font(.system(size: NSFont.systemFontSize, weight: .medium))
@@ -567,7 +566,7 @@ private struct McuSerialRow: View {
                         pill(badge)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 if row.offersPortPicker {
                     portPicker
                 } else if let status = row.pickerStatusPresentation {
@@ -577,51 +576,76 @@ private struct McuSerialRow: View {
                         .helpIfAvailable(status.help)
                 }
             }
-            HStack(spacing: 10) {
-                // verbatim: a section name or device path is user/CLI content,
-                // and Text's default initialiser would read "usb_a_b" as
-                // markdown and italicise the middle of it.
-                Text(verbatim: row.configuredLine)
-                Spacer()
-                let identity = row.identityIndicatorPresentation
-                if identity.showsIndicator {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(identity.tone == .positive
-                                  ? Color.green
-                                  : Color.red.opacity(identity.opacity))
-                            .frame(width: 7, height: 7)
-                        Text(verbatim: identity.text)
+
+            if let path = selectedPortPath {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: boardName(path))
+                        .font(.system(size: NSFont.systemFontSize))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                    HStack(spacing: 6) {
+                        let identity = row.identityIndicatorPresentation
+                        if identity.showsIndicator {
+                            Circle()
+                                .fill(identity.tone == .positive
+                                      ? Color.green
+                                      : Color.red.opacity(identity.opacity))
+                                .frame(width: 7, height: 7)
+                        }
+                        Text(verbatim: row.compactIdentityLine)
+                        if let usbSerial = row.identity?.serial,
+                           !usbSerial.isEmpty,
+                           row.serial?.hasPrefix("/dev/") == true {
+                            Button(action: { model.copyToPasteboard(usbSerial) }) {
+                                Text("⎘").font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .helpIfAvailable("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
+                                  + "every replug — this ID stays with the board so you "
+                                  + "can update printer.cfg by hand.")
+                        }
+                        Spacer(minLength: 0)
                     }
-                } else {
-                    Text(verbatim: identity.text)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
-                // Copy button: USB serial number as the stable per-board
-                // identity. The /dev/cu.* path changes every replug, but this
-                // serial id does not — so the user can paste it into
-                // printer.cfg as a comment or reference, and still recognise
-                // the same physical board later.
-                if let usbSerial = row.identity?.serial,
-                   !usbSerial.isEmpty,
-                   row.serial?.hasPrefix("/dev/") == true {
-                    Button(action: { model.copyToPasteboard(usbSerial) }) {
-                        Text("⎘").font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .helpIfAvailable("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
-                          + "every replug — this ID stays with the board so you "
-                          + "can update printer.cfg by hand.")
+                .padding(.leading, 2)
+            } else {
+                HStack(spacing: 6) {
+                    Text(verbatim: row.configuredLine)
+                    Spacer(minLength: 0)
                 }
-                if let footer = row.footerPresentation {
-                    Text(footer.message)
-                        .foregroundColor(footer.tone == .warning
-                                         ? FlatPalette.amber : .secondary)
-                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.leading, 2)
             }
-            .font(.caption)
-            .foregroundColor(.secondary)
+
+            if let footer = row.footerPresentation {
+                Text(footer.message)
+                    .font(.caption)
+                    .foregroundColor(footer.tone == .warning
+                                     ? FlatPalette.amber : .secondary)
+                    .padding(.leading, 2)
+            }
         }
         .padding(.vertical, 2)
+    }
+
+    private var selectedPortPath: String? {
+        if let s = row.serial, s.hasPrefix("/dev/") { return s }
+        if let p = model.pendingSerials[row.mcu], !p.isEmpty { return p }
+        return row.suggestedPort(in: ports,
+                                 allowSinglePortDefault: allowSinglePortDefault)?.path
+    }
+
+    private func boardName(_ path: String) -> String {
+        if let n = model.serialPortNames[path], !n.isEmpty { return n }
+        if let n = row.identity?.name, !n.isEmpty { return n }
+        if let port = ports.first(where: { $0.path == path }), !port.label.isEmpty {
+            return port.label
+        }
+        return path
     }
 
     /// Port menu for THIS section. Candidates come from the scanner the poll
@@ -682,25 +706,11 @@ private struct McuSerialRow: View {
         return headline
     }
 
-    /// Button label for this section's picker. Source of truth order:
-    /// configured serial (from the report) → user's pending pick → suggested
-    /// fallback → single-port default → placeholder.
+    /// The picker button shows only the device path. The long product name
+    /// lives in its own two-line block below the row so it cannot stretch the
+    /// mcu label or the picker into an unreadable wrapped line.
     private var portPickerButtonText: String {
-        if let s = row.serial, !s.isEmpty {
-            return "\(s)   ·   \(portName(s))"
-        }
-        if let p = model.pendingSerials[row.mcu], !p.isEmpty {
-            return "\(p)   ·   \(portName(p))"
-        }
-        if let s = row.suggestedPort(in: ports,
-                                     allowSinglePortDefault: allowSinglePortDefault)?.path,
-           !s.isEmpty {
-            return "\(s)   ·   \(portName(s))"
-        }
-        if ports.count == 1 {
-            let p = ports[0]
-            return "\(p.path)   ·   \(portName(p.path))"
-        }
+        if let path = selectedPortPath { return path }
         return ports.isEmpty ? "No USB serial devices" : "Select device…"
     }
 
