@@ -70,6 +70,11 @@ final class AppModel: ObservableObject {
     @Published var sheetLines: [String] = []
     @Published var sheetRunning = false
 
+    // Stack command activity shown under the LAN card on the Printer pane.
+    @Published var stackLog: [String] = []
+    private static let stackLogLimit = 200
+    private static let stackCommands: Set<String> = ["up", "down", "restart", "killall"]
+
     // Component updates (inline in Settings > Components)
     @Published var componentLog: [String] = []
     @Published var componentTaskRunning = false
@@ -432,10 +437,14 @@ private func _syncNamesFromReport(_ report: SerialReport) {
     func cli(_ args: [String], ok: String? = nil) async -> Bool {
         busy = true
         env.invalidateCaches()
+        let logCommand = Self.stackCommands.contains(args.first ?? "")
         let exit: Int32
         do {
             let r = try await CLIRunner.shared.run(args, timeout: Self.timeout(for: args))
             exit = r.exit
+            if logCommand {
+                appendStackLog(args, output: r.output, exit: r.exit)
+            }
             if r.exit == 0 {
                 say(ok ?? r.output)
             } else {
@@ -443,10 +452,13 @@ private func _syncNamesFromReport(_ report: SerialReport) {
                                      : r.output, error: true)
             }
         } catch {
-            say(Self.cliErrorMessage(error,
-                                     notFound: AppFeedback.cliNotFoundInstallMessage(
-                                        Self.installCommand)),
-                error: true)
+            let message = Self.cliErrorMessage(error,
+                                               notFound: AppFeedback.cliNotFoundInstallMessage(
+                                                Self.installCommand))
+            if logCommand {
+                appendStackLog(args, error: message)
+            }
+            say(message, error: true)
             exit = -1
         }
         // Release the screen before refreshing: refreshOnce() skips its writes
@@ -454,6 +466,28 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         busy = false
         await refresh(reloadEnv: true)
         return exit == 0
+    }
+
+    private func appendStackLog(_ args: [String],
+                                output: String? = nil,
+                                error: String? = nil,
+                                exit: Int32? = nil) {
+        var lines = ["$ klipperformac " + args.joined(separator: " ")]
+        if let output {
+            lines.append(contentsOf: output
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .prefix(20))
+        }
+        if let error { lines.append(error) }
+        if let exit {
+            lines.append(exit == 0 ? "✓ finished" : "✗ finished (exit \(exit))")
+        }
+        stackLog.append(contentsOf: lines)
+        if stackLog.count > Self.stackLogLimit {
+            stackLog.removeFirst(stackLog.count - Self.stackLogLimit)
+        }
     }
 
     func startStack() async { _ = await cli(["up"], ok: "Started") }

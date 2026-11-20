@@ -98,6 +98,9 @@ struct DashboardView: View {
                     Card { printerConfigSection }
                 }
                 Card { lanSection }
+                if !model.stackLog.isEmpty || model.snapshot.anyUp {
+                    Card { stackActivitySection }
+                }
             }
             .padding(12)
             .frame(maxWidth: 720, alignment: .leading)
@@ -169,17 +172,13 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 sectionHeader("Stack")
+                if model.busy { ActivityIndicator() }
                 Spacer()
                 NoFocusButton(help: "Refresh") {
                     Text("↻").font(.system(size: 15, weight: .medium))
                 } action: {
                     Task { await model.refresh(reloadEnv: true) }
                 }
-            }
-            HStack(spacing: 12) {
-                StatusBadge(overall: model.snapshot.overall)
-                if model.busy { ActivityIndicator() }
-                Spacer()
             }
             if let warning = AppFeedback.inlineWarning(message: model.printer?.stackWarning) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -190,39 +189,22 @@ struct DashboardView: View {
                 .foregroundColor(.secondary)
             }
             HStack(spacing: 8) {
-                Button(action: { Task { await model.startStack() } }) {
-                    Text("Start")
-                        .frame(width: stackButtonWidth)
-                        .foregroundColor(.green)
-                        .compatBorderedProminent(tint: .green)
+                stackButton("Start", tint: .green,
+                            enabled: !model.busy && !model.snapshot.anyUp && model.env.installed) {
+                    Task { await model.startStack() }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.busy || model.snapshot.anyUp || !model.env.installed)
-
-                Button(action: { Task { await model.stopStack() } }) {
-                    Text("Stop")
-                        .frame(width: stackButtonWidth)
-                        .compatBordered()
+                stackButton("Stop", tint: .secondary,
+                            enabled: !model.busy && model.snapshot.anyUp) {
+                    Task { await model.stopStack() }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.busy || !model.snapshot.anyUp)
-
-                Button(action: { Task { await model.restartStack() } }) {
-                    Text("Restart")
-                        .frame(width: stackButtonWidth)
-                        .compatBordered()
+                stackButton("Restart", tint: .secondary,
+                            enabled: !model.busy && model.snapshot.anyUp) {
+                    Task { await model.restartStack() }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.busy || !model.snapshot.anyUp)
-
-                Button(action: { Task { await model.killAll() } }) {
-                    Text("Kill all")
-                        .frame(width: stackButtonWidth)
-                        .foregroundColor(FlatPalette.red)
-                        .compatBorderedProminent(tint: .red)
+                stackButton("Kill all", tint: FlatPalette.red,
+                            enabled: !model.busy && model.snapshot.anyUp) {
+                    Task { await model.killAll() }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.busy || !model.snapshot.anyUp)
                 Spacer()
             }
 
@@ -252,6 +234,28 @@ struct DashboardView: View {
                     .foregroundColor(.secondary)
             }
         }
+    }
+
+    @ViewBuilder private func stackButton(_ title: String,
+                                          tint: Color,
+                                          enabled: Bool,
+                                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: stackButtonWidth, height: 28)
+                .foregroundColor(enabled ? tint : tint.opacity(0.55))
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(tint.opacity(enabled ? 0.20 : 0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(tint.opacity(enabled ? 0.85 : 0.35), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
     private var serviceRow: some View {
@@ -516,6 +520,33 @@ struct DashboardView: View {
         }
     }
 
+    private var stackActivitySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionHeader("Stack activity")
+                Spacer()
+                StatusBadge(overall: model.snapshot.overall)
+                if model.busy { ActivityIndicator() }
+            }
+            if model.snapshot.anyUp { serviceRow }
+            LogTextView(text: model.stackLog.joined(separator: "\n"), follow: true)
+                .frame(maxWidth: .infinity)
+                .frame(height: 150)
+                .background(compatNSColor(.textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+            HStack {
+                Spacer()
+                Button("Clear") { model.stackLog = [] }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+            }
+        }
+    }
+
     private func sectionHeader(_ title: String) -> some View {
         Text(title).font(.headline)
     }
@@ -562,38 +593,44 @@ private struct McuSerialRow: View {
                 }
             }
 
+            Divider()
+                .padding(.vertical, 1)
+
             if let path = selectedPortPath {
-                VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    let identity = row.identityIndicatorPresentation
+                    if identity.showsIndicator {
+                        Circle()
+                            .fill(identity.tone == .positive
+                                  ? Color.green
+                                  : Color.red.opacity(identity.opacity))
+                            .frame(width: 7, height: 7)
+                    }
                     Text(verbatim: boardName(path))
                         .font(.system(size: NSFont.systemFontSize))
                         .foregroundColor(.primary)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-                    HStack(spacing: 6) {
-                        let identity = row.identityIndicatorPresentation
-                        if identity.showsIndicator {
-                            Circle()
-                                .fill(identity.tone == .positive
-                                      ? Color.green
-                                      : Color.red.opacity(identity.opacity))
-                                .frame(width: 7, height: 7)
+                        .lineLimit(1)
+                        .helpIfAvailable(boardName(path))
+                    Spacer(minLength: 6)
+                    Text(verbatim: row.compactIdentityLine)
+                        .font(.caption)
+                        .foregroundColor(identity.showsIndicator
+                                         ? (identity.tone == .positive
+                                            ? Color.green : FlatPalette.amber)
+                                         : .secondary)
+                        .lineLimit(1)
+                        .helpIfAvailable(row.identityLine)
+                    if let usbSerial = row.identity?.serial,
+                       !usbSerial.isEmpty,
+                       row.serial?.hasPrefix("/dev/") == true {
+                        Button(action: { model.copyToPasteboard(usbSerial) }) {
+                            Text("⎘").font(.caption)
                         }
-                        Text(verbatim: row.compactIdentityLine)
-                        if let usbSerial = row.identity?.serial,
-                           !usbSerial.isEmpty,
-                           row.serial?.hasPrefix("/dev/") == true {
-                            Button(action: { model.copyToPasteboard(usbSerial) }) {
-                                Text("⎘").font(.caption)
-                            }
-                            .buttonStyle(.plain)
-                            .helpIfAvailable("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
-                                  + "every replug — this ID stays with the board so you "
-                                  + "can update printer.cfg by hand.")
-                        }
-                        Spacer(minLength: 0)
+                        .buttonStyle(.plain)
+                        .helpIfAvailable("Copy USB serial ID: \(usbSerial)\nThe /dev/cu path changes on "
+                              + "every replug — this ID stays with the board so you "
+                              + "can update printer.cfg by hand.")
                     }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
                 }
                 .padding(.leading, 2)
             } else {
