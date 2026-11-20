@@ -914,7 +914,18 @@ private func _syncNamesFromReport(_ report: SerialReport) {
         func parts(_ s: String) -> [Int] {
             let core = s.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? s
             let t = (core.hasPrefix("v") || core.hasPrefix("V")) ? String(core.dropFirst()) : core
-            return t.split(separator: ".").map { token in Int(token.filter { $0.isNumber }) ?? 0 }
+            var result: [Int] = []
+            var num = ""
+            for ch in t {
+                if ch.isNumber {
+                    num.append(ch)
+                } else if !num.isEmpty {
+                    result.append(Int(num) ?? 0)
+                    num = ""
+                }
+            }
+            if !num.isEmpty { result.append(Int(num) ?? 0) }
+            return result.isEmpty ? [0] : result
         }
         let a = parts(remote), b = parts(local)
         let n = max(a.count, b.count)

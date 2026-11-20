@@ -13,7 +13,7 @@ SDK=$(xcrun --sdk macosx --show-sdk-path)
 SRCS=$(find Sources -name '*.swift' -not -path 'Sources/KlipperCam/*' | sort)
 CAM_SRCS=$(find Sources/KlipperCam -name '*.swift' | sort)
 CAM_PLIST="$PWD/Resources/KlipperCam-Info.plist"
-FLAGS="-parse-as-library -O -sdk $SDK"
+FLAGS="-parse-as-library -O -sdk $SDK -Xlinker -rpath -Xlinker @executable_path/../Frameworks"
 CAM_FLAGS="-O -sdk $SDK"
 
 mkdir -p dist
@@ -83,6 +83,22 @@ if [ -f Resources/AppIcon.icns ]; then
     cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
+
+echo "==> embedding Swift Concurrency runtime (Catalina/10.15 back-deploy)"
+FRAMEWORKS="$APP/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS"
+SWIFTC=$(xcrun -f swiftc)
+CONC_LIB="$(dirname "$(dirname "$SWIFTC")")/lib/swift/macosx/libswift_Concurrency.dylib"
+if [ ! -f "$CONC_LIB" ]; then
+    # Command Line Tools layout (no full Xcode): legacy concurrency lib location
+    CONC_LIB=/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx/libswift_Concurrency.dylib
+fi
+if [ -f "$CONC_LIB" ]; then
+    cp "$CONC_LIB" "$FRAMEWORKS/libswift_Concurrency.dylib"
+    codesign --force --sign - "$FRAMEWORKS/libswift_Concurrency.dylib"
+else
+    echo "WARNING: libswift_Concurrency.dylib not found in toolchain; Catalina will still crash" >&2
+fi
 
 echo "==> building KlipperCam"
 build_cam
